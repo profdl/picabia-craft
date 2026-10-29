@@ -219,6 +219,9 @@ pub(super) fn inspect(app: &mut FigApp, ui: &mut Ui) {
     for s in figcraft_engine::devinspect::properties_with(&doc, first, fmt) {
         inspect_section(app, ui, &s);
     }
+    if let Some(s) = crate::picabia_ui::inspect_section(&doc, first) {
+        inspect_section(app, ui, &s); // PICABIA: the layer's modifiers, read-only
+    }
     inspect_assets(app, ui, &doc, &figcraft_engine::devinspect::assets(&doc, &sel));
     use figcraft_engine::codegen::CodeLang;
     let lang_id = Id::unique("inspect_lang");

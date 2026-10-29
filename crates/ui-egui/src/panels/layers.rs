@@ -1093,7 +1093,7 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                 a11y::prefer(&mut app.ui.nav, Region::Layers, resp.id);
             }
             let info = RowInfo {
-                kind: tr(n.kind.label()),
+                kind: &crate::picabia_ui::a11y_kind(tr(n.kind.label()), n), // PICABIA: modifiers in the description
                 depth: row.depth,
                 selected,
                 expanded: row.has_kids.then(|| app.ui.expanded.contains(&row.id)),
@@ -1143,9 +1143,10 @@ fn layers(app: &mut FigApp, ui: &mut Ui) {
                     if top_level && (n.kind.is_frame_like() || matches!(n.kind, NodeKind::Section { .. })) { semibold(11.0) } else { regular(11.0) };
                 let name = if n.name.is_empty() { tr(n.kind.label()).to_string() } else { n.name.clone() };
                 // Room left of the lock and eye buttons.
-                let max_w = (rr.max.x - 56.0 - name_x).max(20.0);
+                let max_w = (rr.max.x - 56.0 - crate::picabia_ui::badge_room(n) - name_x).max(20.0); // PICABIA: badge room
                 crate::bidi::paint_name(ui.painter(), pos2(name_x, r.center().y), &name, font, col, max_w);
             }
+            crate::picabia_ui::layer_badge(ui, rr, r, n, icon_col); // PICABIA: modifier badge
             let (v, l) = eye_lock(ui, &t, [r, rr], row, n, over && !dev, dev, &mut sweep);
             vis = v.or(vis);
             lock = l.or(lock);

@@ -72,7 +72,8 @@ pub fn specs() -> Vec<CommandSpec> {
 
 /// Read-only lines for `node`'s enabled modifiers, top row first: the kind's English label (a UI
 /// catalog key) and how many copies it makes where that reads plainly (`("Linear array", "×5")`,
-/// `("Grid array", "3 × 4")`, `("Mirror", "")`). Empty without modifiers or with damaged data.
+/// `("Grid array", "3 × 4")`; a mirror's axis, `("Mirror", "Vertical axis")`, also a catalog key;
+/// empty for the others). Empty without modifiers or with damaged data.
 /// The Inspect tab and accessibility labels show these.
 pub fn summary(node: &figcraft_doc::Node) -> Vec<(String, String)> {
     use figcraft_modifiers::ModifierKind as K;
@@ -87,6 +88,12 @@ pub fn summary(node: &figcraft_doc::Node) -> Vec<(String, String)> {
                 K::LinearArray(p) => format!("×{}", cap(p.count)),
                 K::CircularArray(p) => format!("×{}", cap(p.count)),
                 K::GridArray(p) => format!("{} × {}", cap(p.rows), cap(p.cols)),
+                K::Mirror(p) => match p.axis {
+                    figcraft_modifiers::MirrorAxis::Vertical => "Vertical axis",
+                    figcraft_modifiers::MirrorAxis::Horizontal => "Horizontal axis",
+                    figcraft_modifiers::MirrorAxis::Both => "Both axes",
+                }
+                .to_string(),
                 _ => String::new(),
             };
             (m.label().to_string(), amount)

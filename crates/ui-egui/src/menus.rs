@@ -280,6 +280,9 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
             if item(ui, &i18n::menu_item(m.id, m.label), crate::shortcuts::shortcut(m.id).unwrap_or(""), enabled, checked, &t) && enabled {
                 clicked = Some(m.id);
             }
+            if crate::picabia_ui::object_menu_after(m.id) && crate::picabia_ui::object_menu(app, ui, prefix, &t) {
+                return true; // PICABIA: Object ▸ Modifiers
+            }
         } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
             let sub = rest.split('/').next().unwrap_or(rest).to_string();
             if !subs.contains(&sub) {
@@ -554,6 +557,9 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 {
                     entries[at] = (tr("Go to main component"), "component.goToMain");
                 }
+                if has_sel {
+                    crate::picabia_ui::context_entry(&mut entries); // PICABIA: the Modifiers submenu
+                }
                 // A right-clicked ruler guide (selected, with no layers) can be removed.
                 if !has_sel && app.session.ds().is_ok_and(|d| d.selected_guide().is_some()) {
                     entries.splice(0..0, [(tr("Remove guide"), "guide.remove"), ("-", "")]);
@@ -561,6 +567,10 @@ pub fn popups(app: &mut FigApp, ctx: &egui::Context) {
                 for (label, id) in &entries {
                     if *label == "-" {
                         separator(ui);
+                        continue;
+                    }
+                    if *id == crate::picabia_ui::CONTEXT_ROW {
+                        close |= crate::picabia_ui::modifiers_submenu(app, ui, id, &t); // PICABIA: the Modifiers submenu
                         continue;
                     }
                     if *id == COPY_AS {

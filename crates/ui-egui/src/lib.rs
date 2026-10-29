@@ -18,6 +18,7 @@ pub mod icons_picabia; // PICABIA: modifier icons
 pub mod live;
 pub mod menus;
 pub mod pending_open;
+mod picabia_ui; // PICABIA: modifier menus, layers badge, Inspect and a11y lines
 pub mod popover;
 pub mod present;
 pub mod shortcuts;
