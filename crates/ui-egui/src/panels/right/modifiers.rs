@@ -59,7 +59,8 @@ pub(crate) enum Field {
     /// A choice among string values `(value, label)`, as a dropdown; `translate` false shows the
     /// labels as they are (symbols such as wallpaper group names).
     Choice { param: &'static str, options: &'static [(&'static str, &'static str)], translate: bool },
-    /// Another layer on the page (its id as text), as a dropdown of the page's layers.
+    /// Another layer on the page (its id as text), as a dropdown of the layers every selected
+    /// layer can copy onto (`modifier::target_choices`).
     Target { param: &'static str },
 }
 
@@ -227,6 +228,9 @@ struct RowView {
     common_id: Option<String>,
     /// Its kind and params on the first layer.
     first: Option<ModifierKind>,
+    /// Why its copy-to-shape target can't be used, on the first layer where it can't
+    /// (`modifier::check_target`); `None` when every set target is valid (or it has none).
+    target_problem: Option<String>,
 }
 
 /// What the section shows for the selection.
@@ -262,6 +266,7 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
             let at = |s: &[figcraft_modifiers::Modifier]| s.get(i).cloned();
             let mods: Vec<(NodeId, figcraft_modifiers::Modifier)> = stacks.iter().filter_map(|(id, s)| Some((*id, at(s)?))).collect();
             RowView {
+                target_problem: target_problem(doc, &mods),
                 kind: kind.clone(),
                 enabled: mods.iter().all(|(_, m)| m.enabled),
                 id: mods.first().map(|(_, m)| m.id.clone()).unwrap_or_default(),
@@ -272,6 +277,16 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
         })
         .collect();
     View::Rows(rows)
+}
+
+/// Why a copy-to-shape row's target can't be used, on the first layer of `mods` where it can't.
+fn target_problem(doc: &Document, mods: &[(NodeId, figcraft_modifiers::Modifier)]) -> Option<String> {
+    mods.iter().find_map(|(id, m)| match &m.kind {
+        ModifierKind::CopyToShape(c) if !c.target.is_empty() => {
+            figcraft_modifiers::parse_target(&c.target).and_then(|t| figcraft_engine::cmd::modifier::check_target(doc, *id, t)).err()
+        }
+        _ => None,
+    })
 }
 
 /// The value every layer has for `param` (None when they differ: "Mixed").
@@ -330,8 +345,14 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
             return;
         }
     };
-    // Warnings of the first layer's evaluation: under their rows, or under the list.
-    let warnings = sel.first().and_then(|i| doc.node(*i)).and_then(figcraft_modifiers::evaluate_node).map(|o| o.warnings.clone()).unwrap_or_default();
+    // Warnings of the first layer's evaluation (copy-to-shape targets resolved in the document):
+    // under their rows, or under the list.
+    let warnings = sel
+        .first()
+        .and_then(|i| doc.node(*i))
+        .and_then(|n| figcraft_modifiers::evaluate_node_in_doc(doc, n))
+        .map(|o| o.warnings.clone())
+        .unwrap_or_default();
     let mut drag = ListDrag::in_order(ui, LIST);
     let mut removed = None;
     for (i, r) in rows.iter().enumerate() {
@@ -364,11 +385,13 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
                 removed = Some(i);
             }
         });
-        row_menu(app, ui, header, &ids, i, r, rows.len());
+        row_menu(app, ui, header, &ids, i, rows.len());
         if open {
             settings(app, ui, &ids, i, r);
         }
-        for w in warnings.iter().filter(|w| w.modifier.as_deref() == Some(r.id.as_str())) {
+        // An open row already shows its target's problem under the target field.
+        let shown = if open { r.target_problem.as_deref() } else { None };
+        for w in warnings.iter().filter(|w| w.modifier.as_deref() == Some(r.id.as_str()) && Some(w.message.as_str()) != shown) {
             widgets::note(ui, &w.message, t.warning);
         }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
@@ -422,7 +445,7 @@ fn switch_kind(app: &mut FigApp, ids: &[NodeId], i: usize, r: &RowView, kind: &s
 
 /// Row `i`'s right-click menu: copy, paste below, duplicate, and apply up to here once
 /// `modifier.apply` exists.
-fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usize, r: &RowView, len: usize) {
+fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usize, len: usize) {
     let can_paste = !app.session.clipboard.picabia_modifiers.is_empty();
     let can_apply = figcraft_engine::find_command("modifier.apply").is_some();
     row_context_menu(ui, header, Id::unique(("modifier_menu", i))).show(|ui| {
@@ -439,16 +462,8 @@ fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usiz
             ui.close();
         }
         if menu_item(ui, tr("Duplicate"), "") {
-            let steps = r
-                .params
-                .iter()
-                .map(|(id, p)| {
-                    let mut props = p.clone();
-                    props.insert("enabled".into(), json!(r.enabled));
-                    ("modifier.add", json!({"ids": [id], "kind": r.kind, "index": i + 1, "props": props}))
-                })
-                .collect();
-            one_step(app, "Add modifier", steps);
+            // The copy keeps its eye and carries the row's variable bindings.
+            app.run("modifier.duplicate", json!({"ids": ids, "index": i}));
             ui.close();
         }
         if can_apply && menu_item(ui, tr("Apply up to here"), "") {
@@ -475,6 +490,10 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
                 field(app, ui, ids, i, r, f, half);
             }
         });
+        // Why the target this row picks can't be used.
+        if let (Some(reason), true) = (&r.target_problem, fields.iter().any(|f| matches!(f, Field::Target { .. }))) {
+            widgets::note(ui, &trf("Target: {reason}", &[("reason", reason)]), t.warning);
+        }
         // Why an expression typed into this row doesn't read.
         for f in *fields {
             if let Some(e) = ui.data(|d| d.get_temp::<String>(expr_field_id(i, f.param()).with("error"))) {
@@ -587,27 +606,22 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
 /// The most layers the target dropdown lists.
 const MAX_TARGETS: usize = 300;
 
-/// The layers of the current page a copy-to-shape can target (not the selection), in layer order
-/// (top level first), as (id, name); at most [`MAX_TARGETS`].
-fn page_layers(app: &FigApp, sel: &[NodeId]) -> Vec<(NodeId, String)> {
-    let (Ok(doc), Ok(page)) = (app.session.doc(), app.session.page()) else { return Vec::new() };
-    let mut out = Vec::new();
-    let mut todo: Vec<NodeId> = doc.node(page).map(|p| p.children.iter().rev().copied().collect()).unwrap_or_default();
-    while let Some(id) = todo.pop() {
-        if out.len() >= MAX_TARGETS {
-            break;
-        }
-        let Some(n) = doc.node(id) else { continue };
-        if !sel.contains(&id) {
-            out.push((id, n.name.clone()));
-        }
-        todo.extend(n.children.iter().rev().copied());
-    }
-    out
+/// The layers every layer of `sel` can copy onto (`modifier::target_choices`, intersected), in
+/// the first layer's order, as (id, name); at most [`MAX_TARGETS`].
+pub(crate) fn shared_targets(doc: &Document, sel: &[NodeId]) -> Vec<(NodeId, String)> {
+    let Some((first, rest)) = sel.split_first() else { return Vec::new() };
+    let others: Vec<std::collections::BTreeSet<NodeId>> =
+        rest.iter().map(|s| figcraft_engine::cmd::modifier::target_choices(doc, *s).into_iter().map(|(t, _)| t).collect()).collect();
+    figcraft_engine::cmd::modifier::target_choices(doc, *first)
+        .into_iter()
+        .filter(|(t, _)| others.iter().all(|o| o.contains(t)))
+        .take(MAX_TARGETS)
+        .collect()
 }
 
-/// The target dropdown of field `param` of row `i`: the target layer's name (or a prompt), and
-/// a menu of the page's layers.
+/// The target dropdown of field `param` of row `i`: the target layer's name (or a prompt; a
+/// warning sign and the reason as its tooltip when it can't be used), and a menu of the layers
+/// every selected layer can copy onto.
 fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str) {
     let first = r.params.first().and_then(|(_, p)| p.get(param).and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
     let same = r.params.iter().all(|(_, p)| p.get(param).and_then(Value::as_str).unwrap_or_default() == first);
@@ -618,10 +632,18 @@ fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &Row
         (true, false, Some(n)) => n,
         (true, false, None) => tr("Missing layer").to_string(),
     };
-    let resp = widgets::dropdown(ui, &label, ui.available_width(), Some(Icon::Vector));
+    let lead = if r.target_problem.is_some() { Icon::GamutWarning } else { Icon::Vector };
+    let mut resp = widgets::dropdown(ui, &label, ui.available_width(), Some(lead));
+    if let Some(reason) = &r.target_problem {
+        resp = resp.on_hover_text(reason);
+    }
     let mut picked = None;
     menu_popup(&resp).show(|ui| {
-        for (id, n) in page_layers(app, ids) {
+        let choices = app.session.doc().map(|d| shared_targets(d, ids)).unwrap_or_default();
+        if choices.is_empty() {
+            ui.label(egui::RichText::new(tr("No layer to copy onto")).font(regular(11.0)));
+        }
+        for (id, n) in choices {
             if menu_item(ui, &n, "") {
                 picked = Some(id);
                 ui.close();

@@ -2,7 +2,9 @@
 //! panel suites (`panel_reorder_tests`, `panel_remove_tests`, `property_menu_tests`,
 //! `field_tests`): adding from the `+` menu, switching kind, reordering by drag, removing and
 //! toggling rows, scrubbing a field as one undo step, "Mixed" across layers, the row and header
-//! menus, and the field table covering every kind's parameters.
+//! menus, and the field table covering every kind's parameters; the copy-to-shape target picker
+//! (the layers every selected layer can copy onto, a refused target flagged with its reason) and
+//! Duplicate carrying variable bindings.
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Modifiers, PointerButton, Pos2, pos2};
@@ -10,7 +12,7 @@ use figcraft_doc::NodeId;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
-use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, fields_of, known};
+use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, fields_of, known, shared_targets};
 use crate::layers_drag_tests::Ui;
 use crate::list_drag::grip_id;
 use crate::live_tests::{flat, text_center};
@@ -458,4 +460,101 @@ fn an_expression_is_added_typed_shown_and_removed() {
     let menu = click_with(&mut u, text_center(&shapes, "= i * 15"), PointerButton::Secondary);
     click(&mut u, text_center(&menu, "Remove expression"));
     assert!(stack(&mut u, r)[0].get("rotateExpr").is_none_or(Value::is_null), "removed");
+}
+
+/// Row Duplicate is `modifier.duplicate`: the copy carries the row's variable bindings, under its
+/// own id, in one undo step.
+#[test]
+fn duplicate_carries_the_rows_variable_bindings() {
+    let mut s = Session::new();
+    let r = rect(&mut s, 0.0);
+    s.execute("modifier.add", &json!({"ids": [r], "kind": "linearArray"})).unwrap();
+    let c = s.execute("variable.createCollection", &json!({"name": "Theme", "modes": ["Light"]})).unwrap();
+    let v = s.execute("variable.create", &json!({"collection": c["id"], "name": "copies", "type": "number", "value": 4})).unwrap();
+    s.execute("variable.bind", &json!({"ids": [r], "field": figcraft_modifiers::binding_key("m1", "count"), "variable": v["id"]})).unwrap();
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.enable_accesskit();
+    u.frame(vec![]);
+    let steps = undo_steps(&u);
+    let at = dropdown(&mut u, 0);
+    let menu = click_with(&mut u, at, PointerButton::Secondary);
+    click(&mut u, text_center(&menu, "Duplicate"));
+    let st = stack(&mut u, r);
+    assert_eq!(st.len(), 2);
+    assert_eq!(undo_steps(&u), steps + 1);
+    let copy = st[1]["id"].as_str().unwrap().to_string();
+    assert_ne!(copy, "m1");
+    let doc = u.app.session.doc().unwrap();
+    let bound = &doc.node(r).unwrap().bound;
+    assert_eq!(bound.get(&figcraft_modifiers::binding_key(&copy, "count")), bound.get(&figcraft_modifiers::binding_key("m1", "count")));
+    assert!(bound.contains_key(&figcraft_modifiers::binding_key(&copy, "count")), "the copy is bound too");
+}
+
+/// The picker offers what `modifier::target_choices` allows every selected layer: not the
+/// selected layers themselves, not a group around one of them.
+#[test]
+fn the_target_picker_offers_the_layers_every_selected_layer_can_copy_onto() {
+    let mut s = Session::new();
+    let a = rect(&mut s, 0.0);
+    let b = rect(&mut s, 100.0);
+    let e = id(&s.execute("shape.ellipse", &json!({"x": 200, "y": 0, "width": 80, "height": 40})).unwrap());
+    let doc = s.doc().unwrap();
+    let both: Vec<NodeId> = shared_targets(doc, &[a, b]).into_iter().map(|(t, _)| t).collect();
+    assert!(both.contains(&e));
+    assert!(!both.contains(&a) && !both.contains(&b), "neither selected layer: each can't copy onto itself");
+    let only_a: Vec<NodeId> = shared_targets(doc, &[a]).into_iter().map(|(t, _)| t).collect();
+    assert!(only_a.contains(&b) && only_a.contains(&e) && !only_a.contains(&a));
+    // In the panel: the dropdown lists the ellipse and picking it sets the target.
+    s.execute("modifier.add", &json!({"ids": [a, b], "kind": "copyToShape"})).unwrap();
+    s.execute("select.set", &json!({"ids": [a, b]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.enable_accesskit();
+    open_settings(&mut u, 0);
+    into_view(&mut u, grip_id(LIST, 0));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Choose a layer"));
+    let name = u.app.session.doc().unwrap().node(e).unwrap().name.clone();
+    let names = texts(&menu);
+    assert!(names.contains(&name), "{names:?}");
+    // The menu's entry, not the Layers panel's row of the same name (the panel is on the left).
+    let entry = menu
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::Text(t) if t.galley.text() == name => Some(t.visual_bounding_rect().center()),
+            _ => None,
+        })
+        .max_by(|p, q| p.x.total_cmp(&q.x))
+        .unwrap();
+    click(&mut u, entry);
+    for n in [a, b] {
+        assert_eq!(stack(&mut u, n)[0]["target"], json!(e.0.to_string()));
+    }
+}
+
+/// A target that can't be used (here: deleted) is flagged under the target field with its reason,
+/// once (the evaluation's warning saying the same isn't repeated).
+#[test]
+fn a_refused_target_shows_its_reason_once() {
+    let mut s = Session::new();
+    let r = rect(&mut s, 0.0);
+    let e = id(&s.execute("shape.ellipse", &json!({"x": 200, "y": 0, "width": 80, "height": 40})).unwrap());
+    s.execute("modifier.add", &json!({"ids": [r], "kind": "copyToShape", "props": {"target": e.0.to_string(), "mode": "alongPath"}})).unwrap();
+    s.execute("edit.delete", &json!({"ids": [e]})).unwrap();
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.enable_accesskit();
+    // Closed: the evaluation's warning shows under the row.
+    into_view(&mut u, grip_id(LIST, 0));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let gone = |t: &String| t.contains("the target layer is gone");
+    assert_eq!(texts(&shapes).iter().filter(|t| gone(t)).count(), 1, "{:?}", texts(&shapes));
+    // Open: the target field says why, and the same warning isn't repeated.
+    open_settings(&mut u, 0);
+    into_view(&mut u, grip_id(LIST, 0));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let t = texts(&shapes);
+    assert!(t.iter().any(|t| t.starts_with("Target: ") && gone(t)), "{t:?}");
+    assert_eq!(t.iter().filter(|t| gone(t)).count(), 1, "{t:?}");
+    assert!(t.iter().any(|t| t == "Missing layer"));
 }
