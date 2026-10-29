@@ -12,7 +12,7 @@ source, and copies never take part in auto layout.
 
 **The top row runs first**, like a recipe. Each step acts on everything the step above produced:
 
-- **Array steps** (linear, circular, grid, mirror) repeat the **whole previous set as a block**.
+- **Array steps** (linear, circular, grid, mirror, wallpaper) repeat the **whole previous set as a block**.
   Grid, then Circular is a ring of grids. Copy 0 of an array is the identity: the original is one of
   the `count` copies.
 - **Per-instance steps** (transform each, randomize) change each instance around its own pivot and
@@ -94,6 +94,28 @@ Copies run row by row from the original at the top left.
 | `axis` | choice | `vertical`, `horizontal`, `both` | `vertical` | `vertical` flips left to right across a vertical line; `horizontal` flips top to bottom; `both` gives four sets (original, left-right, top-bottom, both) |
 | `offset` | pt | any | 0 | Moves the axis line away from the pivot, perpendicular to it (for `both`, each line moves this far) |
 | `keepOriginal` | on/off | | on | On: previous set plus its reflection(s). Off: only the reflection(s); `both` then gives three sets |
+
+### wallpaper
+
+The 17 plane (wallpaper) symmetry groups. The layer is the motif in cell 0 at the identity; the
+other copies are the group's motif transforms in cell 0 plus the same set in every other cell of a
+`cols` x `rows` lattice (copies run cell by cell, columns fastest, so copy 0 is the original).
+Rotation centres and mirror or glide axes pass through the layer's **top-left corner** (plus
+`originX`/`originY`), so a motif drawn inside its cell tiles without overlapping itself. Guides
+show the lattice. Copies per cell: p1 1, p2 2, pm 2, pg 2, cm 2, pmm 4, pmg 4, pgg 4, cmm 4, p4 4,
+p4m 8, p4g 8, p3 3, p3m1 6, p31m 6, p6 6, p6m 12. The centred groups (cm, cmm) use their primitive
+cell, a parallelogram with edges `(w, 0)` and `(w/2, h/2)`.
+
+| Field | Unit | Range | Default | Meaning |
+|---|---|---|---|---|
+| `group` | choice | `p1` `p2` `pm` `pg` `cm` `pmm` `pmg` `pgg` `cmm` `p4` `p4m` `p4g` `p3` `p3m1` `p31m` `p6` `p6m` | `p4m` | The symmetry group |
+| `cols` | cells | 1 to 100 | 3 | Cells along the first lattice vector |
+| `rows` | cells | 1 to 100 | 3 | Cells along the second lattice vector (cols x rows x copies per cell x earlier copies is capped at 10 000) |
+| `cellWidth` | pt | 0.001 to 1 000 000 | 100 | Lattice width. For the square groups (p4*) it is the side; for the hexagonal groups (p3*, p6*) it is the lattice constant |
+| `cellHeight` | pt | 0.001 to 1 000 000 | 100 | Lattice height for the oblique and rectangular groups (p1, p2, pm, pg, cm, pmm, pmg, pgg, cmm); ignored by the square and hexagonal groups |
+| `angle` | deg | 1 to 179 | 90 | Angle between the lattice vectors for the oblique groups p1 and p2; ignored by the others |
+| `originX` | pt | any | 0 | Moves the symmetry origin from the layer's top-left corner, x |
+| `originY` | pt | any | 0 | Same, y |
 
 ### transformEach
 

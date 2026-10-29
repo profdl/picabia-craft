@@ -19,6 +19,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("mirror", "Mirror"),
     ("transformEach", "Transform each"),
     ("randomize", "Randomize"),
+    ("wallpaper", "Wallpaper"),
 ];
 
 /// The label of kind id `kind` ("Linear array"), or `None` for a kind this build doesn't know.
@@ -119,6 +120,7 @@ pub enum ModifierKind {
     Mirror(Mirror),
     TransformEach(TransformEach),
     Randomize(Randomize),
+    Wallpaper(Wallpaper),
     /// A kind this build doesn't know, or a known kind whose params don't read (`error` says
     /// why). Kept on a round trip, ignored when evaluating.
     Other {
@@ -220,6 +222,93 @@ impl Default for Mirror {
     }
 }
 
+/// The 17 plane crystallographic groups, by their short (Hermann-Mauguin) names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WallpaperGroup {
+    #[serde(rename = "p1")]
+    P1,
+    #[serde(rename = "p2")]
+    P2,
+    #[serde(rename = "pm")]
+    Pm,
+    #[serde(rename = "pg")]
+    Pg,
+    #[serde(rename = "cm")]
+    Cm,
+    #[serde(rename = "pmm")]
+    Pmm,
+    #[serde(rename = "pmg")]
+    Pmg,
+    #[serde(rename = "pgg")]
+    Pgg,
+    #[serde(rename = "cmm")]
+    Cmm,
+    #[serde(rename = "p4")]
+    P4,
+    #[default]
+    #[serde(rename = "p4m")]
+    P4m,
+    #[serde(rename = "p4g")]
+    P4g,
+    #[serde(rename = "p3")]
+    P3,
+    #[serde(rename = "p3m1")]
+    P3m1,
+    #[serde(rename = "p31m")]
+    P31m,
+    #[serde(rename = "p6")]
+    P6,
+    #[serde(rename = "p6m")]
+    P6m,
+}
+
+impl WallpaperGroup {
+    /// All 17 groups, in the usual order.
+    pub const ALL: [WallpaperGroup; 17] = [
+        WallpaperGroup::P1,
+        WallpaperGroup::P2,
+        WallpaperGroup::Pm,
+        WallpaperGroup::Pg,
+        WallpaperGroup::Cm,
+        WallpaperGroup::Pmm,
+        WallpaperGroup::Pmg,
+        WallpaperGroup::Pgg,
+        WallpaperGroup::Cmm,
+        WallpaperGroup::P4,
+        WallpaperGroup::P4m,
+        WallpaperGroup::P4g,
+        WallpaperGroup::P3,
+        WallpaperGroup::P3m1,
+        WallpaperGroup::P31m,
+        WallpaperGroup::P6,
+        WallpaperGroup::P6m,
+    ];
+}
+
+/// `wallpaper`: one of the 17 plane groups as a lattice of `cols` x `rows` cells, each holding the
+/// group's motif copies. The origin of the symmetry is the layer's top-left corner plus
+/// `originX`/`originY`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Wallpaper {
+    pub group: WallpaperGroup,
+    #[serde(deserialize_with = "lenient::count")]
+    pub cols: u32,
+    #[serde(deserialize_with = "lenient::count")]
+    pub rows: u32,
+    pub cell_width: f64,
+    pub cell_height: f64,
+    pub angle: f64,
+    pub origin_x: f64,
+    pub origin_y: f64,
+}
+
+impl Default for Wallpaper {
+    fn default() -> Self {
+        Wallpaper { group: WallpaperGroup::P4m, cols: 3, rows: 3, cell_width: 100.0, cell_height: 100.0, angle: 90.0, origin_x: 0.0, origin_y: 0.0 }
+    }
+}
+
 /// `transformEach`: move, turn and scale every instance around its own centre; with
 /// `progressive` the amounts ramp from none on the first instance to the full amount on the last.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -295,6 +384,7 @@ impl ModifierKind {
             ModifierKind::Mirror(_) => "mirror",
             ModifierKind::TransformEach(_) => "transformEach",
             ModifierKind::Randomize(_) => "randomize",
+            ModifierKind::Wallpaper(_) => "wallpaper",
             ModifierKind::Other { kind, .. } => kind,
         }
     }
@@ -308,6 +398,7 @@ impl ModifierKind {
             "mirror" => ModifierKind::Mirror(Mirror::default()),
             "transformEach" => ModifierKind::TransformEach(TransformEach::default()),
             "randomize" => ModifierKind::Randomize(Randomize::default()),
+            "wallpaper" => ModifierKind::Wallpaper(Wallpaper::default()),
             _ => return None,
         })
     }
@@ -321,6 +412,7 @@ impl ModifierKind {
             ModifierKind::Mirror(p) => params_of(p),
             ModifierKind::TransformEach(p) => params_of(p),
             ModifierKind::Randomize(p) => params_of(p),
+            ModifierKind::Wallpaper(p) => params_of(p),
             ModifierKind::Other { .. } => Map::new(),
         }
     }
@@ -338,6 +430,7 @@ impl ModifierKind {
             "mirror" => wrap(read(rest), ModifierKind::Mirror),
             "transformEach" => wrap(read(rest), ModifierKind::TransformEach),
             "randomize" => wrap(read(rest), ModifierKind::Randomize),
+            "wallpaper" => wrap(read(rest), ModifierKind::Wallpaper),
             _ => return (ModifierKind::Other { kind: kind.to_string(), error: None }, rest.clone()),
         };
         r.unwrap_or_else(|e| (ModifierKind::Other { kind: kind.to_string(), error: Some(e) }, rest.clone()))

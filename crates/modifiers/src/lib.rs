@@ -56,7 +56,8 @@ mod tests;
 
 pub use eval::{Guide, Instance, Output, Warning, evaluate, splitmix64};
 pub use model::{
-    CircularArray, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach, kind_label,
+    CircularArray, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach, Wallpaper,
+    WallpaperGroup, kind_label,
 };
 pub use node::{evaluate_node, evaluate_node_in, has_modifiers, node_bounds, node_instances, node_stack};
 pub use parse::{parse, parse_cached, stack_from_value, stack_to_value, to_json};

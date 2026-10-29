@@ -10,6 +10,7 @@ mod mirror;
 mod randomize;
 mod rng;
 mod transform_each;
+mod wallpaper;
 
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -62,6 +63,7 @@ pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx) -> StageResult {
         ModifierKind::Mirror(p) => mirror::stage(p, ctx),
         ModifierKind::TransformEach(p) => transform_each::stage(p, ctx),
         ModifierKind::Randomize(p) => randomize::stage(p, ctx),
+        ModifierKind::Wallpaper(p) => wallpaper::stage(p, ctx),
         ModifierKind::Other { .. } => StageResult::unchanged(),
     }
 }

@@ -181,7 +181,7 @@ fn every_kind_has_defaults_that_round_trip() {
         let back = Modifier::from_value(&m.to_value()).unwrap();
         assert_eq!(back, m, "{kind}");
     }
-    assert!(Modifier::new("m1", "wallpaper").is_none());
+    assert!(Modifier::new("m1", "copyToShape").is_none());
 }
 
 #[test]
