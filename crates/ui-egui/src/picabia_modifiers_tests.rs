@@ -418,6 +418,13 @@ fn a_bound_field_shows_its_variable_and_detaches() {
     into_view(&mut u, grip_id(LIST, 0));
     let shapes = flat(&u.frame_output(vec![]).shapes);
     assert!(texts(&shapes).iter().any(|t| t == "copies"), "the count field shows the variable");
+    // Alone on its row, the bound field takes both columns so the chip has room for the name.
+    let nodes = u.frame_output(vec![]).platform_output.accesskit_update.unwrap().nodes;
+    let width =
+        |label: &str| nodes.iter().filter(|(_, n)| n.label() == Some(label)).filter_map(|(_, n)| n.bounds()).map(|b| b.x1 - b.x0).fold(0.0, f64::max);
+    // The offset X field below it is one column wide.
+    assert!(width("X") > 40.0, "the X field is found");
+    assert!(width("Count") > width("X") * 1.5, "the bound count field spans the row: {} vs {}", width("Count"), width("X"));
     let detach = labelled(&mut u, "Detach variable");
     let detach = *detach.first().expect("a Detach button");
     // The button shows while the field is hovered.

@@ -485,9 +485,15 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
     }
     let half = widgets::col_width(ui.available_width());
     for fields in rows {
+        // A number alone on its row showing a chip (a bound variable or an expression) takes both
+        // columns, so a text lead ("Count") leaves the chip room for its name.
+        let width = match fields {
+            [f @ Field::Num { .. }] if shows_chip(app, ids, r, f.param()) => half * 2.0 + widgets::GUTTER,
+            _ => half,
+        };
         row(ui, 32.0, |ui| {
             for f in *fields {
-                field(app, ui, ids, i, r, f, half);
+                field(app, ui, ids, i, r, f, width);
             }
         });
         // Why the target this row picks can't be used.
@@ -501,6 +507,17 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             }
         }
     }
+}
+
+/// Whether number field `param` of row `r` shows a chip: an expression, or a variable bound on the
+/// first selected layer.
+fn shows_chip(app: &FigApp, ids: &[NodeId], r: &RowView, param: &str) -> bool {
+    let key = figcraft_modifiers::expr_key(param);
+    if r.params.iter().any(|(_, p)| p.get(&key).is_some_and(Value::is_string)) {
+        return true;
+    }
+    let (Some(mid), Some(first), Ok(doc)) = (r.common_id.as_deref(), ids.first(), app.session.doc()) else { return false };
+    doc.node(*first).is_some_and(|n| n.bound.contains_key(&figcraft_modifiers::binding_key(mid, param)))
 }
 
 /// Field `f` of row `i`: a number field (bindable to a number variable when the row has one id
@@ -559,7 +576,8 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 expression_menu(app, ui, ids, i, param, area, None);
             }
         }
-        Field::Target { .. } => target_field(app, ui, ids, i, r, param),
+        // Dropdowns span both field columns, ending where the number fields do.
+        Field::Target { .. } => target_field(app, ui, ids, i, r, param, half * 2.0 + widgets::GUTTER),
         Field::Check { label, .. } => {
             let on = r.params.iter().all(|(_, p)| p.get(param).and_then(Value::as_bool).unwrap_or(false));
             let control = |app: &mut FigApp, ui: &mut Ui| {
@@ -583,7 +601,7 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 _ => tr("Mixed"),
             };
             let control = |app: &mut FigApp, ui: &mut Ui| {
-                let resp = widgets::dropdown(ui, label, ui.available_width(), None);
+                let resp = widgets::dropdown(ui, label, ui.available_width().min(half * 2.0 + widgets::GUTTER), None);
                 menu_popup(&resp).show(|ui| {
                     for (value, l) in *options {
                         if menu_item(ui, tl(l), "") {
@@ -594,9 +612,15 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 });
             };
             match &bind {
-                Some((key, VariableType::String)) => {
-                    crate::variable_ui::bindable(app, ui, ids, key, VariableType::String, ui.available_width(), control)
-                }
+                Some((key, VariableType::String)) => crate::variable_ui::bindable(
+                    app,
+                    ui,
+                    ids,
+                    key,
+                    VariableType::String,
+                    ui.available_width().min(half * 2.0 + widgets::GUTTER),
+                    control,
+                ),
                 _ => control(app, ui),
             }
         }
@@ -622,7 +646,7 @@ pub(crate) fn shared_targets(doc: &Document, sel: &[NodeId]) -> Vec<(NodeId, Str
 /// The target dropdown of field `param` of row `i`: the target layer's name (or a prompt; a
 /// warning sign and the reason as its tooltip when it can't be used), and a menu of the layers
 /// every selected layer can copy onto.
-fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str) {
+fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str, width: f32) {
     let first = r.params.first().and_then(|(_, p)| p.get(param).and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
     let same = r.params.iter().all(|(_, p)| p.get(param).and_then(Value::as_str).unwrap_or_default() == first);
     let name = first.parse::<u64>().ok().and_then(|n| app.session.doc().ok()?.node(NodeId(n)).map(|n| n.name.clone()));
@@ -633,7 +657,7 @@ fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &Row
         (true, false, None) => tr("Missing layer").to_string(),
     };
     let lead = if r.target_problem.is_some() { Icon::GamutWarning } else { Icon::Vector };
-    let mut resp = widgets::dropdown(ui, &label, ui.available_width(), Some(lead));
+    let mut resp = widgets::dropdown(ui, &label, ui.available_width().min(width), Some(lead));
     if let Some(reason) = &r.target_problem {
         resp = resp.on_hover_text(reason);
     }
