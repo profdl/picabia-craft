@@ -1,6 +1,7 @@
 # Picabia roadmap
 
-**Stage:** P0 (fork, rebrand, spec) landing; P1 (model, evaluator, commands) in progress.
+**Stage:** P0–P7 landed (2026-10-29); first upstream merge done (`PIC-merge: upstream 96eed159..f702105e`).
+Next: polish (handles for the remaining kinds, per-kind undo labels) and the release packaging ids.
 
 Picabia is a thin fork of [FigCraft](https://github.com/storytold/figcraft): everything FigCraft does,
 plus a live, non-destructive **modifier stack** (arrays, mirrors, per-copy transforms, randomisation).
@@ -8,16 +9,47 @@ New code lives in new crates and files; edits to FigCraft's files are small mark
 [`SEAMS.md`](SEAMS.md) (`rg "PICABIA:"` finds them). Upstream is merged weekly. Crate names, the
 `.figcraft` file extension and the licence (MIT OR Apache-2.0) are unchanged.
 
-| Phase | What | Status |
-|---|---|---|
-| P0 | Fork, rebrand (name, ids, data folders, About, icon), CI guards, spec and docs | Branding, icon, CI and docs done; Linux/FreeBSD/Flatpak/Windows-installer id renames deferred (see below) |
-| P1 | `figcraft-modifiers` crate (model, parse with caps, `evaluate` for linear array) and `modifier.*` commands | In progress |
-| P2 | Draw copies, bounds, hit testing, exports (svg/pdf/png; bake for .fig/Penpot/Sketch) | Not started |
-| P3 | Design panel "Modifiers" section, built from FigCraft's own widgets | Not started |
-| P4 | Circular, grid, mirror, transform each, randomize; stacking and caps | Not started |
-| P5 | `modifier.apply`, menus, canvas handles, layers badge | Not started |
-| P6 | Variable bindings and per-copy expressions | Not started |
-| P7 | Wallpaper groups and copy to shape | Wallpaper (PIC7.1) and copy to shape (PIC7.2–7.4: points, along path, populate; target checks, remapping on copy) done; the panel's target picker is P3's |
+Grades are by behaviour, erring low (A: done and checked in the app; B: works, gaps listed; C: partial).
+
+| Phase | What | Grade | Status |
+|---|---|---|---|
+| P0 | Fork, rebrand (name, ids, data folders, About, icon), CI guards, spec and docs | B | Name, macOS/web ids, data folder, About, placeholder icon, CI guards and docs done. Linux/FreeBSD/Flatpak/Windows-installer ids and the binary name deferred (below) |
+| P1 | `figcraft-modifiers` crate (model, parse with caps, cached evaluate) and `modifier.*` commands | A | Commands add/remove/move/set/toggle/copy/paste/list/remove_all/duplicate/targets/apply; junk sweep; stack survives save/reopen, copy/paste, duplicate, Alt-drag, collab and branch merge (tests); CLI and MCP smoke tests |
+| P2 | Draw copies, bounds, hit testing, exports | B | Render, paint/export/dirty bounds, LOD, hit test/hover/marquee as the source, svg/pdf write every copy, .fig/Penpot bake. Gaps: nested copies aren't hit-tested per copy; backdrop blur on copies in svg/pdf; masks and boolean operands with stacks |
+| P3 | Design panel "Modifiers" section, built from FigCraft's own widgets | B+ | Built like Effects (header +, rows, kind dropdown, eye, minus, row menu, drag reorder, Mixed, scrub as one step); variable and expression chips; copy-to-shape target picker from `modifier::target_choices` (shared by the selection), refused targets flagged with the reason; Duplicate carries bindings. Screenshots light/dark checked. Linear-array icon reads slightly small |
+| P4 | Circular, grid, mirror, transform each, randomize; stacking and caps | B | All kinds and block stacking with per-stage indices; product cap before allocating with a warning. No 10k-copy interactivity benchmark yet |
+| P5 | `modifier.apply`, menus, canvas handles, layers badge | B | Apply (and `upTo`), Object/context Modifiers submenu, layers badge, Inspect and a11y lines; handles for mirror axis, ring centre/radius, linear offset, grid gaps (snap, Esc cancel, one undo step). No handles yet for wallpaper, transform each, randomize, copy to shape or for a row whose panel settings are open (per-row focus) |
+| P6 | Variable bindings and per-copy expressions | A- | Bindings keyed by modifier id (survive reorder, save, collab, copy/paste/duplicate); expressions `i`, `n`, `t`, `value` with a chip in the panel |
+| P7 | Wallpaper groups and copy to shape | B | 17 plane groups; copy to shape on points/along the outline/populate with target checks (self, ancestor, descendant, page, missing, loops), remapping on duplicate/paste/component instances, panel picker. The canvas pick-a-layer tool (instead of the dropdown) isn't built |
+
+## Known issues
+
+- **Pre-existing upstream test failures** (fail on pristine upstream `96eed159` with the PIC0.2 pin
+  applied, proven in a temporary worktree on 2026-10-29; not Picabia's):
+  `figcraft-engine board_tables_tests::a_double_click_types_in_the_cell_and_its_row_grows_with_the_text`
+  and `figcraft-ui-egui clipboard_fence_tests::a_synthetic_copy_shortcut_leaves_the_system_clipboard_alone`.
+  `cargo xtask ci` stops at its test step on these two on this machine; every other gate passes.
+- **Clippy 1.96 lints on upstream code** (`nonminimal_bool` in `crates/text/src/fontdb.rs`,
+  `manual_range_contains` in `crates/vectordrawable`): fail on pristine upstream too; allowed by two
+  one-line seams (PIC0.7, see `SEAMS.md`) until upstream fixes them.
+- Undo labels are generic ("Set modifier", "Add modifier"), not per kind ("Add linear array").
+- Wallpaper: the lattice guides start at the layer's corner while the motifs sit on the lattice
+  nodes, so the guides run past the copies on the right and bottom.
+- The warning colour token on white reads light (the panel uses FigCraft's `warning` token as-is).
+
+## Deferred
+
+- Per-kind undo labels.
+- Canvas handles for: the row whose settings are open (focus one row's handles), wallpaper,
+  transform each, randomize, copy to shape.
+- Hit testing nested copies per copy (a copy inside a copied group selects the outer source).
+- Masks and boolean operands that carry a stack.
+- Backdrop blur on copies in svg/pdf exports.
+- Linux/FreeBSD/Flatpak/Windows-installer bundle ids and file names (below); renaming the binary
+  from `figcraft` to `picabia`.
+- Linear-array icon: draw slightly larger to match the other kind icons.
+- A canvas pick-layer tool for copy-to-shape targets (today: the dropdown).
+- A 10k-copy pan/zoom benchmark.
 
 ## P0 branding, as built
 
