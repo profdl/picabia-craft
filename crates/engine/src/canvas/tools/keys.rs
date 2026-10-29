@@ -62,10 +62,12 @@ impl Session {
             let also = figcraft_doc::geometry::OutlineHits { hidden: v.outline_hidden, bounds: v.outline_bounds };
             return figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result), also);
         }
-        match focus {
+        let hit = match focus {
             Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol, Some(&result)),
             None => doc.hit_test(page, p, tol, Some(&result)),
-        }
+        };
+        // PICABIA: a click on a modifier copy hits its source.
+        figcraft_render::picabia::hit_with_copies(doc, focus.unwrap_or(page), p, tol, Some(&result), hit)
     }
 
     /// Enter with a shape or frame tool (`tool.place`): what a click with it makes, centred on `at`

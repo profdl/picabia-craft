@@ -141,12 +141,18 @@ fn export_penpot(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub fn penpot_bytes(doc: &Document) -> Result<(Vec<u8>, Vec<String>)> {
-    figcraft_format::penpot::export(doc).map_err(|e| EngineError::Other(e.to_string()))
+    let (doc, mut baked) = crate::picabia_bake::baked(doc); // PICABIA: modifier copies baked, with a warning
+    let (bytes, warnings) = figcraft_format::penpot::export(&doc).map_err(|e| EngineError::Other(e.to_string()))?;
+    baked.extend(warnings);
+    Ok((bytes, baked))
 }
 
 /// `doc` as a `.fig` file (with a thumbnail) and the warnings about what was left out.
 pub fn fig_bytes(doc: &Document) -> Result<(Vec<u8>, Vec<String>)> {
-    figcraft_format::fig::export(doc, thumbnail(doc).as_deref()).map_err(|e| EngineError::Other(e.to_string()))
+    let (doc, mut baked) = crate::picabia_bake::baked(doc); // PICABIA: modifier copies baked, with a warning
+    let (bytes, warnings) = figcraft_format::fig::export(&doc, thumbnail(&doc).as_deref()).map_err(|e| EngineError::Other(e.to_string()))?;
+    baked.extend(warnings);
+    Ok((bytes, baked))
 }
 
 /// The scale that gives `ids` (their export area together) `setting`'s export size.

@@ -52,6 +52,11 @@ pub(super) fn overlays(app: &FigApp, painter: &egui::Painter, t: &Tokens) -> Vec
         && app.session.tool.overlay.measure_box.is_none()
     {
         draw_outline(app, painter, &doc, h, stroke(outline_colour(&doc, h, accent(painter)), 1.5));
+        super::picabia::copy_outlines(app, painter, &doc, h, stroke(outline_colour(&doc, h, accent(painter)), 1.5)); // PICABIA: on every copy
+    }
+    // PICABIA: a selected layer's modifier copies get the faint outline boolean operands get.
+    for id in &sel {
+        super::picabia::copy_outlines(app, painter, &doc, *id, stroke(outline_colour(&doc, *id, accent(painter)).gamma_multiply(0.6), 1.0));
     }
     // Inside a boolean group (an operand selected or in vector edit mode): every operand's outline,
     // so the shapes making the live result stay visible while one of them changes.

@@ -18,6 +18,7 @@ mod builder;
 mod input;
 mod outline;
 mod overlays;
+mod picabia; // PICABIA: outlines on modifier copies
 mod render;
 mod rulers;
 

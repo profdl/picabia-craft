@@ -30,6 +30,8 @@ impl Session {
         let (doc, page) = (self.doc()?, self.page()?);
         let mut hits =
             if deep { figcraft_doc::geometry::marquee_deep(doc, page, r) } else { figcraft_doc::geometry::marquee_select(doc, page, r, within) };
+        // PICABIA: a marquee over a modifier copy takes in its source.
+        figcraft_render::picabia::marquee_copies(doc, if deep { page } else { within.unwrap_or(page) }, r, deep, &mut hits);
         if let Some(f) = self.ds()?.focused() {
             hits.retain(|h| *h != f && doc.is_ancestor(f, *h));
         }
