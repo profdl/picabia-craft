@@ -217,12 +217,6 @@ fn set_props_validates() {
 }
 
 #[test]
-fn kinds_without_an_evaluator_yet_pass_the_set_through() {
-    let s = stack(json!({"stack": [{"kind": "linearArray", "count": 2}, {"kind": "mirror"}, {"kind": "gridArray"}]}));
-    assert_eq!(evaluate(&s, B).instances.len(), 2);
-}
-
-#[test]
 fn node_entry_points_cache_and_report() {
     let mut n = figcraft_doc::Node::new(figcraft_doc::NodeId(5), figcraft_doc::NodeKind::Rectangle, "r", 20.0, 10.0);
     assert!(node_instances(&n).is_none() && node_stack(&n).is_none());

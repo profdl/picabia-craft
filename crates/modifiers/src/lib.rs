@@ -45,6 +45,8 @@
 mod cache;
 mod eval;
 mod kinds;
+#[cfg(test)]
+mod kinds_tests;
 mod lenient;
 pub mod model;
 mod node;

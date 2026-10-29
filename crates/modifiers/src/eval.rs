@@ -123,6 +123,11 @@ pub fn evaluate(stack: &Stack, bounds: Rect) -> Output {
                 }
                 set = repeat_block(&set, &copies);
             }
+            Stage::TooMany(copies) => {
+                let n = set.len().saturating_mul(copies);
+                out.warn(Some(&m.id), format!("{n} copies is more than {MAX_INSTANCES_PER_NODE}; this modifier and the ones after it are skipped"));
+                break;
+            }
             Stage::Each(local) => {
                 let n = set.len();
                 for (i, inst) in set.iter_mut().enumerate() {

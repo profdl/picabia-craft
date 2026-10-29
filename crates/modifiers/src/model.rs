@@ -200,6 +200,8 @@ pub enum MirrorAxis {
     Vertical,
     /// A horizontal line through the pivot: top and bottom swap.
     Horizontal,
+    /// Both lines: four quadrants.
+    Both,
 }
 
 /// `mirror`: reflect across `axis` through the pivot moved `offset` points along the reflection
@@ -229,11 +231,16 @@ pub struct TransformEach {
     pub scale_x: f64,
     pub scale_y: f64,
     pub progressive: bool,
+    /// Seeded per-copy variation: each amount above is multiplied by `1 + jitter · r`, `r` in
+    /// -1..=1 (0 = off).
+    pub jitter: f64,
+    #[serde(deserialize_with = "lenient::seed")]
+    pub jitter_seed: u32,
 }
 
 impl Default for TransformEach {
     fn default() -> Self {
-        TransformEach { offset_x: 0.0, offset_y: 0.0, rotate: 0.0, scale_x: 1.0, scale_y: 1.0, progressive: false }
+        TransformEach { offset_x: 0.0, offset_y: 0.0, rotate: 0.0, scale_x: 1.0, scale_y: 1.0, progressive: false, jitter: 0.0, jitter_seed: 1 }
     }
 }
 

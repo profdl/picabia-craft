@@ -1,11 +1,15 @@
 //! One module per modifier kind. Each turns its params into a [`Stage`]; [`crate::evaluate`] does
 //! the composition, caps and indexing. Adding a kind = a module here plus one arm in [`stage`].
 //!
-//! Kinds without a module yet ([`ModifierKind::CircularArray`], `GridArray`, `Mirror`,
-//! `TransformEach`, `Randomize`) evaluate as [`Stage::Unchanged`]: they pass the previous set
-//! through untouched.
+//! Unknown kinds ([`ModifierKind::Other`]) evaluate as [`Stage::Unchanged`].
 
+mod circular;
+mod grid;
 mod linear;
+mod mirror;
+mod randomize;
+mod rng;
+mod transform_each;
 
 use figcraft_geom::{Affine, Point, Rect};
 
@@ -17,9 +21,7 @@ use crate::{MAX_ANGLE, MAX_COUNT, MAX_LENGTH, MAX_SCALE};
 /// many instances the stages before it produced.
 pub(crate) struct Ctx {
     pub pivot: Point,
-    #[allow(dead_code)] // Read by the kinds that size copies from the layer (grid, mirror).
     pub bounds: Rect,
-    #[allow(dead_code)] // Read by per-instance kinds that ramp over the set.
     pub n_prev: usize,
 }
 
@@ -33,8 +35,10 @@ pub(crate) enum Stage {
     /// Repeat the whole set once per copy transform (`T_0` is usually the identity).
     Array(Vec<Affine>),
     /// Transform each instance around the pivot: `S_i * (pivot · L_i · pivot⁻¹)`.
-    #[allow(dead_code)] // Produced by transformEach and randomize.
     Each(EachFn),
+    /// The stage would produce this many copies of the set, more than the cap allows; nothing was
+    /// allocated.
+    TooMany(usize),
 }
 
 pub(crate) struct StageResult {
@@ -53,12 +57,12 @@ impl StageResult {
 pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx) -> StageResult {
     match kind {
         ModifierKind::LinearArray(p) => linear::stage(p, ctx),
-        ModifierKind::CircularArray(_)
-        | ModifierKind::GridArray(_)
-        | ModifierKind::Mirror(_)
-        | ModifierKind::TransformEach(_)
-        | ModifierKind::Randomize(_)
-        | ModifierKind::Other { .. } => StageResult::unchanged(),
+        ModifierKind::CircularArray(p) => circular::stage(p, ctx),
+        ModifierKind::GridArray(p) => grid::stage(p, ctx),
+        ModifierKind::Mirror(p) => mirror::stage(p, ctx),
+        ModifierKind::TransformEach(p) => transform_each::stage(p, ctx),
+        ModifierKind::Randomize(p) => randomize::stage(p, ctx),
+        ModifierKind::Other { .. } => StageResult::unchanged(),
     }
 }
 
@@ -101,4 +105,21 @@ impl Clamp<'_> {
         }
         usize::try_from(v.clamp(1, MAX_COUNT)).unwrap_or(1)
     }
+}
+
+impl Clamp<'_> {
+    /// A non-negative length within `0..=MAX_LENGTH`.
+    pub fn size(&mut self, name: &str, v: f64) -> f64 {
+        self.bounded(name, v, 0.0, MAX_LENGTH, 0.0)
+    }
+
+    /// A value within `lo..=hi`, `default` when not finite.
+    pub fn within(&mut self, name: &str, v: f64, lo: f64, hi: f64, default: f64) -> f64 {
+        self.bounded(name, v, lo, hi, default)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn rng_for_tests(seed: u32, index: usize) -> rng::Stream {
+    rng::Stream::new(seed, index)
 }

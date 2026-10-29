@@ -1,6 +1,6 @@
 # Modifiers
 
-> Params as of P1 (the first implementation may rename or add fields; this page follows the code).
+> Params as of P4 (this page follows the code).
 
 A **modifier stack** is a list of live, non-destructive steps attached to a layer. The layer keeps
 its own geometry; the stack describes how it is repeated and transformed. Edit the layer or any
@@ -64,44 +64,52 @@ list defaults and the range a field is clamped to; non-finite numbers are refuse
 
 ### circularArray
 
+The original is copy 0 and sits on the ring at `startAngle`; the other copies follow around it.
+
 | Field | Unit | Range | Default | Meaning |
 |---|---|---|---|---|
 | `count` | copies | 1 to 1000 | 6 | Total copies, original included |
-| `radius` | pt | >= 0 | 150 | Ring radius |
-| `startAngle` | deg | any | 0 | Angle of the first copy |
-| `sweep` | deg | -360 to 360 | 360 | Angle covered; a full 360 spreads copies evenly with no overlap |
-| `centerX` | pt | any | 0 | Ring centre, offset from the pivot, x |
-| `centerY` | pt | any | 0 | Ring centre, offset from the pivot, y |
-| `align` | on/off | | on | Rotate each copy to face along the ring |
+| `radius` | pt | >= 0 | 100 | Ring radius. The ring centre is this far from the original, opposite the start direction |
+| `startAngle` | deg | any | 0 | Angle of the first copy (0 = right of the ring centre, positive turns clockwise on screen) |
+| `sweep` | deg | -360 to 360 | 360 | Angle covered. At 360 or -360 copies are spaced `sweep / count` apart, so the last never lands on the first. Below that the last copy lands exactly at the end of the sweep |
+| `centerX` | pt | any | 0 | Moves the whole ring (and with it the first copy), x |
+| `centerY` | pt | any | 0 | Moves the whole ring, y |
+| `align` | on/off | | on | Turn each copy by the ring angle so it keeps facing along the ring |
 
 ### gridArray
 
+Copies run row by row from the original at the top left.
+
 | Field | Unit | Range | Default | Meaning |
 |---|---|---|---|---|
-| `rows` | copies | 1 to 1000 | 3 | Rows (rows x cols is capped at 10 000) |
+| `rows` | copies | 1 to 1000 | 3 | Rows (rows x cols x earlier copies is capped at 10 000) |
 | `cols` | copies | 1 to 1000 | 3 | Columns |
-| `gapX` | pt | any | 20 | Space between columns (added to the layer's width) |
-| `gapY` | pt | any | 20 | Space between rows (added to the layer's height) |
+| `gapX` | pt | any | 100 | Space between neighbouring copies' bounds, x (the step is the layer's width plus the gap) |
+| `gapY` | pt | any | 100 | Space between rows, y (the step is the layer's height plus the gap) |
 
 ### mirror
 
 | Field | Unit | Range | Default | Meaning |
 |---|---|---|---|---|
-| `axis` | choice | `vertical`, `horizontal`, `both` | `vertical` | `vertical` flips left to right across a vertical line; `both` gives four quadrants |
-| `offset` | pt | any | 0 | Moves the axis away from the pivot (perpendicular to it) |
-| `keepOriginal` | on/off | | on | On: previous set plus its reflection. Off: only the reflection |
+| `axis` | choice | `vertical`, `horizontal`, `both` | `vertical` | `vertical` flips left to right across a vertical line; `horizontal` flips top to bottom; `both` gives four sets (original, left-right, top-bottom, both) |
+| `offset` | pt | any | 0 | Moves the axis line away from the pivot, perpendicular to it (for `both`, each line moves this far) |
+| `keepOriginal` | on/off | | on | On: previous set plus its reflection(s). Off: only the reflection(s); `both` then gives three sets |
 
 ### transformEach
 
+The change happens around each copy's own pivot and in its own frame (so a copy that was turned
+moves along its turned axes).
+
 | Field | Unit | Range | Default | Meaning |
 |---|---|---|---|---|
-| `rotate` | deg | any | 0 | Rotation applied to every instance, about its own pivot |
-| `scaleX` | factor | > 0 | 1 | Horizontal scale of every instance |
-| `scaleY` | factor | > 0 | 1 | Vertical scale of every instance |
+| `rotate` | deg | any | 0 | Rotation of every instance |
+| `scaleX` | factor | 0 to 100 | 1 | Horizontal scale of every instance |
+| `scaleY` | factor | 0 to 100 | 1 | Vertical scale of every instance |
 | `offsetX` | pt | any | 0 | Shift of every instance, x |
 | `offsetY` | pt | any | 0 | Shift of every instance, y |
-| `progressive` | ramp | | off | Scales the effect by `t`, so the first copy is untouched and the last gets the full amount (shape of the ramp: linear, ease in, ease out) |
-| `jitter` | | | off | Adds a seeded random amount per copy to the fields above (amount and seed) |
+| `progressive` | on/off | | off | Scales the effect by `t`: the first copy is untouched and the last gets the full amount (offset and rotation grow linearly, scale goes from 1 to the full factor). One linear ramp; ease shapes are not implemented |
+| `jitter` | factor | 0 to 10 | 0 | Each amount above is multiplied by `1 + jitter x r`, `r` between -1 and 1 drawn per copy and amount (0 = off) |
+| `jitterSeed` | integer | 0 to 4 294 967 295 | 1 | Seed for `jitter` |
 
 ### randomize
 
@@ -112,5 +120,11 @@ list defaults and the range a field is clamped to; non-finite numbers are refuse
 | `scale` | factor | >= 0 | 0 | Maximum random scale change, plus or minus (0.2 = 80% to 120%) |
 | `seed` | integer | 0 to 4 294 967 295 | 1 | Same seed, same result on every platform and in the browser |
 
-Randomize derives its numbers from `seed` and the copy index only, so a copy never changes when
-other copies are added after it.
+Randomize derives its numbers from `seed` and the copy index only (SplitMix64 inside the crate, no
+platform generator), so a copy never changes when other copies are added after it.
+
+## Canvas guides
+
+Each array shows guides while its layer is selected: linear, the offset line from the first to the
+last copy; circular, the ring and its centre; grid, the outline of the whole lattice; mirror, the
+axis line(s). Transform each and randomize show none.
