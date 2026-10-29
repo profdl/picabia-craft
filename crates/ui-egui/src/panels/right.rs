@@ -22,6 +22,7 @@ use crate::{FigApp, RightTab};
 mod effects;
 mod inspect;
 mod menu;
+mod modifiers; // PICABIA: the Modifiers section (below Effects)
 mod paints;
 mod stroke;
 
@@ -291,6 +292,8 @@ fn design(app: &mut FigApp, ui: &mut Ui) {
     widgets::separator(ui);
     effects(app, ui, &doc, &sel);
     widgets::separator(ui);
+    modifiers::modifiers(app, ui, &doc, &sel); // PICABIA: the Modifiers section
+    widgets::separator(ui); // PICABIA
     crate::selection_colors::section(app, ui, &doc, &sel);
     if sel.iter().all(|i| doc.node(*i).is_some_and(|n| n.kind.is_frame_like())) {
         grids(app, ui, &doc, &sel);

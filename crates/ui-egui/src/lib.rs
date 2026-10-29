@@ -14,6 +14,7 @@ pub mod dialogs;
 pub mod home;
 pub mod i18n;
 pub mod icons;
+pub mod icons_picabia; // PICABIA: modifier icons
 pub mod live;
 pub mod menus;
 pub mod pending_open;

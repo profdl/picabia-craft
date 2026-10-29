@@ -18,6 +18,7 @@ figcraft-layout = { workspace = true }
 figcraft-render = { workspace = true }
 figcraft-pathops = { workspace = true }
 figcraft-engine = { workspace = true }
+figcraft-modifiers = { workspace = true } # PICABIA: the Modifiers section reads stacks
 figcraft-format = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 serde = { workspace = true }
