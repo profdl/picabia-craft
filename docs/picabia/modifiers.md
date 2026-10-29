@@ -1,6 +1,6 @@
 # Modifiers
 
-> Params as of P4 (this page follows the code).
+> Params as of P7 (this page follows the code).
 
 A **modifier stack** is a list of live, non-destructive steps attached to a layer. The layer keeps
 its own geometry; the stack describes how it is repeated and transformed. Edit the layer or any
@@ -116,6 +116,41 @@ cell, a parallelogram with edges `(w, 0)` and `(w/2, h/2)`.
 | `angle` | deg | 1 to 179 | 90 | Angle between the lattice vectors for the oblique groups p1 and p2; ignored by the others |
 | `originX` | pt | any | 0 | Moves the symmetry origin from the layer's top-left corner, x |
 | `originY` | pt | any | 0 | Same, y |
+
+### copyToShape
+
+Places copies of everything above it on another layer, the **target**: its outline (its own
+shape; a group or boolean is the outlines of its layers; not the target's own modifier copies), read
+in this layer's parent space. Each copy puts the layer's pivot on a point of the outline, scaled by
+`scale` around the pivot and, with `align`, turned to the outline's direction there. The original is
+not kept: every copy sits on the target (the layer is still selectable where it is). Like the other
+arrays it repeats the whole earlier set at each point, so a linear array above it puts that row of
+copies at every point. Moving, resizing or editing the target moves the copies (the evaluation cache
+keys on a hash of the target's outline, and the canvas repaints the copies when the target changes).
+A hidden target works (handy for guide paths).
+
+| Field | Unit | Range | Default | Meaning |
+|---|---|---|---|---|
+| `target` | layer id | text | none | The target layer's id (`"12"`; a number reads too). Empty: no copies, a warning asks for one |
+| `mode` | choice | `points`, `alongPath`, `populate` | `alongPath` | `points`: one copy at each anchor (segment ends; a closed outline's start once). `alongPath`: `count` copies evenly spaced by arc length, over every subpath in order; a closed outline spaces them `length / count` apart (none doubles the first), an open one `length / (count - 1)` so both ends get one. `populate`: `count` copies at seeded pseudo-random points inside the outline (nonzero winding) |
+| `count` | copies | 1 to 1000 | 10 | Copies for `alongPath` and `populate` (`points` makes one per anchor, at most 1000) |
+| `scale` | factor | 0 to 100 | 1 | Scale of every copy, about its pivot |
+| `align` | on/off | | on | `points` and `alongPath`: turn each copy so its x axis follows the outline (the outgoing segment at an anchor; an open outline's last anchor uses the incoming one). `populate` ignores it |
+| `seed` | integer | 0 to 4 294 967 295 | 1 | Seed for `populate`; same seed, same points everywhere |
+
+**Refused targets.** `modifier.add`/`modifier.set`/`modifier.paste` refuse a target that is the
+layer itself, an ancestor or descendant of it, a page, a layer on another page, a missing layer, or
+one whose own stack copies back onto this layer (directly or through other copy-to-shape targets).
+A file that has such a target anyway (or whose target was deleted later) draws the layer without
+copies and the panel shows the reason; other edits to the layer still work, and undoing the delete
+brings the copies back. `target` can't be bound to a variable.
+
+**Copying layers.** Duplicate, copy and paste, page duplicates and component instances point a
+copied source at the copy of its target when both were copied together; a source copied alone keeps
+copying onto the original target.
+
+**Picking a target.** `modifier.targets {id, modifier?}` lists the layers a layer can copy onto (and
+whether the row's current target is valid); the Design panel's target dropdown offers the same list.
 
 ### transformEach
 

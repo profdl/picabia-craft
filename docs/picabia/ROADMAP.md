@@ -17,7 +17,7 @@ New code lives in new crates and files; edits to FigCraft's files are small mark
 | P4 | Circular, grid, mirror, transform each, randomize; stacking and caps | Not started |
 | P5 | `modifier.apply`, menus, canvas handles, layers badge | Not started |
 | P6 | Variable bindings and per-copy expressions | Not started |
-| P7 | Wallpaper groups and copy to shape | Not started |
+| P7 | Wallpaper groups and copy to shape | Wallpaper (PIC7.1) and copy to shape (PIC7.2–7.4: points, along path, populate; target checks, remapping on copy) done; the panel's target picker is P3's |
 
 ## P0 branding, as built
 
