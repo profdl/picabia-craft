@@ -1,0 +1,6 @@
+// Picabia: a rectangle with a live linear array (5 copies, 100 pt apart, each turned 15° more).
+// figcraft-cli run examples/picabia/linear-array.jsonl --out /tmp/linear-array.figcraft
+{"command": "shape.rectangle", "params": {"x": 0, "y": 0, "width": 80, "height": 80}, "as": "tile"}
+{"command": "modifier.add", "params": {"ids": [{"$ref": "tile", "field": "id"}], "kind": "linearArray", "props": {"count": 5, "offsetX": 100, "rotateEach": 15}}}
+{"command": "modifier.set", "params": {"ids": [{"$ref": "tile", "field": "id"}], "modifier": "m1", "props": {"scaleEach": 0.9}}}
+{"command": "modifier.list", "params": {"id": {"$ref": "tile", "field": "id"}}}
