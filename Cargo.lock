@@ -1859,6 +1859,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "figcraft-modifiers"
+version = "0.12.1"
+dependencies = [
+ "figcraft-doc",
+ "figcraft-geom",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "figcraft-pathops"
 version = "0.12.1"
 dependencies = [

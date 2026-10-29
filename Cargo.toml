@@ -32,6 +32,8 @@ figcraft-ui-egui = { path = "crates/ui-egui" }
 figcraft-mcp = { path = "crates/mcp" }
 figcraft-collab-net = { path = "crates/collab-net" }
 figcraft-plugin = { path = "crates/plugin" }
+# PICABIA: the modifier stack crate (L2).
+figcraft-modifiers = { path = "crates/modifiers" }
 
 # craft-libs crates all pin one rev (craftrules standards/shared-libraries.md): bump them together.
 # Which paths stored in a document may be followed (craft-libs).
