@@ -243,7 +243,7 @@ fn modifier_commands_survive_junk() {
         json!({"kind": "randomize", "props": {"seed": -1, "scale": "x".repeat(10_000)}}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
-    assert_eq!(ids.len(), 9, "{ids:?}");
+    assert_eq!(ids.len(), 10, "{ids:?}");
     for cmd in ids {
         for j in &junk {
             for damaged in [false, true] {
@@ -276,6 +276,7 @@ fn every_modifier_command_documents_its_params() {
         ("modifier.paste", vec!["ids", "replace"]),
         ("modifier.list", vec!["id"]),
         ("modifier.remove_all", vec!["ids"]),
+        ("modifier.apply", vec!["ids", "upTo"]),
     ] {
         assert_eq!(crate::cmd::param_names(id).unwrap(), names.as_slice(), "{id}");
     }

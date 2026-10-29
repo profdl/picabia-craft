@@ -17,6 +17,12 @@ use super::{CommandSpec, ok};
 use crate::params::{boolean, get, opt_index, req_index, req_targets, string, targets};
 use crate::{EngineError, Result, Session, bad, spec};
 
+mod apply;
+#[cfg(test)]
+mod apply_tests;
+
+pub use apply::MAX_APPLY_LAYERS;
+
 const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize";
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -48,7 +54,38 @@ pub fn specs() -> Vec<CommandSpec> {
             list
         ),
         spec!("modifier.remove_all", "Remove all modifiers", "{ids?}", true, remove_all),
+        spec!(
+            "modifier.apply",
+            "Apply modifiers",
+            "{ids?, upTo? (index, inclusive: bake only the rows down to it; the rows after it move onto the new group and stay live)} (each layer becomes a group of real layers, one per copy, named `Name 1…n`, in its place) → {ids (the groups, selected), applied: [{id, group, copies}]}",
+            true,
+            apply::apply
+        ),
     ]
+}
+
+/// Read-only lines for `node`'s enabled modifiers, top row first: the kind's English label (a UI
+/// catalog key) and how many copies it makes where that reads plainly (`("Linear array", "×5")`,
+/// `("Grid array", "3 × 4")`, `("Mirror", "")`). Empty without modifiers or with damaged data.
+/// The Inspect tab and accessibility labels show these.
+pub fn summary(node: &figcraft_doc::Node) -> Vec<(String, String)> {
+    use figcraft_modifiers::ModifierKind as K;
+    let Some(Ok(stack)) = figcraft_modifiers::node_stack(node) else { return Vec::new() };
+    let cap = |n: u32| n.clamp(1, figcraft_modifiers::MAX_COUNT);
+    stack
+        .modifiers
+        .iter()
+        .filter(|m| m.enabled)
+        .map(|m| {
+            let amount = match &m.kind {
+                K::LinearArray(p) => format!("×{}", cap(p.count)),
+                K::CircularArray(p) => format!("×{}", cap(p.count)),
+                K::GridArray(p) => format!("{} × {}", cap(p.rows), cap(p.cols)),
+                _ => String::new(),
+            };
+            (m.label().to_string(), amount)
+        })
+        .collect()
 }
 
 /// The layers a command edits: `ids`/`id` or the selection; pages are refused.
