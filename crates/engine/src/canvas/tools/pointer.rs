@@ -206,9 +206,10 @@ impl Session {
             None
         };
         self.tool.overlay.shape_hover = shape_hover;
+        let modifier_hover = self.modifier_hover(&doc, &sel, ev); // PICABIA: modifier handles.
         if matches!(tool, ToolId::Move | ToolId::Scale) && on_edited {
             cursor = Cursor::Text;
-        } else if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() {
+        } else if matches!(tool, ToolId::Move | ToolId::Scale) && arc_hover.is_none() && shape_hover.is_none() && !modifier_hover {
             if let Some(h) = handle_at(&doc, &sel, ev.p(), ev.zoom).filter(|_| !self.tool.dev_mode) {
                 cursor = resize_cursor(&doc, &sel, h);
             } else {

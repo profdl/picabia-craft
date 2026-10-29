@@ -311,6 +311,7 @@ fn selection_overlay(
         if !measuring && !cropping {
             arc_overlay(app, painter, col);
             shape_overlay(app, painter, col);
+            super::picabia::modifier_overlay(app, painter, col); // PICABIA: modifier guides and handles
         }
         if app.session.tool.tool == ToolId::Scale {
             // The point that stays put: the dragged pivot, else the anchor.
@@ -513,7 +514,8 @@ fn constraint_lines(app: &FigApp, painter: &egui::Painter, doc: &Document, sel: 
 }
 
 /// A canvas readout: white `text` on a `col` pill placed at `at` by `align` (its box returned).
-fn pill(painter: &egui::Painter, at: Pos2, align: Align2, text: String, col: Color32) -> Rect {
+// PICABIA: pub(super) so modifier handle readouts use the same pill.
+pub(super) fn pill(painter: &egui::Painter, at: Pos2, align: Align2, text: String, col: Color32) -> Rect {
     let galley = painter.layout_no_wrap(text, semibold(11.0), Color32::WHITE);
     let r = align.anchor_size(at, galley.size() + vec2(8.0, 4.0));
     painter.rect_filled(r, CornerRadius::same(3), crate::theme::under_white(col));

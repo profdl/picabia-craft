@@ -27,6 +27,9 @@ impl Session {
             self.tool.gesture = Gesture::Reattach { id, from, start: ev.p() };
             return Ok(());
         }
+        if self.modifier_down(&doc, &sel, ev)? {
+            return Ok(()); // PICABIA: a modifier handle (drawn over the box).
+        }
         if self.arc_handles_shown()
             && let Some((id, handle)) = crate::arc_handles::hit(&doc, &sel, ev.p(), ev.zoom)
             && let Some(arc) = crate::arc_handles::arc_of(&doc, id)
@@ -408,6 +411,12 @@ impl Session {
                 Ok(())
             }
             Gesture::Vector(_) | Gesture::ShapeBuild { .. } | Gesture::Origin => Ok(()),
+            // PICABIA: a modifier handle drag.
+            Gesture::Modifier(d) => {
+                let d = (**d).clone();
+                self.tool.gesture = g;
+                return self.modifier_drag(ev, &d);
+            }
             Gesture::Connect { from, start } => {
                 let (from, start) = (*from, *start);
                 self.connect_drag(ev, from, start);

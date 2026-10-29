@@ -207,3 +207,20 @@ with a warning.
 Each array shows guides while its layer is selected: linear, the offset line from the first to the
 last copy; circular, the ring and its centre; grid, the outline of the whole lattice; mirror, the
 axis line(s). Transform each and randomize show none.
+
+## Canvas handles
+
+With the Move tool and one unlocked layer selected, the **last enabled modifier that has handles**
+shows them (the Design panel's open row lives in the UI, so it doesn't choose). They look and behave
+like FigCraft's arc handles: white dots ringed in the selection colour, larger under the pointer, a
+readout beside the dragged one, one undo step per drag ("Set modifier"), Esc cancels, and the
+dragged point snaps to other layers and the layer's own edges and centre (Cmd/Ctrl or View ▸ Snap
+off turns that off).
+
+| Modifier | Handle | Drag sets | Shift |
+|---|---|---|---|
+| mirror | a knob at the end of each axis line | `offset` | |
+| circularArray | the ring centre (dot inside) | `centerX`, `centerY` (the whole ring moves) | horizontal or vertical only |
+| circularArray | a knob on the ring opposite the original | `radius` (the original stays; the ring grows away from it) | |
+| linearArray | the last copy's centre (shown when `count` > 1) | `offsetX`, `offsetY` (`count` stays) | 45° steps |
+| gridArray | the middle of the lattice's right / bottom side (more than one column / row) | `gapX` / `gapY` | both gaps equal |

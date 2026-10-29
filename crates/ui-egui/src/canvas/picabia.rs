@@ -5,6 +5,7 @@ use egui::{Pos2, Shape, Stroke};
 use figcraft_doc::{Document, NodeId, NodeKind};
 use figcraft_geom::{Affine, Point};
 
+use super::outline::stroke;
 use crate::FigApp;
 
 /// The outline [`super::outline::draw_outline`] draws for layer `id`, once on each of its copies
@@ -61,5 +62,56 @@ pub(super) fn copy_outlines(app: &FigApp, painter: &egui::Painter, doc: &Documen
                 painter.add(Shape::closed_line(corners.map(|p| screen(a, p)).to_vec(), s));
             }
         }
+    }
+}
+
+/// The selected layer's modifier guides (dashed, thin, in the selection colour `col`, like the
+/// other canvas guides) and the handles of its modifier, drawn exactly as the arc handles are
+/// (`overlays::arc_overlay`: white dots ringed in `col`, larger when hovered or dragged; the ring
+/// centre with a dot inside, like the arc's Start), with the drag readout beside the dragged one.
+pub(super) fn modifier_overlay(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
+    use figcraft_engine::modifier_handles::{ModHandle, PageGuide};
+    let s = stroke(col, 1.0);
+    let sp = |p: [f64; 2]| app.to_screen(p[0], p[1]);
+    for g in app.session.modifier_guides() {
+        match g {
+            PageGuide::Line { from, to } => {
+                painter.add(Shape::dashed_line(&[sp(from), sp(to)], s, 4.0, 3.0));
+            }
+            PageGuide::Ellipse { center, a, b } => {
+                // Enough segments for a smooth ring at this zoom, capped.
+                let (c, ea, eb) = (sp(center), sp([center[0] + a[0], center[1] + a[1]]), sp([center[0] + b[0], center[1] + b[1]]));
+                let r = (ea - c).length().max((eb - c).length());
+                if !r.is_finite() || r < 0.5 {
+                    continue;
+                }
+                let n = ((r * 0.5) as usize).clamp(32, 720);
+                let pts: Vec<Pos2> = (0..=n)
+                    .map(|i| {
+                        let t = i as f64 / n as f64 * std::f64::consts::TAU;
+                        sp([center[0] + a[0] * t.cos() + b[0] * t.sin(), center[1] + a[1] * t.cos() + b[1] * t.sin()])
+                    })
+                    .collect();
+                painter.add(Shape::dashed_line(&pts, s, 4.0, 3.0));
+            }
+            PageGuide::Point(p) => {
+                painter.circle_filled(sp(p), 1.5, col);
+            }
+        }
+    }
+    let ov = &app.session.tool.overlay;
+    if let Some(hs) = app.session.modifier_handles() {
+        for (h, at) in &hs.handles {
+            let c = sp(*at);
+            let r = if ov.modifier_hover == Some(*h) { 5.0 } else { 4.0 };
+            painter.circle_filled(c, r, egui::Color32::WHITE);
+            painter.circle_stroke(c, r, s);
+            if *h == ModHandle::RingCenter {
+                painter.circle_filled(c, 1.5, col);
+            }
+        }
+    }
+    if let Some(hint) = &ov.modifier {
+        super::overlays::pill(painter, sp(hint.at) + egui::vec2(12.0, 12.0), egui::Align2::LEFT_TOP, hint.label.clone(), col);
     }
 }

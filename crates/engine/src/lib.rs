@@ -47,6 +47,7 @@ pub use canvas::booleans;
 pub use canvas::distance;
 pub use canvas::drop;
 pub use canvas::guides;
+pub use canvas::modifier_handles; // PICABIA: modifier stack handles.
 pub use canvas::rotation_origin;
 pub use canvas::shape_handles;
 pub use canvas::shapebuilder;

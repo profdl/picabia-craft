@@ -305,7 +305,8 @@ impl DocState {
 
     /// Fit the current page's content (or centre on the origin when empty).
     pub fn zoom_to_fit(&mut self) {
-        match self.doc.page_content_bounds(self.page) {
+        // PICABIA: modifier copies count.
+        match figcraft_render::picabia::page_content_bounds(&self.doc, self.page) {
             Some(b) => self.view.fit(b, 1.0),
             None => {
                 self.view.zoom = 1.0;

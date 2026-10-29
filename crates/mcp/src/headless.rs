@@ -335,7 +335,8 @@ impl Backend for Headless {
             }
             return figcraft_engine::cmd::file::export_bytes(doc, &ids, ExportFormat::Png, scale).map_err(|e| e.to_string());
         }
-        let bounds = doc.page_content_bounds(page).ok_or("the current page is empty: nothing to render")?;
+        // PICABIA: modifier copies count.
+        let bounds = figcraft_render::picabia::page_content_bounds(doc, page).ok_or("the current page is empty: nothing to render")?;
         let side = bounds.width().max(bounds.height()).max(1.0);
         let scale = scale.min(MAX_SIDE / side);
         let view = figcraft_render::View {
@@ -352,7 +353,8 @@ impl Backend for Headless {
         // No window: the page with a margin, zoomed to fit 1600 px.
         let page = self.session.page().map_err(|e| e.to_string())?;
         let doc = self.session.doc().map_err(|e| e.to_string())?;
-        let b = doc.page_content_bounds(page).unwrap_or(figcraft_geom::Rect::new(0.0, 0.0, 800.0, 600.0));
+        // PICABIA: modifier copies count.
+        let b = figcraft_render::picabia::page_content_bounds(doc, page).unwrap_or(figcraft_geom::Rect::new(0.0, 0.0, 800.0, 600.0));
         let b = b.inflate(32.0, 32.0);
         let scale = (1600.0 / b.width().max(b.height()).max(1.0)).min(2.0);
         let view = figcraft_render::View {

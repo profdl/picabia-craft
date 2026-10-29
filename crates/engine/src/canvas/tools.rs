@@ -375,6 +375,9 @@ pub struct Overlay {
     /// while one is dragged (see [`crate::shape_handles`]).
     pub shape_hover: Option<ShapeHandle>,
     pub shape: Option<ShapeHint>,
+    /// PICABIA: the modifier handle under the pointer and the readout while one is dragged.
+    pub modifier_hover: Option<crate::modifier_handles::ModHandle>,
+    pub modifier: Option<crate::modifier_handles::ModHint>,
 }
 
 /// A point a press would add to the edited vector's outline: page position, whether it is a
@@ -485,6 +488,8 @@ pub(crate) enum Gesture {
     },
     /// Dragging the rotation origin handle (see [`crate::rotation_origin`]).
     Origin,
+    /// PICABIA: dragging a modifier handle (see [`crate::modifier_handles`]).
+    Modifier(Box<crate::modifier_handles::ModDrag>),
     /// The connector tool: dragging from `from` (pressed at `start`).
     Connect {
         from: figcraft_doc::End,

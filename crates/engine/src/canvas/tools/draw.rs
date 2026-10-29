@@ -110,6 +110,7 @@ impl Session {
         self.tool.overlay.scale = None;
         self.tool.overlay.arc = None;
         self.tool.overlay.shape = None;
+        self.tool.overlay.modifier = None; // PICABIA: modifier handle readout.
         self.tool.overlay.measure_box = None;
         self.tool.overlay.insert_line = None;
         self.tool.overlay.drop_cell = None;
@@ -173,7 +174,8 @@ impl Session {
                     }
                 }
             }
-            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } | Gesture::Shape { .. } => {
+            // PICABIA: a modifier handle drag commits like the arc and shape handles.
+            Gesture::Resize { .. } | Gesture::Rotate { .. } | Gesture::Arc { .. } | Gesture::Shape { .. } | Gesture::Modifier(_) => {
                 // Layers inside an instance keep their main's size and rotation.
                 if self.refused(&self.selection(), false) {
                     self.cancel_interaction()?;

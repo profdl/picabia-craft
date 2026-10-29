@@ -224,7 +224,8 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("view.zoom200", "Zoom to 200%", "{}", false, |s, _| zoom_to(s, 2.0)),
         spec!("view.zoomFit", "Zoom to fit", "{}", false, |s, _| {
             let ds = s.ds_mut()?;
-            if let Some(b) = ds.doc.page_content_bounds(ds.page) {
+            if let Some(b) = figcraft_render::picabia::page_content_bounds(&ds.doc, ds.page) {
+                // PICABIA: modifier copies count.
                 ds.view.fit(b, 256.0);
             }
             Ok(json!({"zoom": ds.view.zoom}))

@@ -60,7 +60,9 @@ impl Session {
         if let Some(v) = self.ds().ok().map(|d| &d.view).filter(|v| v.outlines) {
             // What it draws besides the shapes can be clicked too.
             let also = figcraft_doc::geometry::OutlineHits { hidden: v.outline_hidden, bounds: v.outline_bounds };
-            return figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result), also);
+            let hit = figcraft_doc::geometry::hit_outlines(doc, focus.unwrap_or(page), p, tol, Some(&result), also);
+            // PICABIA: copies are clicked on their outlines too.
+            return figcraft_render::picabia::hit_outlines_with_copies(doc, focus.unwrap_or(page), p, tol, Some(&result), also, hit);
         }
         let hit = match focus {
             Some(f) => figcraft_doc::geometry::hit_in(doc, f, p, tol, Some(&result)),
@@ -171,6 +173,8 @@ impl Session {
     /// Snapshot of tool state for the UI / inspect.
     pub fn tool_info(&self) -> serde_json::Value {
         let shapes: Vec<serde_json::Value> = self.shape_handles().into_iter().map(|(h, at)| json!({"handle": h, "at": at})).collect();
-        json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay, "arcHandles": self.arc_handles(), "shapeHandles": shapes})
+        let mut info = json!({"tool": self.tool.tool.id(), "busy": self.tool.busy(), "overlay": self.tool.overlay, "arcHandles": self.arc_handles(), "shapeHandles": shapes});
+        info["modifierHandles"] = json!(self.modifier_handles()); // PICABIA: modifier handles.
+        info
     }
 }
