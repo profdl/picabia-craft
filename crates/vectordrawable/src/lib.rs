@@ -26,6 +26,7 @@
 //! as normal). Every change is listed in [`VdExport::warnings`] unless the mode is
 //! [`Compat::Ignore`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![allow(clippy::manual_range_contains)] // PICABIA: clippy 1.96 lint on upstream code; drop when upstream fixes it.
 
 mod model;
 mod paint;

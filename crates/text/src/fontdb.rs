@@ -930,6 +930,7 @@ fn scan_dir(dir: &std::path::Path, depth: usize, out: &mut BTreeMap<String, (Str
     }
 }
 
+#[allow(clippy::nonminimal_bool)] // PICABIA: clippy 1.96 lint on upstream code; drop when upstream fixes it.
 fn index_font_file(path: &std::path::Path, meta: &std::fs::Metadata, out: &mut BTreeMap<String, (String, Vec<Pending>)>) {
     // Font-like names can also belong to pipes or devices; opening a pipe can block.
     // `meta` follows symlinks, so links to regular font files remain supported.
