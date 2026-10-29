@@ -129,6 +129,8 @@ fn write(s: &mut Session, id: NodeId, stack: &Stack) -> Result<()> {
     } else {
         n.plugin_data.insert(PLUGIN_KEY.to_string(), figcraft_modifiers::to_json(stack));
     }
+    // Variable bindings of rows that went go too.
+    crate::picabia_bind::prune(n);
     Ok(())
 }
 
@@ -139,8 +141,6 @@ fn edit(cmd: &str, s: &mut Session, p: &Value, mut f: impl FnMut(&mut Stack, Nod
         f(&mut stack, id)?;
         write(s, id, &stack)?;
     }
-    // Variable bindings of rows that went go too.
-    crate::picabia_bind::prune(n);
     Ok(())
 }
 
