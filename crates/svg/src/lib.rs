@@ -18,6 +18,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod import;
+mod picabia; // PICABIA: modifier-stack copies are written once per copy
 pub use import::{ImportError, Imported, import_svg, import_svg_with_notes, looks_like_svg};
 
 use std::fmt::Write as _;
@@ -417,6 +418,14 @@ impl W<'_> {
     }
 
     fn node(&mut self, id: NodeId, xf: Affine, depth: usize) {
+        // PICABIA: a layer with a modifier stack is written once per copy.
+        if !self.node_copies(id, xf, depth) {
+            self.node_once(id, xf, depth);
+        }
+    }
+
+    /// [`W::node`] for one copy.
+    fn node_once(&mut self, id: NodeId, xf: Affine, depth: usize) {
         if depth > MAX_EXPORT_DEPTH {
             return;
         }

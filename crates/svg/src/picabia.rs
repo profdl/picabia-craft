@@ -1,0 +1,83 @@
+//! Picabia: a layer with a modifier stack is written once per copy.
+//!
+//! Each copy other than the original is the layer written as usual inside
+//! `<g transform="P·T·P⁻¹">` (`P` maps its parent's space to the SVG, `T` the instance transform),
+//! so its vectors, filters and the renderings embedded for effects SVG can't build (which draw one
+//! copy: `figcraft_render::render_alone` takes the layer's own stack off) all move together. The
+//! clip inherited from a clipping frame above goes on a wrapper outside that transform, so it stays
+//! where the frame is.
+
+use std::fmt::Write as _;
+
+use figcraft_doc::NodeId;
+use figcraft_geom::Affine;
+
+use crate::{W, clip_attr, matrix};
+
+impl W<'_> {
+    /// Write node `id` (its parent's space mapped to the SVG by `xf`) once per copy; `false` when
+    /// it has no active stack (or is a mask): the caller writes it once.
+    pub(crate) fn node_copies(&mut self, id: NodeId, xf: Affine, depth: usize) -> bool {
+        let doc = self.doc;
+        let Some(n) = doc.node(id) else { return false };
+        if !n.visible || n.is_mask || !xf.is_finite() || xf.determinant().abs() < 1e-12 {
+            return false;
+        }
+        let inv = xf.inverse();
+        figcraft_render::picabia::each_copy(n, |t| {
+            let c = xf * t * inv;
+            if t == Affine::IDENTITY || !c.is_finite() {
+                self.node_once(id, xf, depth);
+                return;
+            }
+            let inherited = self.clip.take();
+            let _ = write!(self.body, "<g{}><g transform=\"{}\">", clip_attr(&inherited), matrix(c));
+            self.node_once(id, xf, depth);
+            self.body.push_str("</g></g>");
+            self.clip = inherited;
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use figcraft_color::{Color, Paint};
+    use figcraft_doc::{Document, NodeKind};
+
+    use crate::{SvgOptions, export_svg};
+
+    #[test]
+    fn a_stacked_layer_is_written_once_per_copy() {
+        let mut d = Document::new("picabia");
+        let page = d.first_page().unwrap();
+        let r = d.create(page, NodeKind::Rectangle, "R", 10.0, 10.0, 20.0, 20.0).unwrap();
+        d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+        let plain = export_svg(&d, &[r], &SvgOptions::default()).unwrap();
+        assert_eq!(plain.matches("<path").count(), 1);
+        d.get_mut(r).unwrap().plugin_data.insert(
+            figcraft_render::picabia::PLUGIN_KEY.into(),
+            r#"{"v":1,"stack":[{"id":"m1","enabled":true,"kind":"linearArray","count":3,"offsetX":40,"offsetY":0}]}"#.into(),
+        );
+        let svg = export_svg(&d, &[r], &SvgOptions::default()).unwrap();
+        assert_eq!(svg.matches("<path").count(), 3, "{svg}");
+        assert!(svg.contains("width=\"100\""), "the export covers every copy: {svg}");
+        assert!(svg.contains("transform=\"matrix(1 0 0 1 40 0)\"") || svg.contains("translate(40"), "{svg}");
+    }
+
+    #[test]
+    fn copies_inside_a_clipping_frame_keep_the_frames_clip_in_place() {
+        let mut d = Document::new("picabia");
+        let page = d.first_page().unwrap();
+        let f = d.create(page, NodeKind::Frame, "F", 0.0, 0.0, 50.0, 50.0).unwrap();
+        d.get_mut(f).unwrap().clip = true;
+        let r = d.create(f, NodeKind::Rectangle, "R", 10.0, 10.0, 20.0, 20.0).unwrap();
+        d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+        d.get_mut(r).unwrap().plugin_data.insert(
+            figcraft_render::picabia::PLUGIN_KEY.into(),
+            r#"{"v":1,"stack":[{"id":"m1","enabled":true,"kind":"linearArray","count":2,"offsetX":30,"offsetY":0}]}"#.into(),
+        );
+        let svg = export_svg(&d, &[f], &SvgOptions::default()).unwrap();
+        // The wrapper carries the frame's clip, outside the copy's transform.
+        assert!(svg.contains("<g clip-path=\"url(#"), "{svg}");
+    }
+}

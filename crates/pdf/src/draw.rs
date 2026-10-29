@@ -15,6 +15,8 @@ use krilla::paint::{Fill, FillRule, LinearGradient, Pattern, RadialGradient, Spr
 use krilla::surface::Surface;
 
 use crate::PdfOptions;
+#[path = "picabia.rs"]
+mod picabia; // PICABIA: modifier-stack copies are drawn once per copy
 use crate::print::Ink;
 
 /// Deepest node nesting drawn (the renderer's limit).
@@ -245,6 +247,14 @@ impl<'a> Exporter<'a> {
     /// Draw node `id`; `parent_xf` maps its parent's space to PDF page space. `as_mask` draws a
     /// mask layer itself (into a soft mask).
     pub(crate) fn node(&mut self, s: &mut Surface, id: NodeId, parent_xf: Affine, depth: usize, as_mask: bool) {
+        // PICABIA: a layer with a modifier stack is drawn once per copy.
+        if !self.node_copies(s, id, parent_xf, depth, as_mask) {
+            self.node_once(s, id, parent_xf, depth, as_mask);
+        }
+    }
+
+    /// [`Exporter::node`] for one copy.
+    fn node_once(&mut self, s: &mut Surface, id: NodeId, parent_xf: Affine, depth: usize, as_mask: bool) {
         if depth > MAX_DEPTH {
             return;
         }
