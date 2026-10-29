@@ -1,41 +1,31 @@
-# FigCraft app icon
+# Picabia app icon
 
-A **chameleon**: an engraving portrait in profile with a curled tail, in the Crafting Apps'
-owl-template framing (full-bleed field, head and body filling the tile, body running off the edges).
+<!-- PICABIA: replaces FigCraft's chameleon README. The files keep their figcraft-* names so
+     `cargo xtask icon`, the packaging scripts and `include_bytes!` paths stay untouched. -->
+
+A **ring of eight dots**: one yellow original and seven orange copies around it, the picture of a
+circular-array modifier. Placeholder, drawn from simple geometry.
 
 ## Palette
 
-Exactly three colours:
-
 | Colour | Hex | Used for |
 |---|---|---|
-| Ink | `#0b0b0c` | line work and contours |
-| Paper | `#efe9dc` | the figure |
-| FigCraft green (app colour) | `#02da96` | the full-bleed field |
+| Night | `#1d1b3a` | the full-bleed field |
+| Copy orange | `#ff5a36` | the seven copies |
+| Original yellow | `#ffd23f` | the original (top) |
 
 ## Geometry
 
-A 512-unit tile (`viewBox="0 0 512 512"`), rounded square with `rx=112`, no border. The macOS
-renders pad it onto Apple's 824/1024 icon grid; Windows and Linux use the tile edge to edge, with
-its rounded corners, like the other Crafting Apps.
+A 512-unit tile (`viewBox="0 0 512 512"`), rounded square `rx=112`; eight circles of radius 52 on a
+ring of radius 150 around the centre. The macOS renders pad it onto Apple's 824/1024 icon grid.
 
 ## Provenance
 
-The owner's original engraving-style drawing (1500 px, keyed to the palette), supplied for
-FigCraft and vectorised with craftrules `assets/logo-options/_tools/vectorize_tile.py`. The source
-image is not kept in this repo. License: see `LICENSE.txt`.
+Original work by the Picabia contributors, MIT OR Apache-2.0. FigCraft's chameleon drawing is not
+used by Picabia. See `LICENSE.txt` and `ATTRIBUTION.md`.
 
 ## Files
 
-- `figcraft.svg`: canonical master (traced at 1500 px, the source's size).
-- `figcraft-small.svg`: lighter trace (traced at 1024 px); also the hicolor scalable icon.
-- `figcraft-<size>.png` (16–1024): renders on the macOS grid; `packaging/macos/package.sh` builds
-  the `.icns` from them.
-- `figcraft.ico`: Windows icon, 16–256 px, embedded in the `.exe` by `apps/figcraft/build.rs`.
-- `hicolor/<size>/apps/ai.storyteller.figcraft.png` (16–512) and `hicolor/scalable/...svg`:
-  Linux icon theme; the 256 px one is also the runtime window icon off macOS.
-
-## Regenerate
-
-Replace `figcraft.svg` (and `figcraft-small.svg`), then run `cargo xtask icon`. It needs `resvg`
-(`cargo install resvg`).
+Names are FigCraft's (kept so upstream merges stay quiet): `figcraft.svg` and `figcraft-small.svg`
+are the masters; `figcraft-<size>.png`, `figcraft.ico` and `hicolor/...` are rendered by
+`cargo xtask icon` (needs `resvg`: `cargo install resvg`).

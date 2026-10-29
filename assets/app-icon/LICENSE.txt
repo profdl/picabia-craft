@@ -1,8 +1,9 @@
-FigCraft app icon (figcraft.svg, figcraft-small.svg and every file derived from them in this
-directory: figcraft-<size>.png, figcraft.ico, hicolor/).
+Picabia app icon (figcraft.svg, figcraft-small.svg and every file derived from them in this
+directory: figcraft-<size>.png, figcraft.ico, hicolor/). The file names are FigCraft's, kept so
+upstream merges stay quiet.
 
-Original artwork made for this project by the project owner: an engraving-style drawing, then
-vectorised. No third-party material. Licensed like the rest of FigCraft, under either of
+Original artwork made for Picabia by the Picabia contributors: eight circles on a ring. No
+third-party material. Licensed under either of
 
   * Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0)
   * MIT license (https://opensource.org/licenses/MIT)
