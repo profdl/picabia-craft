@@ -47,6 +47,7 @@ pub(super) fn sync_instance_depth(doc: &mut Document, inst: NodeId, depth: usize
     if let Some(r) = doc.node_mut(inst) {
         *r = fresh;
     }
+    figcraft_doc::picabia::remap_targets_in(doc, map.values().copied().collect::<Vec<_>>(), &map); // PICABIA: copy-to-shape targets inside the main point at the instance's layers
     // A resized instance: children follow their constraints (auto layout re-flows later).
     let (iw, ih) = doc.node(inst).map(|n| (n.width, n.height)).unwrap_or((comp.width, comp.height));
     if (iw - comp.width).abs() > 1e-9 || (ih - comp.height).abs() > 1e-9 {

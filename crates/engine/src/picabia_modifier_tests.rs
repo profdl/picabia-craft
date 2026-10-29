@@ -58,11 +58,12 @@ fn add_set_toggle_move_remove_with_undo() {
     ex(&mut s, "modifier.move", json!({"from": 0, "to": 1}));
     assert_eq!(kinds(&mut s, r), ["linearArray", "mirror"]);
     ex(&mut s, "modifier.set", json!({"modifier": "m1", "props": {"count": 8, "offsetY": "10"}}));
-    assert_eq!(ex(&mut s, "modifier.list", json!({}))["instances"], 8);
+    // 8 copies, then the mirror (keepOriginal) adds the reflected block: 16.
+    assert_eq!(ex(&mut s, "modifier.list", json!({}))["instances"], 16);
     assert_eq!(s.undo_labels(1), ["Set modifier"]);
     ex(&mut s, "modifier.toggle", json!({"index": 0}));
     let l = ex(&mut s, "modifier.list", json!({}));
-    assert_eq!((l["modifiers"][0]["enabled"].clone(), l["instances"].as_u64() == Some(8)), (json!(false), false), "{l}");
+    assert_eq!((l["modifiers"][0]["enabled"].clone(), l["instances"].as_u64() == Some(16)), (json!(false), false), "{l}");
     ex(&mut s, "modifier.toggle", json!({"index": 0, "enabled": true}));
     ex(&mut s, "modifier.remove", json!({"modifier": "m2"}));
     assert_eq!(kinds(&mut s, r), ["linearArray"]);
@@ -79,7 +80,7 @@ fn bad_params_are_refused_and_roll_back() {
     let (mut s, r) = arrayed();
     let before = data(&s, r);
     for (cmd, p, want) in [
-        ("modifier.add", json!({"ids": [r], "kind": "wallpaper"}), "unknown kind"),
+        ("modifier.add", json!({"ids": [r], "kind": "spiralArray"}), "unknown kind"),
         ("modifier.add", json!({"ids": [r]}), "`kind` required"),
         ("modifier.add", json!({"ids": [r], "kind": "linearArray", "props": {"offsetX": "NaN"}}), "finite"),
         ("modifier.add", json!({"ids": [r], "kind": "linearArray", "props": {"offsetX": "-inf"}}), "finite"),
@@ -241,9 +242,13 @@ fn modifier_commands_survive_junk() {
         json!({"ids": [{"x": 1}], "kind": "mirror", "props": {"axis": 7, "keepOriginal": "x"}}),
         json!({"kind": "gridArray", "props": {"rows": -5, "cols": 1e9, "gapX": "1e400"}}),
         json!({"kind": "randomize", "props": {"seed": -1, "scale": "x".repeat(10_000)}}),
+        json!({"kind": "copyToShape", "props": {"target": "\u{0}", "mode": 7, "count": 1e308, "seed": -1, "scale": "inf"}}),
+        json!({"kind": "copyToShape", "props": {"target": 1e308, "mode": "populate", "count": 1000}}),
+        json!({"kind": "copyToShape", "props": {"target": "x".repeat(10_000), "align": "x"}, "modifier": "m1", "index": 0}),
+        json!({"kind": "copyToShape", "props": {"target": -3, "mode": "points"}, "id": -1}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
-    assert_eq!(ids.len(), 10, "{ids:?}");
+    assert_eq!(ids.len(), 12, "{ids:?}");
     for cmd in ids {
         for j in &junk {
             for damaged in [false, true] {
@@ -277,6 +282,8 @@ fn every_modifier_command_documents_its_params() {
         ("modifier.list", vec!["id"]),
         ("modifier.remove_all", vec!["ids"]),
         ("modifier.apply", vec!["ids", "upTo"]),
+        ("modifier.duplicate", vec!["ids", "modifier", "index"]),
+        ("modifier.targets", vec!["id", "modifier", "index"]),
     ] {
         assert_eq!(crate::cmd::param_names(id).unwrap(), names.as_slice(), "{id}");
     }

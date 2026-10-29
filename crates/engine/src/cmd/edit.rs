@@ -630,6 +630,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     // Board connectors copied with what they join join the copies.
     let map = crate::board::copy_map(doc, &ids, &out);
     crate::board::rejoin(doc, &crate::board::copied_items(doc, &map), &map, false);
+    figcraft_doc::picabia::remap_targets_in(doc, map.values().copied().collect::<Vec<_>>(), &map); // PICABIA: copy-to-shape targets duplicated along point at the copies
     s.set_selection(out.clone());
     s.ds_mut()?.last_duplicate = Some(Duplicated { sources: ids, copies: out.clone() });
     if boolean(p, "map") == Some(true) {

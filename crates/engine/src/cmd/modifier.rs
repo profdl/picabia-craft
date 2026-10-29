@@ -20,17 +20,22 @@ use crate::{EngineError, Result, Session, bad, spec};
 mod apply;
 #[cfg(test)]
 mod apply_tests;
+mod targets;
+#[cfg(test)]
+mod targets_tests;
+
+pub use targets::{check_target, target_choices};
 
 pub use apply::MAX_APPLY_LAYERS;
 
-const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize";
+const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape";
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
             "modifier.add",
             "Add modifier",
-            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
+            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
             true,
             add
         ),
@@ -60,6 +65,20 @@ pub fn specs() -> Vec<CommandSpec> {
             list
         ),
         spec!("modifier.remove_all", "Remove all modifiers", "{ids?}", true, remove_all),
+        spec!(
+            "modifier.duplicate",
+            "Duplicate modifier",
+            "{ids?, modifier? (id) | index?} (a copy right below the row, with its variable bindings) → {modifier (the new id on the first layer), duplicated: [{id, modifier}]}",
+            true,
+            targets::duplicate
+        ),
+        spec!(
+            "modifier.targets",
+            "List copy-to-shape targets",
+            "{id?, modifier? (id) | index? (a copyToShape row: also its target, valid, reason?)} → {id, targets: [{id, name, kind}] (the layers it can copy onto, in layer order)}",
+            false,
+            targets::list_targets
+        ),
         spec!(
             "modifier.apply",
             "Apply modifiers",
@@ -138,7 +157,9 @@ fn write(s: &mut Session, id: NodeId, stack: &Stack) -> Result<()> {
 fn edit(cmd: &str, s: &mut Session, p: &Value, mut f: impl FnMut(&mut Stack, NodeId) -> Result<()>) -> Result<()> {
     for id in layers(cmd, s, p)? {
         let mut stack = read(cmd, s.doc()?, id)?;
+        let before = stack.clone();
         f(&mut stack, id)?;
+        targets::check_changed(cmd, s.doc()?, id, &before, &stack)?; // copy-to-shape targets it sets
         write(s, id, &stack)?;
     }
     Ok(())
@@ -261,6 +282,8 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(EngineError::Disabled(CMD.into(), format!("layer {id} has no modifiers")));
     }
     let copied = rows.len();
+    let mut rows = rows;
+    targets::attach_bindings(s.doc()?, id, &mut rows);
     s.clipboard.picabia_modifiers = rows;
     Ok(json!({"copied": copied}))
 }
@@ -270,18 +293,25 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     if s.clipboard.picabia_modifiers.is_empty() {
         return Err(EngineError::Disabled(CMD.into(), "no copied modifiers".into()));
     }
-    let rows = s.clipboard.picabia_modifiers.iter().map(Modifier::from_value).collect::<std::result::Result<Vec<_>, _>>();
+    let (rows, bound): (Vec<Value>, Vec<_>) = s.clipboard.picabia_modifiers.iter().map(targets::split_bindings).unzip();
+    let rows = rows.iter().map(Modifier::from_value).collect::<std::result::Result<Vec<_>, _>>();
     let rows = rows.map_err(|e| bad(CMD, e.to_string()))?;
     let replace = boolean(p, "replace").unwrap_or(false);
+    let mut inserted = Vec::new();
     edit(CMD, s, p, |stack, id| {
         if replace {
             stack.modifiers.clear();
         }
-        for m in &rows {
-            stack.insert(usize::MAX, m.clone()).map_err(|e| bad(CMD, format!("layer {id}: {e}")))?;
+        for (m, b) in rows.iter().zip(&bound) {
+            let m = stack.insert(usize::MAX, m.clone()).map_err(|e| bad(CMD, format!("layer {id}: {e}")))?;
+            inserted.push((id, m.clone(), b.clone()));
         }
         Ok(())
     })?;
+    // The copied rows' variable bindings follow them to their new ids.
+    for (id, m, b) in inserted {
+        targets::bind(s, id, &m, &b)?;
+    }
     Ok(json!({"pasted": rows.len()}))
 }
 
@@ -304,7 +334,8 @@ fn list(s: &mut Session, p: &Value) -> Result<Value> {
                 })
                 .collect();
             out["modifiers"] = json!(rows);
-            let o = figcraft_modifiers::evaluate(&stack, figcraft_modifiers::node_bounds(node));
+            let o =
+                figcraft_modifiers::evaluate_with(&stack, figcraft_modifiers::node_bounds(node), &figcraft_modifiers::DocTargets::new(s.doc()?, id));
             out["instances"] = json!(o.instances.len());
             out["warnings"] = json!(o.warnings.iter().map(|w| json!({"modifier": w.modifier, "message": w.message})).collect::<Vec<_>>());
         }

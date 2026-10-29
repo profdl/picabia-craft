@@ -204,6 +204,7 @@ pub fn paste_into(s: &mut Session, parent: NodeId, at: Option<(f64, f64)>) -> Re
     let originals: Vec<(NodeId, figcraft_doc::BoardItem)> =
         clip.nodes.iter().flat_map(|(_, nodes)| nodes).filter_map(|n| Some((*all.get(&n.id)?, n.board.clone()?))).collect();
     crate::board::rejoin(doc, &originals, &all, !copy_local);
+    figcraft_doc::picabia::remap_targets_in(doc, all.values().copied().collect::<Vec<_>>(), &all); // PICABIA: copy-to-shape targets pasted along point at the pasted copies
     if let Some(src) = foreign {
         crate::library::adopt_pasted(doc, src, clip.source_path.as_deref(), &all)?;
     }

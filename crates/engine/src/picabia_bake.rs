@@ -18,10 +18,8 @@ const MAX_BAKED_COPIES: usize = 200_000;
 /// export warnings that go with it.
 pub fn baked(doc: &Document) -> (Cow<'_, Document>, Vec<String>) {
     // Transforms worked out on the unbaked document: copy-to-shape targets may be baked first.
-    let mut stacked: Vec<(usize, NodeId, Vec<figcraft_geom::Affine>)> = doc
-        .ids()
-        .filter_map(|id| Some((doc.ancestors(id).len(), id, figcraft_render::picabia::instance_transforms(doc, doc.node(id)?)?)))
-        .collect();
+    let mut stacked: Vec<(usize, NodeId, Vec<figcraft_geom::Affine>)> =
+        doc.ids().filter_map(|id| Some((doc.ancestors(id).len(), id, figcraft_render::picabia::instance_transforms(doc, doc.node(id)?)?))).collect();
     if stacked.is_empty() {
         return (Cow::Borrowed(doc), Vec::new());
     }

@@ -17,6 +17,7 @@ pub mod handoff;
 pub mod ids;
 pub mod library;
 pub mod node;
+pub mod picabia; // PICABIA: modifier-stack targets follow copies
 pub mod props;
 pub mod proto;
 pub mod styles;
@@ -907,6 +908,7 @@ impl Document {
             if let Some(b) = c.board.as_mut() {
                 b.remap(map);
             }
+            picabia::remap_modifier_targets(&mut c, map); // PICABIA: copy-to-shape targets copied along point at the copies
             // A pattern tiling a layer of the copy tiles the copy's layer.
             for p in c.fills.iter_mut().chain(c.strokes.iter_mut()) {
                 if let figcraft_color::PaintKind::Pattern(pt) = &mut p.kind
