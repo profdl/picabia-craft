@@ -325,11 +325,38 @@ pub struct TransformEach {
     pub jitter: f64,
     #[serde(deserialize_with = "lenient::seed")]
     pub jitter_seed: u32,
+    /// Per-copy expressions ([`crate::expr`]) giving a field's amount for each instance instead of
+    /// the field (which they read as `value`); an expression-driven field doesn't ramp with
+    /// `progressive`, jitter still applies. Written only when set.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub offset_x_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub offset_y_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub rotate_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub scale_x_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub scale_y_expr: Option<String>,
 }
 
 impl Default for TransformEach {
     fn default() -> Self {
-        TransformEach { offset_x: 0.0, offset_y: 0.0, rotate: 0.0, scale_x: 1.0, scale_y: 1.0, progressive: false, jitter: 0.0, jitter_seed: 1 }
+        TransformEach {
+            offset_x: 0.0,
+            offset_y: 0.0,
+            rotate: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            progressive: false,
+            jitter: 0.0,
+            jitter_seed: 1,
+            offset_x_expr: None,
+            offset_y_expr: None,
+            rotate_expr: None,
+            scale_x_expr: None,
+            scale_y_expr: None,
+        }
     }
 }
 
@@ -343,6 +370,35 @@ pub struct Randomize {
     pub scale: f64,
     #[serde(deserialize_with = "lenient::seed")]
     pub seed: u32,
+    /// Per-copy expressions ([`crate::expr`]) for each amount (`value` = the field). Written only
+    /// when set.
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub position_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub rotation_expr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", deserialize_with = "lenient::expr")]
+    pub scale_expr: Option<String>,
+}
+
+/// The fields of kind id `kind` that take a per-copy expression (stored as `<field>Expr`).
+pub fn expr_fields(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "transformEach" => &["offsetX", "offsetY", "rotate", "scaleX", "scaleY"],
+        "randomize" => &["position", "rotation", "scale"],
+        _ => &[],
+    }
+}
+
+/// The param holding `field`'s expression (`rotate` → `rotateExpr`).
+pub fn expr_key(field: &str) -> String {
+    format!("{field}Expr")
+}
+
+/// The field whose expression param `key` is, when kind id `kind` takes one (`rotateExpr` →
+/// `rotate`).
+pub fn expr_field<'a>(kind: &str, key: &'a str) -> Option<&'a str> {
+    let field = key.strip_suffix("Expr")?;
+    expr_fields(kind).contains(&field).then_some(field)
 }
 
 /// The fields every modifier has besides its params.
@@ -362,7 +418,10 @@ fn read<T: for<'de> Deserialize<'de> + Serialize>(rest: &Map<String, Value>) -> 
         .iter()
         .map(|(k, v)| {
             let v = match v {
-                Value::String(_) => lenient::finite(v).and_then(serde_json::Number::from_f64).map_or_else(|| v.clone(), Value::Number),
+                // Expression texts stay text (`"rotateExpr": "15"`).
+                Value::String(_) if !k.ends_with("Expr") => {
+                    lenient::finite(v).and_then(serde_json::Number::from_f64).map_or_else(|| v.clone(), Value::Number)
+                }
                 _ => v.clone(),
             };
             (k.clone(), v)
@@ -490,6 +549,7 @@ impl Modifier {
             match k.as_str() {
                 "enabled" => enabled = v.as_bool().ok_or_else(|| ModError::Invalid(format!("`enabled` must be true or false, got {}", short(v))))?,
                 "id" | "kind" => return Err(ModError::Invalid(format!("`{k}` can't be changed"))),
+                _ if expr_field(self.kind.id(), k).is_some() => set_expr(&mut params, k, v)?,
                 _ => {
                     let Some(cur) = params.get(k) else {
                         let names: Vec<&str> = params.keys().map(String::as_str).chain(["enabled"]).collect();
@@ -514,6 +574,24 @@ impl Modifier {
             }
         }
     }
+}
+
+/// Set (or with `null`/an empty text, clear) expression param `key` in `params`: a text of at most
+/// [`crate::expr::MAX_EXPR_LEN`] bytes that parses (a number is taken as its text).
+fn set_expr(params: &mut Map<String, Value>, key: &str, v: &Value) -> Result<(), ModError> {
+    let text = match v {
+        Value::Null => String::new(),
+        Value::String(s) => s.trim().to_string(),
+        Value::Number(n) => n.to_string(),
+        _ => return Err(ModError::Invalid(format!("`{key}` must be an expression text such as \"i * 15\", got {}", short(v)))),
+    };
+    if text.is_empty() {
+        params.remove(key);
+        return Ok(());
+    }
+    crate::expr::check(&text).map_err(|e| ModError::Invalid(format!("`{key}`: {e}")))?;
+    params.insert(key.to_string(), Value::String(text));
+    Ok(())
 }
 
 /// A value for an error message, cut short.

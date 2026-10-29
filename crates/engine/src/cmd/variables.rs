@@ -493,6 +493,10 @@ pub fn field_scope(doc: &Document, node: NodeId, field: &str) -> Option<&'static
 /// to (number variables also fill text content), booleans for visibility, numbers for layout grid
 /// fields; fields without a known type take any.
 pub fn field_takes(doc: &Document, node: NodeId, field: &str, kind: VariableType) -> bool {
+    // PICABIA: a modifier param binding checks the layer's stack (the modifier, the param, its type).
+    if let Some(ok) = doc.node(node).and_then(|n| figcraft_modifiers::binding_takes(n, field, kind)) {
+        return ok;
+    }
     match (field, field_scope(doc, node, field)) {
         ("visible", _) => kind == VariableType::Boolean,
         (_, Some(scope)) => scope_known(kind, scope),

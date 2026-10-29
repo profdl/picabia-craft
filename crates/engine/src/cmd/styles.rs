@@ -1157,7 +1157,8 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
     for id in bound {
         let modes = doc.modes_for(id);
         let Some(n) = doc.node(id) else { continue };
-        let binds = n.bound.clone();
+        // PICABIA: `picabia.modifiers/<id>/<field>` keys bind modifier params (written below).
+        let (picabia_binds, binds): (Vec<_>, Vec<_>) = n.bound.clone().into_iter().partition(|(f, _)| figcraft_modifiers::is_binding_key(f));
         let has_layout = n.layout.is_some();
         let mut sets = serde_json::Map::new();
         let mut effect_sets: Vec<(usize, String, VariableValue)> = Vec::new();
@@ -1238,6 +1239,7 @@ fn apply_bindings_matching(doc: &mut Document, only: Option<&std::collections::B
         if !prop_sets.is_empty() {
             super::component::apply_prop_bindings(doc, id, &prop_sets);
         }
+        crate::picabia_bind::apply_bindings(doc, id, &modes, &picabia_binds, &include); // PICABIA: into the stack.
     }
 }
 

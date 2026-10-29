@@ -261,8 +261,20 @@ fn junk_params_are_clamped_in_every_kind() {
             progressive: true,
             jitter: junk,
             jitter_seed: 3,
+            rotate_expr: Some("1/0 + i".into()),
+            scale_x_expr: Some("value ^ 1e9".into()),
+            offset_y_expr: Some("((".into()),
+            ..Default::default()
         }),
-        ModifierKind::Randomize(Randomize { position: inf, rotation: junk, scale: 1e308, seed: 1 }),
+        ModifierKind::Randomize(Randomize {
+            position: inf,
+            rotation: junk,
+            scale: 1e308,
+            seed: 1,
+            position_expr: Some("sqrt(-1)".into()),
+            rotation_expr: Some("-1e308 * i".into()),
+            ..Default::default()
+        }),
     ] {
         s.modifiers.push(Modifier { id: format!("m{}", s.modifiers.len()), enabled: true, kind, extra: Default::default() });
     }

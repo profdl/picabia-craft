@@ -36,7 +36,7 @@ source, and copies never take part in auto layout.
 Every copy has a flat **index** `i` (0 = the original). After stacking, each array step repeats the
 previous block, so `i = k * n_prev + i_prev` where `k` is the copy number within that step. `n` is
 the total number of copies and `t = i / (n - 1)` (0 when `n = 1`) runs from 0 to 1 across them.
-`index`, `n` and `t` drive the progressive ramp, the randomize seed and, later, per-copy expressions.
+`index`, `n` and `t` drive the progressive ramp, the randomize seed and per-copy expressions (below).
 
 ## Export
 
@@ -132,6 +132,7 @@ moves along its turned axes).
 | `progressive` | on/off | | off | Scales the effect by `t`: the first copy is untouched and the last gets the full amount (offset and rotation grow linearly, scale goes from 1 to the full factor). One linear ramp; ease shapes are not implemented |
 | `jitter` | factor | 0 to 10 | 0 | Each amount above is multiplied by `1 + jitter x r`, `r` between -1 and 1 drawn per copy and amount (0 = off) |
 | `jitterSeed` | integer | 0 to 4 294 967 295 | 1 | Seed for `jitter` |
+| `offsetXExpr`, `offsetYExpr`, `rotateExpr`, `scaleXExpr`, `scaleYExpr` | text | | none | Per-copy expressions (see Expressions) |
 
 ### randomize
 
@@ -141,9 +142,65 @@ moves along its turned axes).
 | `rotation` | deg | >= 0 | 0 | Maximum random rotation, plus or minus |
 | `scale` | factor | >= 0 | 0 | Maximum random scale change, plus or minus (0.2 = 80% to 120%) |
 | `seed` | integer | 0 to 4 294 967 295 | 1 | Same seed, same result on every platform and in the browser |
+| `positionExpr`, `rotationExpr`, `scaleExpr` | text | | none | Per-copy expressions for each amount (see Expressions) |
 
 Randomize derives its numbers from `seed` and the copy index only (SplitMix64 inside the crate, no
 platform generator), so a copy never changes when other copies are added after it.
+
+## Variable bindings
+
+Any modifier param can take a FigCraft variable, like a layer's width or corner radius: numbers take
+number variables, on/off fields boolean ones, choices (`axis`, `group`) string variables naming a
+choice. A binding is stored in the layer's own variable bindings (`Node.bound`) under the key
+`picabia.modifiers/<modifier id>/<field>`, for example `picabia.modifiers/m1/count`, so files, undo,
+live collaboration and branches carry it like any FigCraft binding.
+
+- Bind and unbind with FigCraft's command: `variable.bind {ids?, field: "picabia.modifiers/m1/count",
+  variable}` (`variable: null` unbinds). It refuses a modifier the layer doesn't have, a param the
+  modifier doesn't have, and a variable of the wrong type.
+- The value is written into the stack whenever bindings resolve: after the bind, when the variable's
+  value changes, and when the layer's mode changes (`variable.setMode` on the layer, a frame or the
+  page). Modes switch values, e.g. a `copies` variable of 4 in Light and 7 in Dark.
+- Bindings follow the modifier's **id**, not its row: moving rows keeps them.
+- Removing a modifier (or all of them) drops its bindings. Setting a bound param by hand
+  (`modifier.set`) detaches it, as editing a bound FigCraft field does; setting other params keeps it.
+- A value that doesn't fit (a count over 1000 is clamped, a choice that doesn't exist) is skipped;
+  a binding never breaks the stack.
+
+## Expressions
+
+The amounts of `transformEach` (`offsetX`, `offsetY`, `rotate`, `scaleX`, `scaleY`) and
+`randomize` (`position`, `rotation`, `scale`) can each be driven by a per-copy expression, stored as
+`<field>Expr` next to the field (`"rotateExpr": "i * 15"`) and set with
+`modifier.set {modifier, props: {"rotateExpr": "i * 15"}}` (an empty text or `null` clears it).
+`modifier.set` refuses texts that don't parse (the error says where).
+
+| Name | Meaning |
+|---|---|
+| `i` | The copy's index (0 = the original) |
+| `n` | The number of copies |
+| `t` | `i / (n - 1)`, 0 when `n = 1` |
+| `value` | The field's own value (a bound variable's value when the field is bound) |
+| `pi` | 3.14159… |
+
+Operators, loosest first: `+ -`, `* / %`, unary `-`, `^` (power, right-associative). Functions:
+`sin cos tan` (degrees, like every angle in Picabia), `asin acos atan atan2(y, x)` (degrees),
+`abs floor ceil round sqrt sign exp ln`, `min max` (1 to 8 arguments), `mod(a, b)`,
+`clamp(x, lo, hi)`, `lerp(a, b, t)`, `rad`, `deg`, and `rand(k)` (a fixed number in 0 to 1 for each
+`k`, the same on every platform).
+
+| Expression | Effect |
+|---|---|
+| `rotate = i * 15` | 0°, 15°, 30°… |
+| `offsetY = sin(t * 360) * 40` | One wave across the set |
+| `scaleX = value * (1 - t / 2)` | Shrinks to half the field's scale |
+| `rotation = value * t` (randomize) | No randomness on the first copy, full on the last |
+
+An expression gives that copy's full amount: it replaces the `progressive` ramp for its field
+(`t` is there to ramp), while `jitter` still applies. Results are clamped to the field's range, and a
+result that isn't a number (`1 / 0`) falls back to the field's value. Expressions are at most 256
+characters and 32 levels deep, so they evaluate in bounded time; a damaged one in a file is ignored
+with a warning.
 
 ## Canvas guides
 

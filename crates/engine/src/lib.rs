@@ -101,6 +101,7 @@ mod derived;
 mod doc_state;
 mod error;
 mod picabia_bake; // PICABIA: .fig/Penpot exports bake modifier copies.
+mod picabia_bind; // PICABIA: variable bindings on modifier params.
 mod prefs;
 mod session;
 mod view_state;
@@ -399,6 +400,8 @@ mod pen_end_tests;
 mod pen_overlay_tests;
 #[cfg(test)]
 mod penpot_export_tests;
+#[cfg(test)]
+mod picabia_binding_tests; // PICABIA: modifier binding and expression tests.
 #[cfg(test)]
 mod picabia_canvas_tests; // PICABIA: modifier copies on the canvas and in exports.
 #[cfg(test)]

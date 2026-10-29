@@ -42,8 +42,14 @@
 //! non-finite or huge params are clamped by [`evaluate`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod bind;
+#[cfg(test)]
+mod bind_tests;
 mod cache;
 mod eval;
+pub mod expr;
+#[cfg(test)]
+mod expr_tests;
 mod kinds;
 #[cfg(test)]
 mod kinds_tests;
@@ -54,10 +60,13 @@ mod parse;
 #[cfg(test)]
 mod tests;
 
+pub use bind::{
+    BINDING_PREFIX, apply_bound_values, binding_key, binding_takes, bound_variable, field_type, is_binding_key, parse_binding_key, stale_binding_keys,
+};
 pub use eval::{Guide, Instance, Output, Warning, evaluate, splitmix64};
 pub use model::{
     CircularArray, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach, Wallpaper,
-    WallpaperGroup, kind_label,
+    WallpaperGroup, expr_field, expr_fields, expr_key, kind_label,
 };
 pub use node::{evaluate_node, evaluate_node_in, has_modifiers, node_bounds, node_instances, node_stack};
 pub use parse::{parse, parse_cached, stack_from_value, stack_to_value, to_json};

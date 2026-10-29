@@ -29,3 +29,17 @@ pub(crate) fn count<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
 pub(crate) fn seed<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
     whole(d, f64::from(u32::MAX))
 }
+
+/// An expression text: a string (blank = none) or a number (taken as its text); `null` = none.
+pub(crate) fn expr<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    match Value::deserialize(d)? {
+        Value::Null => Ok(None),
+        Value::String(s) if s.trim().is_empty() => Ok(None),
+        Value::String(s) if s.len() > crate::expr::MAX_EXPR_LEN => {
+            Err(D::Error::custom(format!("expressions are at most {} characters", crate::expr::MAX_EXPR_LEN)))
+        }
+        Value::String(s) => Ok(Some(s)),
+        Value::Number(n) => Ok(Some(n.to_string())),
+        v => Err(D::Error::custom(format!("expected an expression text, got {v}"))),
+    }
+}

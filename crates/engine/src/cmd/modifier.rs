@@ -36,7 +36,13 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         spec!("modifier.remove", "Remove modifier", "{ids?, modifier? (id, e.g. m1) | index? (0 = top row)}", true, remove),
         spec!("modifier.move", "Move modifier", "{ids?, from (index), to (index)}", true, move_modifier),
-        spec!("modifier.set", "Set modifier", "{ids?, modifier? (id) | index?, props {..: params to change, camelCase; enabled too}}", true, set),
+        spec!(
+            "modifier.set",
+            "Set modifier",
+            "{ids?, modifier? (id) | index?, props {..: params to change, camelCase; enabled too; <field>Expr: a per-copy expression on transformEach/randomize amounts (i, n, t, value; \"\" clears)}}",
+            true,
+            set
+        ),
         spec!("modifier.toggle", "Toggle modifier", "{ids?, modifier? (id) | index?, enabled? (default: flip)}", true, toggle),
         spec!("modifier.copy", "Copy modifiers", "{id?, modifier? (id) | index? (one row; without: the whole stack)} → {copied}", false, copy),
         spec!(
@@ -126,6 +132,8 @@ fn edit(cmd: &str, s: &mut Session, p: &Value, mut f: impl FnMut(&mut Stack, Nod
         f(&mut stack, id)?;
         write(s, id, &stack)?;
     }
+    // Variable bindings of rows that went go too.
+    crate::picabia_bind::prune(n);
     Ok(())
 }
 
@@ -201,11 +209,19 @@ fn move_modifier(s: &mut Session, p: &Value) -> Result<Value> {
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "modifier.set";
     let props = props_of(CMD, p, true)?.cloned().unwrap_or_default();
+    let mut edited = Vec::new();
     edit(CMD, s, p, |stack, id| {
         let at = pick(CMD, p, stack, id)?;
         let m = stack.modifiers.get_mut(at).ok_or_else(|| bad(CMD, "no such modifier"))?;
-        m.set_props(&props).map_err(|e| bad(CMD, format!("layer {id}: {e}")))
+        let before = m.kind.params();
+        m.set_props(&props).map_err(|e| bad(CMD, format!("layer {id}: {e}")))?;
+        edited.push((id, m.id.clone(), before, m.kind.params()));
+        Ok(())
     })?;
+    // A param set by hand drops its variable binding, as FigCraft's own fields do.
+    for (id, m, before, after) in edited {
+        crate::picabia_bind::detach_edited(s.doc_mut()?.get_mut(id)?, &m, &before, &after);
+    }
     ok()
 }
 
@@ -293,7 +309,9 @@ fn remove_all(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "modifier.remove_all";
     for id in layers(CMD, s, p)? {
         if s.doc()?.get(id)?.plugin_data.contains_key(PLUGIN_KEY) {
-            s.doc_mut()?.get_mut(id)?.plugin_data.remove(PLUGIN_KEY);
+            let n = s.doc_mut()?.get_mut(id)?;
+            n.plugin_data.remove(PLUGIN_KEY);
+            crate::picabia_bind::prune(n);
         }
     }
     ok()

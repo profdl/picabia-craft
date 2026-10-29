@@ -269,7 +269,8 @@ fn convert(s: &mut Session, p: &Value, cmd: &'static str, to_frame: bool) -> Res
         n.corners = Corners::default();
         (n.styles.fill, n.styles.stroke, n.styles.grid) = (None, None, None);
         // Variables bound to what went would bring it back.
-        n.bound.retain(|k, _| matches!(k.as_str(), "opacity" | "visible"));
+        // PICABIA: modifier param bindings stay with the modifiers (plugin data is kept).
+        n.bound.retain(|k, _| matches!(k.as_str(), "opacity" | "visible") || figcraft_modifiers::is_binding_key(k));
         let kids = n.children.clone();
         for k in kids {
             // Out of the flow there is nothing to fill or to be absolute against.
