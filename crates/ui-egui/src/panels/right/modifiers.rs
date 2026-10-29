@@ -7,8 +7,9 @@
 //! Every edit is a `modifier.*` command. The fields come from [`FIELDS`], one table row per
 //! settings row, so a parameter change in `figcraft-modifiers` is a one-line change here.
 
-use egui::{Id, Rect, Sense, Ui, pos2, vec2};
-use figcraft_doc::{Document, NodeId};
+use egui::{CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use figcraft_doc::{Document, NodeId, VariableType};
+use figcraft_modifiers::ModifierKind;
 use serde_json::{Map, Value, json};
 
 use super::menu::{context_popup, menu_item, menu_popup, row, row_context_menu, row_rect};
@@ -18,8 +19,8 @@ use crate::i18n::{tr, tr_noop, trf};
 use crate::icons::{self, Icon};
 use crate::icons_picabia::{self, Glyph};
 use crate::list_drag::{ListDrag, move_flags, remove_flags};
-use crate::theme::Tokens;
-use crate::widgets::{self, Edit, Empty, Lead, PAD_RIGHT};
+use crate::theme::{Tokens, regular};
+use crate::widgets::{self, Edit, Empty, FIELD_H, Lead, PAD_RIGHT};
 
 /// Salt of the flags that keep modifier rows' settings open (`Id::unique((MOD_OPEN, index))`).
 pub(crate) const MOD_OPEN: &str = "mod_open";
@@ -36,6 +37,7 @@ pub(crate) const KIND_MENU: &[(&str, &str)] = &[
     ("transformEach", tr_noop("Transform each")),
     ("randomize", tr_noop("Randomize")),
     ("wallpaper", tr_noop("Wallpaper")),
+    ("copyToShape", tr_noop("Copy to shape")),
 ];
 
 /// A field's label: plain text not translated ("X"), a catalog key, or an icon with its name.
@@ -57,12 +59,14 @@ pub(crate) enum Field {
     /// A choice among string values `(value, label)`, as a dropdown; `translate` false shows the
     /// labels as they are (symbols such as wallpaper group names).
     Choice { param: &'static str, options: &'static [(&'static str, &'static str)], translate: bool },
+    /// Another layer on the page (its id as text), as a dropdown of the page's layers.
+    Target { param: &'static str },
 }
 
 impl Field {
     pub(crate) fn param(&self) -> &'static str {
         match self {
-            Field::Num { param, .. } | Field::Check { param, .. } | Field::Choice { param, .. } => param,
+            Field::Num { param, .. } | Field::Check { param, .. } | Field::Choice { param, .. } | Field::Target { param } => param,
         }
     }
 }
@@ -117,6 +121,10 @@ const GROUPS: &[(&str, &str)] = &[
     ("p6", "p6"),
     ("p6m", "p6m"),
 ];
+
+/// Copy-to-shape placements: (value written in `mode`, label).
+const COPY_MODES: &[(&str, &str)] =
+    &[("points", tr_noop("On each point")), ("alongPath", tr_noop("Along the outline")), ("populate", tr_noop("Scattered inside"))];
 
 /// Each kind's settings, one inner slice per 32 pt row (numbers two to a row, like the Effects
 /// grid). Parameters per `docs/picabia/modifiers.md`.
@@ -183,6 +191,16 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[num("originX", X, -BIG, BIG), num("originY", Y, -BIG, BIG)],
         ],
     ),
+    (
+        "copyToShape",
+        &[
+            &[Field::Target { param: "target" }],
+            &[Field::Choice { param: "mode", options: COPY_MODES, translate: true }],
+            &[int("count", text(tr_noop("Count")), 1.0, 1000.0), pct("scale", text(tr_noop("Scale")), 0.0, 10_000.0)],
+            &[int("seed", text(tr_noop("Seed")), 0.0, SEED_MAX)],
+            &[Field::Check { param: "align", label: tr_noop("Follow the outline's direction") }],
+        ],
+    ),
 ];
 
 /// The settings rows of kind id `kind` (none for kinds this build doesn't know).
@@ -204,6 +222,11 @@ struct RowView {
     params: Vec<(NodeId, Map<String, Value>)>,
     /// Its id on the first layer (warnings name it).
     id: String,
+    /// Its id when it is the same on every layer: its fields can then be bound to variables
+    /// (binding keys name the modifier id).
+    common_id: Option<String>,
+    /// Its kind and params on the first layer.
+    first: Option<ModifierKind>,
 }
 
 /// What the section shows for the selection.
@@ -242,6 +265,8 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
                 kind: kind.clone(),
                 enabled: mods.iter().all(|(_, m)| m.enabled),
                 id: mods.first().map(|(_, m)| m.id.clone()).unwrap_or_default(),
+                common_id: mods.first().map(|(_, m)| m.id.clone()).filter(|id| mods.iter().all(|(_, m)| &m.id == id)),
+                first: mods.first().map(|(_, m)| m.kind.clone()),
                 params: mods.into_iter().map(|(id, m)| (id, m.kind.params())).collect(),
             }
         })
@@ -438,8 +463,8 @@ fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usiz
 /// each layer from its own value.
 fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView) {
     let rows = fields_of(&r.kind);
+    let t = Tokens::get(ui.ctx());
     if rows.is_empty() {
-        let t = Tokens::get(ui.ctx());
         widgets::note(ui, tr("This version doesn't know this kind of modifier: it is kept in the file but not drawn"), t.text_secondary);
         return;
     }
@@ -450,14 +475,29 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
                 field(app, ui, ids, i, r, f, half);
             }
         });
+        // Why an expression typed into this row doesn't read.
+        for f in *fields {
+            if let Some(e) = ui.data(|d| d.get_temp::<String>(expr_field_id(i, f.param()).with("error"))) {
+                widgets::note(ui, &trf("Expression: {error}", &[("error", &e)]), t.danger);
+            }
+        }
     }
 }
 
+/// Field `f` of row `i`: a number field (bindable to a number variable when the row has one id
+/// on every layer; with a per-copy expression where the kind takes one), a checkbox or a dropdown
+/// (bindable likewise).
 fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f: &Field, half: f32) {
     let param = f.param();
     let set = |app: &mut FigApp, v: Value| {
         app.run("modifier.set", json!({"ids": ids, "index": i, "props": {param: v}}));
     };
+    // The binding key, when the field can be bound here.
+    let bind = r
+        .common_id
+        .as_deref()
+        .zip(r.first.as_ref())
+        .and_then(|(mid, kind)| Some((figcraft_modifiers::binding_key(mid, param), figcraft_modifiers::field_type(kind, param)?)));
     match f {
         Field::Num { lead, unit, step, scale, .. } => {
             let lead = match *lead {
@@ -465,9 +505,16 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 FieldLead::Text(k) => Lead::Text(tr(k)),
                 FieldLead::Icon(icon, k) => Lead::Icon(icon, tr(k)),
             };
-            let shown = common_num(&r.params, param).map(|v| v * scale);
+            let area = Rect::from_min_size(ui.cursor().min, vec2(half, FIELD_H));
             let id = Id::unique(("mod", param, i));
-            let (edit, _) = widgets::number_field_bindable(ui, id, lead, shown, unit, half, *step, None, Empty::Text(tr("Mixed")));
+            if figcraft_modifiers::expr_fields(&r.kind).contains(&param) && expression(app, ui, ids, i, r, param, lead, area) {
+                return;
+            }
+            let shown = common_num(&r.params, param).map(|v| v * scale);
+            let edit = match &bind {
+                Some((key, _)) => crate::variable_ui::number_field_mixed(app, ui, ids, key, id, lead, shown, unit, half),
+                None => widgets::number_field_bindable(ui, id, lead, shown, unit, half, *step, None, Empty::Text(tr("Mixed"))).0,
+            };
             match edit {
                 Some(Edit::All(fe)) => {
                     app.field_run(Some(fe), "modifier.set", |v| match to_param(f, v) {
@@ -489,11 +536,23 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 }
                 None => {}
             }
+            if figcraft_modifiers::expr_fields(&r.kind).contains(&param) {
+                expression_menu(app, ui, ids, i, param, area, None);
+            }
         }
+        Field::Target { .. } => target_field(app, ui, ids, i, r, param),
         Field::Check { label, .. } => {
             let on = r.params.iter().all(|(_, p)| p.get(param).and_then(Value::as_bool).unwrap_or(false));
-            if widgets::checkbox(ui, on, tr(label)) {
-                set(app, json!(!on));
+            let control = |app: &mut FigApp, ui: &mut Ui| {
+                if widgets::checkbox(ui, on, tr(label)) {
+                    set(app, json!(!on));
+                }
+            };
+            match &bind {
+                Some((key, VariableType::Boolean)) => {
+                    crate::variable_ui::bindable(app, ui, ids, key, VariableType::Boolean, ui.available_width().min(200.0), control);
+                }
+                _ => control(app, ui),
             }
         }
         Field::Choice { options, translate, .. } => {
@@ -504,17 +563,221 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 (Some(v), true) => options.iter().find(|(o, _)| o == v).map_or(v.as_str(), |(_, l)| tl(l)),
                 _ => tr("Mixed"),
             };
-            let resp = widgets::dropdown(ui, label, ui.available_width(), None);
-            menu_popup(&resp).show(|ui| {
-                for (value, l) in *options {
-                    if menu_item(ui, tl(l), "") {
-                        set(app, json!(value));
-                        ui.close();
+            let control = |app: &mut FigApp, ui: &mut Ui| {
+                let resp = widgets::dropdown(ui, label, ui.available_width(), None);
+                menu_popup(&resp).show(|ui| {
+                    for (value, l) in *options {
+                        if menu_item(ui, tl(l), "") {
+                            set(app, json!(value));
+                            ui.close();
+                        }
                     }
+                });
+            };
+            match &bind {
+                Some((key, VariableType::String)) => {
+                    crate::variable_ui::bindable(app, ui, ids, key, VariableType::String, ui.available_width(), control)
                 }
-            });
+                _ => control(app, ui),
+            }
         }
     }
+}
+
+/// The most layers the target dropdown lists.
+const MAX_TARGETS: usize = 300;
+
+/// The layers of the current page a copy-to-shape can target (not the selection), in layer order
+/// (top level first), as (id, name); at most [`MAX_TARGETS`].
+fn page_layers(app: &FigApp, sel: &[NodeId]) -> Vec<(NodeId, String)> {
+    let (Ok(doc), Ok(page)) = (app.session.doc(), app.session.page()) else { return Vec::new() };
+    let mut out = Vec::new();
+    let mut todo: Vec<NodeId> = doc.node(page).map(|p| p.children.iter().rev().copied().collect()).unwrap_or_default();
+    while let Some(id) = todo.pop() {
+        if out.len() >= MAX_TARGETS {
+            break;
+        }
+        let Some(n) = doc.node(id) else { continue };
+        if !sel.contains(&id) {
+            out.push((id, n.name.clone()));
+        }
+        todo.extend(n.children.iter().rev().copied());
+    }
+    out
+}
+
+/// The target dropdown of field `param` of row `i`: the target layer's name (or a prompt), and
+/// a menu of the page's layers.
+fn target_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str) {
+    let first = r.params.first().and_then(|(_, p)| p.get(param).and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+    let same = r.params.iter().all(|(_, p)| p.get(param).and_then(Value::as_str).unwrap_or_default() == first);
+    let name = first.parse::<u64>().ok().and_then(|n| app.session.doc().ok()?.node(NodeId(n)).map(|n| n.name.clone()));
+    let label = match (same, first.is_empty(), name) {
+        (false, ..) => tr("Mixed").to_string(),
+        (true, true, _) => tr("Choose a layer").to_string(),
+        (true, false, Some(n)) => n,
+        (true, false, None) => tr("Missing layer").to_string(),
+    };
+    let resp = widgets::dropdown(ui, &label, ui.available_width(), Some(Icon::Vector));
+    let mut picked = None;
+    menu_popup(&resp).show(|ui| {
+        for (id, n) in page_layers(app, ids) {
+            if menu_item(ui, &n, "") {
+                picked = Some(id);
+                ui.close();
+            }
+        }
+    });
+    if let Some(id) = picked {
+        app.run("modifier.set", json!({"ids": ids, "index": i, "props": {param: id.0.to_string()}}));
+    }
+}
+
+/// The flag of field `param` of row `i` whose expression is being typed.
+fn expr_editing_id(i: usize, param: &str) -> Id {
+    Id::unique(("mod_expr_edit", param, i))
+}
+
+/// The text field an expression is typed into.
+fn expr_field_id(i: usize, param: &str) -> Id {
+    Id::unique(("mod_expr", param, i))
+}
+
+/// Start typing an expression for field `param` of row `i`, from `text`.
+fn edit_expression(ctx: &egui::Context, i: usize, param: &str, text: &str) {
+    let fid = expr_field_id(i, param);
+    ctx.data_mut(|d| {
+        d.insert_temp(expr_editing_id(i, param), true);
+        d.insert_temp(fid.with("editing"), text.to_string());
+        d.remove::<String>(fid.with("error"));
+    });
+    ctx.memory_mut(|m| m.request_focus(fid.with("te")));
+}
+
+/// Set (or with an empty text, clear) the expression of field `param` of row `i`.
+fn set_expression(app: &mut FigApp, ids: &[NodeId], i: usize, param: &str, text: &str) {
+    let v = if text.trim().is_empty() { Value::Null } else { json!(text.trim()) };
+    app.run("modifier.set", json!({"ids": ids, "index": i, "props": {figcraft_modifiers::expr_key(param): v}}));
+}
+
+/// An expression field in place of the number field, while one is being typed or the field has
+/// one (a chip like a bound variable's: click to edit, the button removes it). True when it took
+/// the field's place.
+#[allow(clippy::too_many_arguments)]
+fn expression(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str, lead: Lead, area: Rect) -> bool {
+    let key = figcraft_modifiers::expr_key(param);
+    let texts: Vec<Option<&str>> = r.params.iter().map(|(_, p)| p.get(&key).and_then(Value::as_str)).collect();
+    let current = texts.first().copied().flatten();
+    let same = texts.iter().all(|t| *t == current);
+    let fid = expr_field_id(i, param);
+    if ui.data(|d| d.get_temp::<bool>(expr_editing_id(i, param))).unwrap_or(false) {
+        let committed = widgets::text_field(ui, fid, if same { current.unwrap_or("") } else { "" }, area.width(), "i * 15");
+        let still = ui.data(|d| d.get_temp::<String>(fid.with("editing"))).is_some();
+        match committed {
+            Some(text) => match figcraft_modifiers::expr::check(&text) {
+                Err(e) if !text.trim().is_empty() => {
+                    // A typo keeps the text open, with why under the row.
+                    ui.data_mut(|d| {
+                        d.insert_temp(fid.with("editing"), text.clone());
+                        d.insert_temp(fid.with("error"), e.to_string());
+                    });
+                    ui.memory_mut(|m| m.request_focus(fid.with("te")));
+                }
+                _ => {
+                    ui.data_mut(|d| {
+                        d.remove::<bool>(expr_editing_id(i, param));
+                        d.remove::<String>(fid.with("error"));
+                    });
+                    set_expression(app, ids, i, param, &text);
+                }
+            },
+            None if !still => ui.data_mut(|d| {
+                d.remove::<bool>(expr_editing_id(i, param));
+                d.remove::<String>(fid.with("error"));
+            }),
+            None => {}
+        }
+        return true;
+    }
+    let Some(text) = (if same { current.map(str::to_string) } else { Some(tr("Mixed").to_string()) }) else { return false };
+    let (rect, _) = ui.allocate_exact_size(area.size(), Sense::hover());
+    match expr_chip(ui, fid, lead, rect, &text) {
+        Some(ChipEvent::Edit) => edit_expression(ui.ctx(), i, param, if same { &text } else { "" }),
+        Some(ChipEvent::Remove) => set_expression(app, ids, i, param, ""),
+        None => {}
+    }
+    expression_menu(app, ui, ids, i, param, rect, Some(if same { text.as_str() } else { "" }));
+    true
+}
+
+/// Field `param`'s right-click menu: add an expression, or edit or remove the one it has.
+fn expression_menu(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, param: &str, rect: Rect, current: Option<&str>) {
+    row_context_menu(ui, rect, Id::unique(("mod_expr_menu", param, i))).show(|ui| match current {
+        None => {
+            if menu_item(ui, tr("Add expression"), "") {
+                edit_expression(ui.ctx(), i, param, "");
+                ui.close();
+            }
+        }
+        Some(text) => {
+            if menu_item(ui, tr("Edit expression"), "") {
+                edit_expression(ui.ctx(), i, param, text);
+                ui.close();
+            }
+            if menu_item(ui, tr("Remove expression"), "") {
+                set_expression(app, ids, i, param, "");
+                ui.close();
+            }
+        }
+    });
+}
+
+/// What an expression chip did.
+enum ChipEvent {
+    Edit,
+    Remove,
+}
+
+/// A field showing expression `text` as a chip in `rect`, drawn like a bound variable's
+/// (`widgets::bound_field`): click to edit, the button at its end removes it.
+fn expr_chip(ui: &mut Ui, id: Id, lead: Lead, rect: Rect, text: &str) -> Option<ChipEvent> {
+    let t = Tokens::get(ui.ctx());
+    let resp = ui.interact(rect, id.with("chip"), Sense::click());
+    crate::a11y::combo(&resp, lead.name(), text, false);
+    ui.painter().rect_filled(rect, CornerRadius::same(5), t.field);
+    if resp.hovered() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(5), Stroke::new(1.0, t.field_hover_border), StrokeKind::Inside);
+    }
+    let lead_w = match lead {
+        Lead::None | Lead::Named(_) => 4.0,
+        Lead::Text(s) => {
+            let w = widgets::text_lead_width(ui, s, rect.width());
+            crate::bidi::paint_name(ui.painter(), pos2(rect.min.x + 8.0, rect.center().y), s, regular(11.0), t.text_secondary, w - 12.0);
+            w
+        }
+        Lead::Icon(i, _) => {
+            icons::paint(ui.painter(), Rect::from_center_size(pos2(rect.min.x + 13.0, rect.center().y), vec2(14.0, 14.0)), i, t.icon_secondary);
+            24.0
+        }
+    };
+    let dr = Rect::from_center_size(pos2(rect.max.x - 11.0, rect.center().y), vec2(18.0, 18.0));
+    let chip = Rect::from_min_max(pos2(rect.min.x + lead_w - 2.0, rect.min.y + 3.0), pos2(dr.min.x - 2.0, rect.max.y - 3.0));
+    ui.painter().rect_filled(chip, CornerRadius::same(4), t.hover);
+    ui.painter().rect_stroke(chip, CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    let galley = ui.painter().layout_no_wrap(format!("= {text}"), regular(11.0), t.text);
+    ui.painter().with_clip_rect(chip.shrink2(vec2(5.0, 0.0))).galley(pos2(chip.min.x + 5.0, chip.center().y - galley.size().y / 2.0), galley, t.text);
+    let dresp = ui.interact(dr, id.with("remove"), Sense::click()).tip(tr("Remove expression"));
+    if resp.hovered() || dresp.hovered() || dresp.has_focus() {
+        if dresp.hovered() {
+            ui.painter().rect_filled(dr, CornerRadius::same(4), t.hover);
+        }
+        icons::paint(ui.painter(), dr.shrink(3.0), Icon::Detach, t.icon_secondary);
+    }
+    if dresp.clicked() {
+        return Some(ChipEvent::Remove);
+    }
+    let resp = resp.on_hover_text(text);
+    resp.clicked().then_some(ChipEvent::Edit)
 }
 
 /// The section's tests (`src/picabia_modifiers_tests.rs`, beside FigCraft's panel suites).

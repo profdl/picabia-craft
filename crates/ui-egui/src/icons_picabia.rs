@@ -28,6 +28,8 @@ pub enum Glyph {
     Randomize,
     /// Wallpaper: a 2×2 tile, each cell holding a corner triangle turned a quarter more.
     Wallpaper,
+    /// Copy to shape: three squares riding a curved outline.
+    CopyToShape,
 }
 
 impl Glyph {
@@ -53,6 +55,7 @@ impl Glyph {
             "transformEach" => Glyph::TransformEach,
             "randomize" => Glyph::Randomize,
             "wallpaper" => Glyph::Wallpaper,
+            "copyToShape" => Glyph::CopyToShape,
             _ => Glyph::Modifiers,
         }
     }
@@ -201,6 +204,17 @@ fn draw(g: &G, glyph: Glyph) {
             g.fill(vec![g.at(9.0, 7.0), g.at(9.0, 3.5), g.at(12.5, 7.0)]);
             g.fill(vec![g.at(9.0, 9.0), g.at(12.5, 9.0), g.at(9.0, 12.5)]);
             g.fill(vec![g.at(7.0, 9.0), g.at(7.0, 12.5), g.at(3.5, 9.0)]);
+        }
+        Glyph::CopyToShape => {
+            // A quarter circle round the bottom-right corner, from the left edge to the top.
+            let at = |a: f32| (14.5 + 12.0 * a.cos(), 14.5 + 12.0 * a.sin());
+            let arc: Vec<Pos2> = (0..=16).map(|k| std::f32::consts::PI * (1.0 + k as f32 / 32.0)).map(at).map(|(x, y)| g.at(x, y)).collect();
+            g.painter.add(Shape::line(arc, g.stroke));
+            for (k, a) in [1.08f32, 1.25, 1.42].into_iter().enumerate() {
+                let (x, y) = at(std::f32::consts::PI * a);
+                let pts = g.turned(x, y, 3.5, std::f32::consts::PI * (a - 1.0));
+                if k == 0 { g.fill(pts) } else { g.outline(pts) }
+            }
         }
     }
 }

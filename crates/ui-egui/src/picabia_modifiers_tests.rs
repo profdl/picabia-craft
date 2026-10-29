@@ -397,3 +397,65 @@ fn a_checkbox_and_the_mirror_axis_dropdown_set_their_params() {
     click(&mut u, text_center(&shapes, "Keep original"));
     assert_eq!(stack(&mut u, r)[0]["keepOriginal"], json!(false));
 }
+
+/// A field bound to a variable shows the variable's chip (FigCraft's own bound field), and its
+/// Detach button unbinds it.
+#[test]
+fn a_bound_field_shows_its_variable_and_detaches() {
+    let mut s = Session::new();
+    let r = rect(&mut s, 0.0);
+    s.execute("modifier.add", &json!({"ids": [r], "kind": "linearArray"})).unwrap();
+    let c = s.execute("variable.createCollection", &json!({"name": "Theme", "modes": ["Light"]})).unwrap();
+    let v = s.execute("variable.create", &json!({"collection": c["id"], "name": "copies", "type": "number", "value": 4})).unwrap();
+    let key = figcraft_modifiers::binding_key("m1", "count");
+    s.execute("variable.bind", &json!({"ids": [r], "field": key, "variable": v["id"]})).unwrap();
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    u.ctx.enable_accesskit();
+    open_settings(&mut u, 0);
+    into_view(&mut u, grip_id(LIST, 0));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    assert!(texts(&shapes).iter().any(|t| t == "copies"), "the count field shows the variable");
+    let detach = labelled(&mut u, "Detach variable");
+    let detach = *detach.first().expect("a Detach button");
+    // The button shows while the field is hovered.
+    u.frame(vec![Event::PointerMoved(detach)]);
+    click(&mut u, detach);
+    let doc = u.app.session.doc().unwrap();
+    assert!(!doc.node(r).unwrap().bound.contains_key(&key), "detached");
+}
+
+/// A per-copy expression: added from the field's right-click menu, typed and committed; it then
+/// shows as a chip; a typo is refused with a note; the menu removes it.
+#[test]
+fn an_expression_is_added_typed_shown_and_removed() {
+    let (mut u, r) = setup(&["transformEach"]);
+    open_settings(&mut u, 0);
+    let at = lead(&mut u, "rotate", 0) + egui::vec2(30.0, 0.0);
+    let menu = click_with(&mut u, at, PointerButton::Secondary);
+    click(&mut u, text_center(&menu, "Add expression"));
+    let enter = |pressed| Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
+    // A typo stays open with why.
+    u.frame(vec![Event::Text("i *".into())]);
+    u.frame(vec![enter(true), enter(false)]);
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert!(stack(&mut u, r)[0].get("rotateExpr").is_none(), "nothing set");
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    assert!(texts(&shapes).iter().any(|t| t.starts_with("Expression: ")), "the error shows: {:?}", texts(&shapes));
+    // Fixed, it's set in one step.
+    let steps = undo_steps(&u);
+    u.frame(vec![Event::Text(" 15".into())]);
+    u.frame(vec![enter(true), enter(false)]);
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert_eq!(stack(&mut u, r)[0]["rotateExpr"], json!("i * 15"));
+    assert_eq!(undo_steps(&u), steps + 1);
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    assert!(texts(&shapes).iter().any(|t| t == "= i * 15"), "the chip shows the expression");
+    let menu = click_with(&mut u, text_center(&shapes, "= i * 15"), PointerButton::Secondary);
+    click(&mut u, text_center(&menu, "Remove expression"));
+    assert!(stack(&mut u, r)[0].get("rotateExpr").is_none_or(Value::is_null), "removed");
+}
