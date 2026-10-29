@@ -1,0 +1,315 @@
+//! Picabia: layers with a modifier stack draw, measure, hit-test and export as all their copies.
+//!
+//! A layer's stack lives in its plugin data (see `figcraft_modifiers`); [`figcraft_modifiers::node_instances`]
+//! turns it into instance transforms, cached. Each instance transform `T` applies in the layer's
+//! **parent** space before its own transform: `world = parent_world * T * node.transform`. A layer
+//! without a stack (the usual case) costs one plugin-data check here and draws exactly as before.
+//!
+//! Everything copy-aware outside this file is a marked `// PICABIA:` seam that calls in here: the
+//! renderer's draw and bounds walks, the export walkers (`figcraft-svg`, `figcraft-pdf`), the
+//! engine's hit testing and marquee, and the canvas hover outline.
+
+use std::cell::Cell;
+
+use figcraft_doc::geometry::BoolResult;
+use figcraft_doc::{Document, Node, NodeId};
+use figcraft_geom::{Affine, Point, Rect};
+
+pub use figcraft_modifiers::PLUGIN_KEY;
+
+/// The most layer draws one top-level draw makes through nested stacks (a stacked group holding
+/// stacked layers multiplies). Past it, inner stacks draw fewer copies.
+pub const MAX_NESTED_COPIES: usize = 100_000;
+/// The deepest the copy-aware walks here go below the layer they start at.
+const MAX_WALK_DEPTH: usize = 256;
+/// The most layers the copy-aware walks here visit.
+const MAX_WALK_NODES: usize = 200_000;
+
+thread_local! {
+    /// How many copies the draws already on the stack multiply to (1 outside any stack).
+    static NESTED: Cell<usize> = const { Cell::new(1) };
+}
+
+/// Whether `n` has modifier data at all (a plugin-data lookup; doesn't parse).
+pub fn has_stack(n: &Node) -> bool {
+    !n.plugin_data.is_empty() && n.plugin_data.contains_key(PLUGIN_KEY)
+}
+
+/// `n`'s instance transforms (parent space, before `n.transform`), or `None` to treat it as one
+/// layer. Never empty when `Some`.
+pub fn instance_transforms(n: &Node) -> Option<Vec<Affine>> {
+    if !has_stack(n) {
+        return None;
+    }
+    let out = figcraft_modifiers::node_instances(n)?;
+    let v: Vec<Affine> = out.transforms().filter(|t| t.is_finite()).collect();
+    (!v.is_empty()).then_some(v)
+}
+
+/// Call `f` once per instance transform of `n` (parent space, in draw order) and return `true`;
+/// return `false` without calling it when `n` has no active stack (the caller draws it once as
+/// usual). Copies nested inside copies share [`MAX_NESTED_COPIES`].
+pub fn each_copy(n: &Node, mut f: impl FnMut(Affine)) -> bool {
+    let Some(ts) = instance_transforms(n) else { return false };
+    let outer = NESTED.with(Cell::get).max(1);
+    let room = (MAX_NESTED_COPIES / outer).max(1);
+    let take = ts.len().min(room);
+    NESTED.with(|c| c.set(outer.saturating_mul(take)));
+    for t in ts.into_iter().take(take) {
+        f(t);
+    }
+    NESTED.with(|c| c.set(outer));
+    true
+}
+
+/// The bounding box in `n`'s parent space of `r` (in `n`'s own space) drawn by every copy of `n`:
+/// `transform_rect_bbox(n.transform, r)` for a layer without a stack.
+pub fn parent_bbox(n: &Node, r: Rect) -> Rect {
+    let one = figcraft_geom::transform_rect_bbox(n.transform, r);
+    match instance_transforms(n) {
+        Some(ts) => ts.iter().map(|t| figcraft_geom::transform_rect_bbox(*t * n.transform, r)).fold(one, |a, b| a.union(b)),
+        None => one,
+    }
+}
+
+/// Whether `id` or one of its ancestors has modifier data.
+fn chain_has_stack(doc: &Document, id: NodeId) -> bool {
+    let mut cur = Some(id);
+    let mut guard = 0;
+    while let Some(c) = cur {
+        let Some(n) = doc.node(c) else { break };
+        if n.is_page() || guard > 10_000 {
+            break;
+        }
+        if has_stack(n) {
+            return true;
+        }
+        cur = n.parent;
+        guard += 1;
+    }
+    false
+}
+
+/// Page-space bounds of `local` (in `id`'s own space) wherever `id` draws: through its own copies
+/// and its ancestors' copies. `transform_rect_bbox(world_transform(id), local)` when nothing on the
+/// way up has a stack.
+pub fn world_bbox(doc: &Document, id: NodeId, local: Rect) -> Rect {
+    if !chain_has_stack(doc, id) {
+        return figcraft_geom::transform_rect_bbox(doc.world_transform(id), local);
+    }
+    let mut r = local;
+    let mut cur = Some(id);
+    let mut guard = 0;
+    while let Some(c) = cur {
+        let Some(n) = doc.node(c) else { break };
+        if n.is_page() || guard > 10_000 {
+            break;
+        }
+        r = parent_bbox(n, r);
+        cur = n.parent;
+        guard += 1;
+    }
+    r
+}
+
+/// The page-space maps from `id`'s original to each of its copies (`P · T · P⁻¹`, `P` its parent's
+/// world transform), the original itself (an identity instance) left out. Empty without a stack.
+pub fn page_copies(doc: &Document, id: NodeId) -> Vec<Affine> {
+    let Some(n) = doc.node(id) else { return Vec::new() };
+    let Some(ts) = instance_transforms(n) else { return Vec::new() };
+    let p = n.parent.map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
+    if !p.is_finite() || p.determinant().abs() < 1e-12 {
+        return Vec::new();
+    }
+    let inv = p.inverse();
+    ts.into_iter().filter(|t| !is_identity(*t)).map(|t| p * t * inv).filter(|c| c.is_finite()).collect()
+}
+
+fn is_identity(a: Affine) -> bool {
+    a.as_coeffs().iter().zip(Affine::IDENTITY.as_coeffs()).all(|(x, y)| (x - y).abs() < 1e-12)
+}
+
+/// Visit `root` and the visible, unlocked layers below it (pre-order, capped).
+fn walk(doc: &Document, root: NodeId, f: &mut dyn FnMut(NodeId, &Node)) {
+    let mut stack = vec![(root, 0usize)];
+    let mut seen = 0usize;
+    while let Some((id, depth)) = stack.pop() {
+        seen += 1;
+        if seen > MAX_WALK_NODES {
+            return;
+        }
+        let Some(n) = doc.node(id) else { continue };
+        if !n.visible || n.locked {
+            continue;
+        }
+        f(id, n);
+        if depth < MAX_WALK_DEPTH && !n.hides_contents() {
+            stack.extend(n.children.iter().rev().map(|c| (*c, depth + 1)));
+        }
+    }
+}
+
+/// Copy-aware [`Document::world_render_bounds`]: also everything the copies of `id`'s descendants
+/// paint and, when `own`, the copies of `id` itself.
+pub fn render_bounds(doc: &Document, id: NodeId, own: bool) -> Option<Rect> {
+    let base = doc.world_render_bounds(id)?;
+    let extra = copies_render_bounds(doc, id, own, 0);
+    Some(extra.map_or(base, |e| base.union(e)))
+}
+
+/// What the copies inside `id` (and of `id` when `own`) add to its render bounds, `None` when no
+/// stack is involved.
+fn copies_render_bounds(doc: &Document, id: NodeId, own: bool, depth: usize) -> Option<Rect> {
+    let n = doc.node(id)?;
+    if depth > MAX_WALK_DEPTH || (!n.visible && depth > 0) {
+        return None;
+    }
+    let clips = n.clip && n.kind.is_frame_like() && !n.kind.bounds_follow_children();
+    let mut extra: Option<Rect> = None;
+    if !clips && !n.hides_contents() {
+        for c in &n.children {
+            if let Some(e) = copies_render_bounds(doc, *c, true, depth + 1) {
+                extra = Some(extra.map_or(e, |x| x.union(e)));
+            }
+        }
+    }
+    if !own {
+        return extra;
+    }
+    let copies = page_copies(doc, id);
+    if copies.is_empty() {
+        return extra;
+    }
+    let mut b = doc.world_render_bounds(id)?;
+    if let Some(e) = extra {
+        b = b.union(e);
+    }
+    Some(copies.iter().map(|c| figcraft_geom::transform_rect_bbox(*c, b)).fold(b, |a, b| a.union(b)))
+}
+
+/// Copy-aware [`Document::page_content_bounds`]: the copies of the page's layers count.
+pub fn page_content_bounds(doc: &Document, page: NodeId) -> Option<Rect> {
+    let base = doc.page_content_bounds(page)?;
+    let p = doc.node(page)?;
+    Some(p.children.iter().filter_map(|c| copies_render_bounds(doc, *c, true, 1)).fold(base, |a, b| a.union(b)))
+}
+
+/// Whether every clipping frame strictly between `root` and `id` holds page point `p`.
+fn clips_allow(doc: &Document, root: NodeId, id: NodeId, p: Point) -> bool {
+    for a in doc.ancestors(id) {
+        if a == root {
+            break;
+        }
+        let Some(an) = doc.node(a) else { break };
+        if an.is_page() {
+            break;
+        }
+        if an.clip && an.kind.is_frame_like() {
+            let w = doc.world_transform(a);
+            if w.determinant().abs() < 1e-12 || !an.local_rect().contains(w.inverse() * p) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether `a` paints over `b` (both on the same page): a layer paints over its ancestors, and
+/// siblings in paint order.
+pub fn paints_over(doc: &Document, a: NodeId, b: NodeId) -> bool {
+    if a == b {
+        return false;
+    }
+    let chain = |id: NodeId| {
+        let mut c = doc.ancestors(id);
+        c.reverse();
+        c.push(id);
+        c
+    };
+    let (ca, cb) = (chain(a), chain(b));
+    let i = ca.iter().zip(&cb).take_while(|(x, y)| x == y).count();
+    let (Some(xa), Some(xb)) = (ca.get(i), cb.get(i)) else {
+        // One holds the other: the inner one paints over.
+        return ca.len() > cb.len();
+    };
+    let Some(parent) = i.checked_sub(1).and_then(|j| ca.get(j)).and_then(|p| doc.node(*p)) else { return false };
+    let pos = |x: &NodeId| parent.paint_order().position(|c| c == *x);
+    pos(xa) > pos(xb)
+}
+
+/// Click hit testing with copies: the layer under page point `p` within `root`, where a copy of a
+/// layer is hit as the layer itself (the leaf the original would give at the same spot of the
+/// copy). `normal` is what hit testing without copies found; the front-most of the two wins.
+pub fn hit_with_copies(doc: &Document, root: NodeId, p: Point, tol: f64, result: BoolResult, normal: Option<NodeId>) -> Option<NodeId> {
+    let mut best = normal;
+    walk(doc, root, &mut |id, _| {
+        let copies = page_copies(doc, id);
+        if copies.is_empty() || !clips_allow(doc, root, id, p) {
+            return;
+        }
+        for c in copies {
+            if c.determinant().abs() < 1e-12 {
+                continue;
+            }
+            let q = c.inverse() * p;
+            let Some(leaf) = figcraft_doc::geometry::hit_in(doc, id, q, tol, result) else { continue };
+            best = match best {
+                None => Some(leaf),
+                Some(b) if b == id || doc.is_ancestor(id, b) || paints_over(doc, leaf, b) => Some(leaf),
+                keep => keep,
+            };
+        }
+    });
+    best
+}
+
+/// Page-space bounds of every copy of `id` (its box), without the original.
+pub fn copy_boxes(doc: &Document, id: NodeId) -> Vec<Rect> {
+    let Some(w) = doc.world_bounds(id) else { return Vec::new() };
+    page_copies(doc, id).into_iter().map(|c| figcraft_geom::transform_rect_bbox(c, w)).collect()
+}
+
+fn touches(b: Rect, r: Rect) -> bool {
+    b.x0 <= r.x1 && b.x1 >= r.x0 && b.y0 <= r.y1 && b.y1 >= r.y0
+}
+
+/// Marquee with copies: adds to `hits` the layers whose copies (or whose descendants' copies) touch
+/// page rect `r`. Not `deep`: `scope`'s children (what a plain marquee picks from); `deep`: the
+/// stacked layers themselves anywhere under `scope`, unless something inside them is already hit.
+pub fn marquee_copies(doc: &Document, scope: NodeId, r: Rect, deep: bool, hits: &mut Vec<NodeId>) {
+    let Some(s) = doc.node(scope) else { return };
+    let touched = |id: NodeId| copy_boxes(doc, id).into_iter().any(|b| touches(b, r));
+    if deep {
+        let mut found = Vec::new();
+        walk(doc, scope, &mut |id, _| {
+            if id != scope && touched(id) {
+                found.push(id);
+            }
+        });
+        for id in found {
+            if !hits.contains(&id) && !hits.iter().any(|h| doc.is_ancestor(id, *h) || doc.is_ancestor(*h, id)) {
+                hits.push(id);
+            }
+        }
+        return;
+    }
+    for c in s.children.clone() {
+        if hits.contains(&c) || !doc.node(c).is_some_and(|n| n.visible && !n.locked) {
+            continue;
+        }
+        let mut any = false;
+        walk(doc, c, &mut |id, _| any = any || touched(id));
+        if any {
+            hits.push(c);
+        }
+    }
+}
+
+/// Node `n` with its own stack taken off (exports that draw one copy at a time and place it).
+pub fn strip_stack(n: &mut Node) {
+    n.plugin_data.remove(PLUGIN_KEY);
+}
+
+#[cfg(test)]
+#[path = "picabia_tests.rs"]
+mod tests;

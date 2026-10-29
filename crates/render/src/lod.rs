@@ -233,7 +233,10 @@ pub fn splat_subtree(ctx: &Ctx, pix: &mut Pixmap, n: &Node, xf: Affine, clip: Op
             clip
         };
         for c in n.paint_order().filter_map(|c| ctx.bounds.node(ctx.doc, c)) {
-            splat_subtree(ctx, pix, c, xf * c.transform, clip, alpha, depth + 1);
+            // PICABIA: a child with a modifier stack splats once per copy.
+            if !crate::picabia::each_copy(c, |t| splat_subtree(ctx, pix, c, xf * t * c.transform, clip, alpha, depth + 1)) {
+                splat_subtree(ctx, pix, c, xf * c.transform, clip, alpha, depth + 1);
+            }
         }
     }
     if n.has_visible_stroke() && !matches!(n.kind, NodeKind::Text(_)) {

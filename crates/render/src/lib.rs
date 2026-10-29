@@ -20,6 +20,7 @@ mod layer_budget;
 pub mod lod;
 pub mod paint;
 pub mod pattern;
+pub mod picabia; // PICABIA: modifier-stack copies (draw, bounds, hit testing, exports)
 pub mod retained;
 pub mod shadow;
 
@@ -278,6 +279,7 @@ pub fn render_alone(doc: &Document, id: NodeId, view: &View, how: Alone) -> Opti
     let mut tmp = doc.clone();
     let n = tmp.node_mut(id)?;
     n.is_mask = false;
+    picabia::strip_stack(n); // PICABIA: one copy; the export walkers place it per copy
     match how {
         Alone::WithEffects => {
             n.effects.retain(|e| !matches!(e.kind, figcraft_doc::EffectKind::BackgroundBlur(_) | figcraft_doc::EffectKind::Glass(_)))
@@ -301,13 +303,13 @@ pub fn raster_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
     let sc = if sc.is_finite() && sc > 0.0 { sc } else { 1.0 };
     let m = draw::effect_margin(n).abs() * sc;
     let m = if m.is_finite() { m } else { 0.0 };
-    Some(doc.world_render_bounds(id)?.inflate(m, m))
+    Some(picabia::render_bounds(doc, id, false)?.inflate(m, m)) // PICABIA: copies inside it count (its own: `render_alone` draws one)
 }
 
 /// The page-space rectangle a node exports: a clipping frame's box (plus its own effects), else
 /// everything it paints.
 pub fn export_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
-    doc.world_render_bounds(id)
+    picabia::render_bounds(doc, id, true) // PICABIA: modifier copies are exported too
 }
 
 /// Rasterise one node at `scale` (export). Transparent background.

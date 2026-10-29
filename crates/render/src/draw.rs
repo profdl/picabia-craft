@@ -449,7 +449,7 @@ pub(crate) fn bounds_within<'a>(
                 }
                 let (cb, c_levels) = bounds_within(doc, c, depth + 1, greek_scale, memo);
                 below = below.zip(c_levels).map(|(b, l)| b.max(l));
-                r = r.union(figcraft_geom::transform_rect_bbox(c.transform, cb));
+                r = r.union(crate::picabia::parent_bbox(c, cb)); // PICABIA: a child's modifier copies count
             }
             levels = below.map(|b| b + 1);
         } else if !n.children.is_empty() {
@@ -502,7 +502,7 @@ pub fn paint_bounds(doc: &Document, id: NodeId) -> Option<Rect> {
     let n = doc.node(id)?;
     let m = effect_margin(n).abs();
     let local = local_paint_bounds(doc, n, 0, None);
-    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), local).inflate(m, m))
+    Some(crate::picabia::world_bbox(doc, id, local).inflate(m, m)) // PICABIA: its and its ancestors' modifier copies
 }
 
 fn needs_layer(n: &Node) -> bool {
@@ -543,6 +543,14 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
 
 /// [`draw_node`] for a node already looked up.
 fn draw_layer(ctx: &Ctx, pix: &mut Pixmap, n: &Node, parent_xf: Affine, depth: usize) {
+    // PICABIA: a layer with a modifier stack draws once per copy (effects, opacity, blend each time).
+    if !crate::picabia::each_copy(n, |t| draw_layer_once(ctx, pix, n, parent_xf * t, depth)) {
+        draw_layer_once(ctx, pix, n, parent_xf, depth);
+    }
+}
+
+/// [`draw_layer`] for one copy.
+fn draw_layer_once(ctx: &Ctx, pix: &mut Pixmap, n: &Node, parent_xf: Affine, depth: usize) {
     let id = n.id;
     if depth > crate::MAX_EXPORT_DEPTH || ctx.skip.contains(&id) {
         return;

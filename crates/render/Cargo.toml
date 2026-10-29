@@ -15,6 +15,7 @@ figcraft-doc = { workspace = true }
 figcraft-format = { workspace = true }
 figcraft-text = { workspace = true }
 figcraft-pathops = { workspace = true }
+figcraft-modifiers = { workspace = true } # PICABIA: copies from modifier stacks (draw, bounds, hit testing)
 tiny-skia = { workspace = true }
 image = { workspace = true }
 moxcms = { workspace = true }
