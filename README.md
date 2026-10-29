@@ -1,15 +1,22 @@
+<!-- PICABIA: header replaces FigCraft's ArtCraft logo and chameleon icon (trademarked/not ours); see docs/picabia/SEAMS.md -->
 <p align="center">
-  <a href="https://getartcraft.com/">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/storytold/vectorcraft/main/docs/brand/artcraft-logo-white.png">
-      <img alt="ArtCraft" src="https://raw.githubusercontent.com/storytold/vectorcraft/main/docs/brand/artcraft-logo.png" width="200">
-    </picture>
-  </a>
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.figcraft.png" width="128" height="128" alt="Picabia icon: eight dots on a ring">
 </p>
 
+<h1 align="center">Picabia</h1>
+
 <p align="center">
-  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.figcraft.png" width="128" height="128" alt="FigCraft icon: an engraved chameleon on a mint-green tile">
+  <b>A design app with a live modifier stack, built on FigCraft.</b><br>
+  Everything FigCraft does, plus non-destructive arrays, mirrors and randomised repeats that stay editable.<br>
+  Roadmap: <a href="docs/picabia/ROADMAP.md">docs/picabia/ROADMAP.md</a> &middot; Modifiers: <a href="docs/picabia/modifiers.md">docs/picabia/modifiers.md</a>
 </p>
+
+Picabia is a thin fork of [FigCraft](https://github.com/storytold/figcraft) (upstream, by the ArtCraft
+team and community) and keeps its crate names, file format (`.figcraft`) and licence: MIT OR Apache-2.0,
+unchanged. The ArtCraft name and logos are trademarks of the ArtCraft Team and are not used by
+Picabia. The rest of this README is FigCraft's own.
+
+---
 
 <h1 align="center">FigCraft</h1>
 
