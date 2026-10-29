@@ -132,6 +132,7 @@ pub(super) fn paste_design_layers(s: &mut Session, p: &Value) -> Result<Value> {
         source_path: None,
         copied_components: BTreeSet::new(),
         layers_generation,
+        picabia_modifiers: std::mem::take(&mut s.clipboard.picabia_modifiers), // PICABIA: copied modifier rows survive, like `effect`.
     };
     let mut out = paste(s, p)?;
     if !other.issues.is_empty() {

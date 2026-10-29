@@ -11,6 +11,7 @@ pub mod image;
 pub mod layout;
 pub mod library;
 pub mod lists;
+pub mod modifier; // PICABIA: modifier stack commands (registered below).
 pub mod page;
 pub mod props;
 pub mod proto;
@@ -119,6 +120,7 @@ fn registry() -> &'static Registry {
         list.extend(facilitate::specs());
         list.extend(crate::board_table::specs());
         list.extend(crate::board_templates::specs());
+        list.extend(modifier::specs()); // PICABIA: modifier stack commands.
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {
             if index.insert(s.id, i).is_some() {

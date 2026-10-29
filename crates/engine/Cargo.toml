@@ -23,6 +23,8 @@ figcraft-pdf = { workspace = true }
 figcraft-vectordrawable = { workspace = true }
 craft-docpath = { workspace = true }
 figcraft-plugin = { workspace = true }
+# PICABIA: modifier stacks (cmd/modifier.rs).
+figcraft-modifiers = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

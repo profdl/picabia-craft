@@ -184,4 +184,6 @@ pub struct Clipboard {
     /// The document copied from (pastes into other files follow its mains) and its file path.
     pub source: Option<Arc<Document>>,
     pub source_path: Option<String>,
+    /// PICABIA: copied modifier rows (`modifier.copy`), each one modifier object.
+    pub picabia_modifiers: Vec<Value>,
 }
