@@ -184,6 +184,44 @@ fn randomize_is_deterministic_with_golden_values() {
 }
 
 #[test]
+fn per_copy_stages_vary_every_copy_wherever_they_sit() {
+    let rand = json!({"kind": "randomize", "position": 10, "rotation": 30, "scale": 0.2, "seed": 3});
+    let each = json!({"kind": "transformEach", "rotate": 40, "progressive": true});
+    let lin = json!({"kind": "linearArray", "count": 4, "offsetX": 100});
+    let mir = json!({"kind": "mirror", "axis": "vertical", "offset": 60});
+    for mods in [
+        json!([rand.clone(), lin.clone()]),
+        json!([lin.clone(), rand.clone()]),
+        json!([rand.clone(), lin.clone(), mir.clone()]),
+        json!([each.clone(), lin.clone()]),
+        json!([lin.clone(), each.clone(), mir.clone()]),
+    ] {
+        let out = eval(mods.clone());
+        let n = out.instances.len();
+        assert!(n >= 4, "{mods}");
+        // Strip each copy's array placement: what's left is its own per-copy transform.
+        let own: Vec<[f64; 4]> = out
+            .instances
+            .iter()
+            .map(|i| {
+                let c = i.transform.as_coeffs();
+                [c[0], c[1], c[2], c[3]]
+            })
+            .collect();
+        for a in 0..n {
+            for b in (a + 1)..n {
+                let same = own[a].iter().zip(&own[b]).all(|(x, y)| (x.abs() - y.abs()).abs() < 1e-9);
+                assert!(!same, "copies {a} and {b} got the same values in {mods}");
+            }
+        }
+    }
+    // The order of a per-copy row among the arrays doesn't change the result.
+    let a = eval(json!([rand.clone(), lin.clone()]));
+    let b = eval(json!([lin, rand]));
+    assert!(a.instances.iter().zip(&b.instances).all(|(x, y)| close(x.transform, y.transform)));
+}
+
+#[test]
 fn rng_golden_stream() {
     let mut s = kinds::rng_for_tests(7, 0);
     let v: Vec<f64> = (0..3).map(|_| s.signed()).collect();

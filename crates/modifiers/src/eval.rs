@@ -109,6 +109,7 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
     });
     let pivot = bounds.center();
     let mut set = vec![Instance::identity()];
+    let mut each: Vec<kinds::EachFn> = Vec::new();
     for m in stack.modifiers.iter().filter(|m| m.enabled) {
         if let ModifierKind::Other { kind, error } = &m.kind {
             out.warn(Some(&m.id), other_message(kind, error.as_deref()));
@@ -138,13 +139,9 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
                 out.warn(Some(&m.id), format!("{n} copies is more than {MAX_INSTANCES_PER_NODE}; this modifier and the ones after it are skipped"));
                 break;
             }
-            Stage::Each(local) => {
-                let n = set.len();
-                for (i, inst) in set.iter_mut().enumerate() {
-                    let l = local(inst, i, n);
-                    inst.transform *= around(pivot, l);
-                }
-            }
+            // Applied after every array stage has run (below), so each final copy gets its own
+            // values wherever the row sits in the stack.
+            Stage::Each(local) => each.push(local),
         }
         let before = set.len();
         set.retain(|i| i.transform.is_finite());
@@ -153,6 +150,22 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
         }
         reindex(&mut set);
     }
+    // Per-copy stages see the final copies: `i` and `n` count all of them. Each acts in the copy's
+    // own frame (`S_i · pivot · L · pivot⁻¹`), so where it sat among the arrays doesn't change
+    // how it composes, only that every copy is treated separately.
+    let n = set.len();
+    for local in &each {
+        for (i, inst) in set.iter_mut().enumerate() {
+            let l = local(inst, i, n);
+            inst.transform *= around(pivot, l);
+        }
+    }
+    let before = set.len();
+    set.retain(|i| i.transform.is_finite());
+    if set.len() != before {
+        out.warn(None, format!("{} copies with invalid transforms were dropped", before - set.len()));
+    }
+    reindex(&mut set);
     out.instances = set;
     out
 }

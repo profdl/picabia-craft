@@ -16,7 +16,10 @@ source, and copies never take part in auto layout.
   Grid, then Circular is a ring of grids. Copy 0 of an array is the identity: the original is one of
   the `count` copies.
 - **Per-instance steps** (transform each, randomize) change each instance around its own pivot and
-  do not add copies.
+  do not add copies. They always act on the **final** copies, after every array step has run,
+  wherever their row sits in the stack: each copy gets its own values, and `i`/`n` count all the
+  copies. (Their position among the arrays doesn't change the result; their order among
+  themselves does.)
 - A disabled step is skipped. An empty or fully disabled stack draws the layer normally.
 - Limits: at most 64 steps, `count` at most 1000 per array, and at most **10 000 instances** per
   layer in total. A stack that would exceed this is cut at the last step that fits, with a warning.
