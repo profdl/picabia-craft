@@ -10,9 +10,10 @@ fn main() {
         if std::path::Path::new(ico).exists() {
             res.set_icon(ico);
         }
-        res.set("ProductName", "FigCraft");
-        res.set("FileDescription", "FigCraft");
-        res.set("CompanyName", "ArtCraft");
+        // PICABIA: Picabia's product name and publisher.
+        res.set("ProductName", "Picabia");
+        res.set("FileDescription", "Picabia");
+        res.set("CompanyName", "Picabia contributors");
         if let Err(e) = res.compile() {
             println!("cargo::warning=winresource: {e}");
         }

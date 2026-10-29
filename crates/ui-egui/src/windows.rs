@@ -190,8 +190,8 @@ pub(crate) fn fail_input_acks(app: &mut FigApp, viewport: ViewportId) {
 
 fn title_of(ds: Option<&DocState>) -> String {
     match ds {
-        Some(ds) => format!("{}{} – FigCraft", ds.doc.name, if ds.is_dirty() { " •" } else { "" }),
-        None => "FigCraft".into(),
+        Some(ds) => format!("{}{} – Picabia", ds.doc.name, if ds.is_dirty() { " •" } else { "" }),
+        None => "Picabia".into(), // PICABIA: window title
     }
 }
 

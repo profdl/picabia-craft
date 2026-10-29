@@ -144,15 +144,18 @@ fn about_body(ui: &mut egui::Ui, t: &Tokens) {
         });
     });
     ui.add_space(12.0);
+    // PICABIA: Picabia's blurb and links; FigCraft stays credited. No ArtCraft logos or links.
     ui.label(tr(
-        "Interface design and prototyping. A free, open-source, clean-room design tool written from scratch in Rust, part of the ArtCraft Crafting Apps.",
+        "Picabia, built on FigCraft. Interface design with a live modifier stack: arrays, mirrors and randomised repeats that stay editable.",
     ));
     ui.add_space(8.0);
-    ui.hyperlink_to("getartcraft.com/apps/figcraft", "https://getartcraft.com/apps/figcraft");
-    ui.hyperlink_to(tr("Join us on Discord"), "https://discord.gg/artcraft");
+    ui.hyperlink_to("github.com/profdl/picabia-craft", "https://github.com/profdl/picabia-craft");
+    ui.hyperlink_to(tr("FigCraft, the open-source design tool Picabia is built on"), "https://github.com/storytold/figcraft");
     ui.add_space(8.0);
     ui.label(
-        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Made by the ArtCraft team and community.")).color(t.text_secondary).font(regular(11.0)),
+        RichText::new(tr("Dual-licensed MIT OR Apache-2.0. Includes FigCraft by the ArtCraft team and community."))
+            .color(t.text_secondary)
+            .font(regular(11.0)),
     );
 }
 
@@ -206,16 +209,18 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     let t = Tokens::get(ctx);
     if app.ui.about {
         let mut open = true;
-        window(tr("About FigCraft"), ctx).open(&mut open).show(ctx, |ui| {
-            ui.set_width(ABOUT_WIDTH);
-            tab_strip(ui, &t, &AboutTab::ALL, AboutTab::label, &mut app.ui.about_tab);
-            ui.add_space(12.0);
-            match app.ui.about_tab {
-                AboutTab::About => about_body(ui, &t),
-                AboutTab::Contributors => crate::credits::contributors_ui(ui),
-                AboutTab::Models => crate::credits::models_ui(ui),
-            }
-        });
+        window(tr("About Picabia"), ctx) /* PICABIA: app name */
+            .open(&mut open)
+            .show(ctx, |ui| {
+                ui.set_width(ABOUT_WIDTH);
+                tab_strip(ui, &t, &AboutTab::ALL, AboutTab::label, &mut app.ui.about_tab);
+                ui.add_space(12.0);
+                match app.ui.about_tab {
+                    AboutTab::About => about_body(ui, &t),
+                    AboutTab::Contributors => crate::credits::contributors_ui(ui),
+                    AboutTab::Models => crate::credits::models_ui(ui),
+                }
+            });
         if !open {
             app.ui.about = false;
         }

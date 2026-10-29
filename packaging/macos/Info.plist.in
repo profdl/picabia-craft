@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- PICABIA: display name, name, bundle id and copyright are Picabia's (the executable and
+     icon file keep FigCraft's names so package.sh is unchanged); see docs/picabia/SEAMS.md. -->
 <!-- Template: packaging/macos/package.sh substitutes @VERSION@ (full, e.g. 0.2.0-rc.1),
      @SHORT_VERSION@ (numeric X.Y.Z) and @BUILD_SHA@. -->
 <plist version="1.0">
@@ -7,13 +9,13 @@
   <key>CFBundleDevelopmentRegion</key>
   <string>en</string>
   <key>CFBundleDisplayName</key>
-  <string>FigCraft</string>
+  <string>Picabia</string>
   <key>CFBundleName</key>
-  <string>FigCraft</string>
+  <string>Picabia</string>
   <key>CFBundleExecutable</key>
   <string>FigCraft</string>
   <key>CFBundleIdentifier</key>
-  <string>ai.storyteller.figcraft</string>
+  <string>org.picabia.Picabia</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundlePackageType</key>
@@ -43,7 +45,7 @@
   <key>NSRequiresAquaSystemAppearance</key>
   <false/>
   <key>NSHumanReadableCopyright</key>
-  <string>Copyright © the FigCraft authors. MIT OR Apache-2.0.</string>
+  <string>Copyright © the Picabia and FigCraft authors. MIT OR Apache-2.0.</string>
 
   <!-- FigCraft's own format. -->
   <key>UTExportedTypeDeclarations</key>

@@ -1,6 +1,7 @@
 [Desktop Entry]
+# PICABIA: name and window class are Picabia's; the file name and Icon stay FigCraft's (see SEAMS.md)
 Type=Application
-Name=FigCraft
+Name=Picabia
 GenericName=Interface Design Tool
 Comment=Design and prototype user interfaces
 Exec=figcraft %U
@@ -8,7 +9,7 @@ TryExec=figcraft
 Icon=ai.storyteller.figcraft
 Terminal=false
 StartupNotify=true
-StartupWMClass=ai.storyteller.figcraft
+StartupWMClass=org.picabia.Picabia
 Categories=Graphics;2DGraphics;VectorGraphics;X-Design;
 Keywords=design;interface;ui;ux;prototype;wireframe;mockup;vector;layout;components;
 MimeType=application/x-figcraft;image/svg+xml;image/png;image/jpeg;application/x-sketch;x-scheme-handler/figcraft;

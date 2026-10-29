@@ -26,6 +26,7 @@ mod args;
 mod control_server;
 mod gamepad;
 mod graphics;
+mod picabia; // PICABIA: app name, id and data folder
 mod recovery;
 mod services;
 mod startup;
@@ -142,7 +143,8 @@ fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!(
-            "FigCraft {}{}",
+            "{} {}{}",
+            picabia::APP_NAME, // PICABIA: app name
             env!("CARGO_PKG_VERSION"),
             option_env!("FIGCRAFT_BUILD_SHA").filter(|s| !s.is_empty()).map(|s| format!(" ({s})")).unwrap_or_default()
         );
@@ -240,8 +242,8 @@ fn main() -> eframe::Result {
     // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name
     // and StartupWMClass (FreeBSD's package matches the binary's name instead).
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("FigCraft")
-        .with_app_id("ai.storyteller.figcraft")
+        .with_title(picabia::APP_NAME) // PICABIA: app name and id
+        .with_app_id(picabia::APP_ID)
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([800.0, 500.0])
         .with_drag_and_drop(true);
@@ -267,7 +269,7 @@ fn main() -> eframe::Result {
     #[cfg(target_os = "macos")]
     let apple_events = &apple_events;
     let result = eframe::run_native(
-        "FigCraft",
+        picabia::APP_NAME, // PICABIA: app name
         options,
         Box::new(move |cc| {
             with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
@@ -277,7 +279,9 @@ fn main() -> eframe::Result {
             // asks just as it does for the close button. Failure keeps winit's menu: the app
             // runs, but ⌘Q ends it without asking.
             #[cfg(target_os = "macos")]
-            if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, "FigCraft") {
+            if let Err(e) = craft_menu::mac::install_app_menu(&cc.egui_ctx, picabia::APP_NAME)
+            /* PICABIA: app name */
+            {
                 log::warn!("app menu: kept winit's Quit, which ends the app without asking: {e}");
             }
             Ok(Box::new(App {
