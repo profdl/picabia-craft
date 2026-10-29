@@ -20,6 +20,9 @@
 //!   [`Instance`] transforms, canvas [`Guide`]s and [`Warning`]s.
 //! - [`node_stack`], [`evaluate_node`], [`node_instances`]: cached entry points for a
 //!   [`figcraft_doc::Node`], cheap enough to call for every layer on every frame.
+//!   [`evaluate_node_in_doc`] / [`node_instances_in_doc`] also resolve `copyToShape` targets
+//!   ([`DocTargets`]); the cache key includes a hash of each target's outline, so moving or editing
+//!   a target re-evaluates the layers that copy onto it.
 //!
 //! # Instance transform convention
 //! [`Instance::transform`] is applied in the **parent's coordinate space, before the node's own
@@ -57,19 +60,29 @@ mod lenient;
 pub mod model;
 mod node;
 mod parse;
+mod target;
+#[cfg(test)]
+mod target_tests;
 #[cfg(test)]
 mod tests;
 
 pub use bind::{
     BINDING_PREFIX, apply_bound_values, binding_key, binding_takes, bound_variable, field_type, is_binding_key, parse_binding_key, stale_binding_keys,
 };
-pub use eval::{Guide, Instance, Output, Warning, evaluate, splitmix64};
+pub use eval::{Guide, Instance, Output, Warning, evaluate, evaluate_with, splitmix64};
 pub use model::{
-    CircularArray, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach, Wallpaper,
-    WallpaperGroup, expr_field, expr_fields, expr_key, kind_label,
+    CircularArray, CopyMode, CopyToShape, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach,
+    Wallpaper, WallpaperGroup, expr_field, expr_fields, expr_key, kind_label,
 };
-pub use node::{evaluate_node, evaluate_node_in, has_modifiers, node_bounds, node_instances, node_stack};
+pub use node::{
+    evaluate_node, evaluate_node_in, evaluate_node_in_doc, evaluate_node_with, has_modifiers, node_bounds, node_instances, node_instances_in_doc,
+    node_stack,
+};
 pub use parse::{parse, parse_cached, stack_from_value, stack_to_value, to_json};
+pub use target::{
+    DocTargets, MAX_LISTED_TARGETS, MAX_TARGET_ELEMENTS, NoTargets, TargetResolver, TargetShape, check_target, parse_target, stack_targets,
+    valid_targets,
+};
 
 /// The plugin-data key a layer's stack is stored under.
 pub const PLUGIN_KEY: &str = "picabia.modifiers";

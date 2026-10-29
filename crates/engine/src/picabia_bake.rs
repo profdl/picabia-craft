@@ -17,24 +17,24 @@ const MAX_BAKED_COPIES: usize = 200_000;
 /// `doc` with every modifier stack baked into copies (borrowed unchanged when it has none), and the
 /// export warnings that go with it.
 pub fn baked(doc: &Document) -> (Cow<'_, Document>, Vec<String>) {
-    let mut stacked: Vec<(usize, NodeId)> = doc
+    // Transforms worked out on the unbaked document: copy-to-shape targets may be baked first.
+    let mut stacked: Vec<(usize, NodeId, Vec<figcraft_geom::Affine>)> = doc
         .ids()
-        .filter(|id| doc.node(*id).and_then(figcraft_render::picabia::instance_transforms).is_some())
-        .map(|id| (doc.ancestors(id).len(), id))
+        .filter_map(|id| Some((doc.ancestors(id).len(), id, figcraft_render::picabia::instance_transforms(doc, doc.node(id)?)?)))
         .collect();
     if stacked.is_empty() {
         return (Cow::Borrowed(doc), Vec::new());
     }
     // Deepest first: a stacked group then copies layers already baked.
-    stacked.sort_by_key(|(depth, id)| (std::cmp::Reverse(*depth), *id));
+    stacked.sort_by_key(|(depth, id, _)| (std::cmp::Reverse(*depth), *id));
     let mut out = doc.clone();
     let (mut layers, mut copies, mut skipped) = (0usize, 0usize, 0usize);
-    for (_, id) in stacked {
+    for (_, id, ts) in stacked {
         if layers >= MAX_BAKED_LAYERS || copies >= MAX_BAKED_COPIES {
             skipped += 1;
             continue;
         }
-        match bake_one(&mut out, id, MAX_BAKED_COPIES - copies) {
+        match bake_one(&mut out, id, ts, MAX_BAKED_COPIES - copies) {
             Some(n) => {
                 layers += 1;
                 copies += n;
@@ -56,10 +56,9 @@ pub fn baked(doc: &Document) -> (Cow<'_, Document>, Vec<String>) {
     (Cow::Owned(out), warnings)
 }
 
-/// Replace layer `id` with its copies (at most `room`); how many copies it made.
-fn bake_one(doc: &mut Document, id: NodeId, room: usize) -> Option<usize> {
+/// Replace layer `id` with its copies `ts` (at most `room`); how many copies it made.
+fn bake_one(doc: &mut Document, id: NodeId, ts: Vec<figcraft_geom::Affine>, room: usize) -> Option<usize> {
     let n = doc.node(id)?.clone();
-    let ts = figcraft_render::picabia::instance_transforms(&n)?;
     let parent_id = n.parent?;
     let parent = doc.node(parent_id)?;
     let index = parent.children.iter().position(|c| *c == id)?;

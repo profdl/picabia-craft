@@ -449,7 +449,7 @@ pub(crate) fn bounds_within<'a>(
                 }
                 let (cb, c_levels) = bounds_within(doc, c, depth + 1, greek_scale, memo);
                 below = below.zip(c_levels).map(|(b, l)| b.max(l));
-                r = r.union(crate::picabia::parent_bbox(c, cb)); // PICABIA: a child's modifier copies count
+                r = r.union(crate::picabia::parent_bbox(doc, c, cb)); // PICABIA: a child's modifier copies count
             }
             levels = below.map(|b| b + 1);
         } else if !n.children.is_empty() {
@@ -544,7 +544,7 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
 /// [`draw_node`] for a node already looked up.
 fn draw_layer(ctx: &Ctx, pix: &mut Pixmap, n: &Node, parent_xf: Affine, depth: usize) {
     // PICABIA: a layer with a modifier stack draws once per copy (effects, opacity, blend each time).
-    if !crate::picabia::each_copy(n, |t| draw_layer_once(ctx, pix, n, parent_xf * t, depth)) {
+    if !crate::picabia::each_copy(ctx.doc, n, |t| draw_layer_once(ctx, pix, n, parent_xf * t, depth)) {
         draw_layer_once(ctx, pix, n, parent_xf, depth);
     }
 }

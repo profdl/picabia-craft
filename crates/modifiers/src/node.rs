@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
-use figcraft_doc::Node;
+use figcraft_doc::{Document, Node};
 use figcraft_geom::{Affine, Rect};
 
 use crate::eval::Output;
 use crate::model::Stack;
+use crate::target::{DocTargets, TargetResolver};
 use crate::{ModError, PLUGIN_KEY, cache};
 
 /// Whether `node` has modifier data (a plugin-data lookup; doesn't parse).
@@ -41,9 +42,31 @@ pub fn evaluate_node_in(node: &Node, bounds: Rect) -> Option<Arc<Output>> {
     cache::evaluated(src, bounds).ok().filter(|o| !o.instances.is_empty())
 }
 
-/// The renderer's call: `node`'s instance transforms (parent space, applied before
+/// [`evaluate_node_in`] with `targets` resolving `copyToShape` targets; the cache key includes
+/// each target's outline hash.
+pub fn evaluate_node_with(node: &Node, bounds: Rect, targets: &dyn TargetResolver) -> Option<Arc<Output>> {
+    let src = node.plugin_data.get(PLUGIN_KEY)?;
+    cache::evaluated_with(src, bounds, targets).ok().filter(|o| !o.instances.is_empty())
+}
+
+/// [`evaluate_node`] for a layer of `doc`, resolving its `copyToShape` targets there
+/// ([`DocTargets`]): what the renderer, exports, hit testing, commands and the panel use.
+pub fn evaluate_node_in_doc(doc: &Document, node: &Node) -> Option<Arc<Output>> {
+    evaluate_node_with(node, node_bounds(node), &DocTargets::new(doc, node.id))
+}
+
+/// [`node_instances`] for a layer of `doc` (copy-to-shape targets resolved there).
+pub fn node_instances_in_doc(doc: &Document, node: &Node) -> Option<Arc<Output>> {
+    if node.plugin_data.is_empty() {
+        return None;
+    }
+    evaluate_node_in_doc(doc, node)
+}
+
+/// `node`'s instance transforms (parent space, applied before
 /// `node.transform`), or `None` to draw it once as usual. Costs a plugin-data lookup for a layer
-/// without modifiers and a cache hit for one with.
+/// without modifiers and a cache hit for one with. Without a document `copyToShape` places no
+/// copies: the renderer calls [`node_instances_in_doc`].
 pub fn node_instances(node: &Node) -> Option<Arc<Output>> {
     if node.plugin_data.is_empty() {
         return None;

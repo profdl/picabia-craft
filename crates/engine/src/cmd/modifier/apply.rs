@@ -78,7 +78,7 @@ fn apply_one(s: &mut Session, id: NodeId, up_to: Option<usize>, budget: &mut usi
     let baked = Stack { modifiers: stack.modifiers.get(..=cut).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let rest = Stack { modifiers: stack.modifiers.get(cut + 1..).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let node = doc.get(id)?;
-    let out = figcraft_modifiers::evaluate(&baked, figcraft_modifiers::node_bounds(node));
+    let out = figcraft_modifiers::evaluate_with(&baked, figcraft_modifiers::node_bounds(node), &figcraft_modifiers::DocTargets::new(doc, id));
     let unmoved = matches!(out.instances.as_slice(), [one] if one.transform == Affine::IDENTITY);
     if out.instances.is_empty() || unmoved {
         return Ok(None);

@@ -43,3 +43,18 @@ pub(crate) fn expr<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D:
         v => Err(D::Error::custom(format!("expected an expression text, got {v}"))),
     }
 }
+
+/// A layer id as text: a string (trimmed) or a whole number (`12` reads as `"12"`); `null` = none.
+pub(crate) fn target<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    match Value::deserialize(d)? {
+        Value::Null => Ok(String::new()),
+        Value::String(s) if s.len() > 64 => Err(D::Error::custom("a target id is at most 64 characters")),
+        Value::String(s) => Ok(s.trim().to_string()),
+        Value::Number(n) if n.is_u64() => Ok(n.to_string()),
+        Value::Number(n) => match n.as_f64() {
+            Some(f) if f.is_finite() && f >= 0.0 && f.fract() == 0.0 && f < 9.0e15 => Ok(format!("{}", f as u64)),
+            _ => Err(D::Error::custom(format!("expected a layer id, got {n}"))),
+        },
+        v => Err(D::Error::custom(format!("expected a layer id, got {v}"))),
+    }
+}

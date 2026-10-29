@@ -22,7 +22,7 @@ impl Exporter<'_> {
             return false;
         }
         let inv = parent_xf.inverse();
-        figcraft_render::picabia::each_copy(n, |t| {
+        figcraft_render::picabia::each_copy(doc, n, |t| {
             let c = parent_xf * t * inv;
             if t == Affine::IDENTITY || !c.is_finite() {
                 self.node_once(s, id, parent_xf, depth, as_mask);

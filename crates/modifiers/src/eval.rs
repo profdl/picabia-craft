@@ -4,6 +4,7 @@ use figcraft_geom::{Affine, Point, Rect};
 
 use crate::kinds::{self, Ctx, Stage};
 use crate::model::{ModifierKind, Stack};
+use crate::target::{NoTargets, TargetResolver};
 use crate::{MAX_INSTANCES_PER_NODE, MAX_LENGTH};
 
 /// One drawn copy of a layer.
@@ -83,7 +84,16 @@ fn finite_rect(r: Rect) -> Option<Rect> {
 /// (see the crate's caps); a stage that would take the instance count past
 /// [`MAX_INSTANCES_PER_NODE`] is not run, nor are the stages after it (with a warning). Never
 /// panics; every returned transform is finite.
+///
+/// Without a document, `copyToShape` modifiers place no copies (with a warning): see
+/// [`evaluate_with`].
 pub fn evaluate(stack: &Stack, bounds: Rect) -> Output {
+    evaluate_with(stack, bounds, &NoTargets)
+}
+
+/// [`evaluate`] with `targets` finding the layers `copyToShape` modifiers copy onto (in the
+/// layer's parent space; see [`crate::DocTargets`]).
+pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) -> Output {
     let mut out = Output::default();
     if !stack.is_active() {
         for m in stack.modifiers.iter().filter(|m| m.enabled) {
@@ -105,7 +115,7 @@ pub fn evaluate(stack: &Stack, bounds: Rect) -> Output {
             continue;
         }
         let ctx = Ctx { pivot, bounds, n_prev: set.len() };
-        let r = kinds::stage(&m.kind, &ctx);
+        let r = kinds::stage(&m.kind, &ctx, targets);
         out.guides.extend(r.guides);
         for w in r.warnings {
             out.warn(Some(&m.id), w);

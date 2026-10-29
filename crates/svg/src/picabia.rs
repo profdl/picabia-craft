@@ -24,7 +24,7 @@ impl W<'_> {
             return false;
         }
         let inv = xf.inverse();
-        figcraft_render::picabia::each_copy(n, |t| {
+        figcraft_render::picabia::each_copy(doc, n, |t| {
             let c = xf * t * inv;
             if t == Affine::IDENTITY || !c.is_finite() {
                 self.node_once(id, xf, depth);
@@ -62,6 +62,27 @@ mod tests {
         assert_eq!(svg.matches("<path").count(), 3, "{svg}");
         assert!(svg.contains("width=\"100\""), "the export covers every copy: {svg}");
         assert!(svg.contains("transform=\"matrix(1 0 0 1 40 0)\"") || svg.contains("translate(40"), "{svg}");
+    }
+
+    #[test]
+    fn copy_to_shape_writes_a_copy_on_each_target_corner() {
+        let mut d = Document::new("picabia");
+        let page = d.first_page().unwrap();
+        let r = d.create(page, NodeKind::Rectangle, "R", 0.0, 0.0, 10.0, 10.0).unwrap();
+        d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+        let t = d.create(page, NodeKind::Rectangle, "T", 50.0, 10.0, 100.0, 40.0).unwrap();
+        d.get_mut(r).unwrap().plugin_data.insert(
+            figcraft_render::picabia::PLUGIN_KEY.into(),
+            format!(r#"{{"v":1,"stack":[{{"id":"m1","kind":"copyToShape","target":"{t}","mode":"points","align":false}}]}}"#),
+        );
+        let svg = export_svg(&d, &[r], &SvgOptions::default()).unwrap();
+        assert_eq!(svg.matches("<path").count(), 4, "{svg}");
+        // The export covers the four corners: 100 + 10 wide, 40 + 10 high.
+        assert!(svg.contains("width=\"110\"") && svg.contains("height=\"50\""), "{svg}");
+        // Deleting the target leaves the layer drawn once, where it is.
+        d.remove(t).unwrap();
+        let svg = export_svg(&d, &[r], &SvgOptions::default()).unwrap();
+        assert_eq!(svg.matches("<path").count(), 1, "{svg}");
     }
 
     #[test]

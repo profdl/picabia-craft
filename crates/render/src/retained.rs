@@ -295,6 +295,7 @@ fn patch(last: Frame, doc: &Arc<Document>, page: NodeId, view: &View, px: (i64, 
     // Layers that changed, where they were and where they are now.
     if !Arc::ptr_eq(&last.doc, doc) {
         let mut areas = Vec::new();
+        let links = [crate::picabia::target_links(&last.doc), crate::picabia::target_links(doc)].concat(); // PICABIA: copy-to-shape sources follow their targets
         for id in doc.changed_ids(&last.doc, MAX_CHANGED)? {
             // shortcut: an edited pattern source redraws the whole view; patch the patterned layers' areas when that shows up in profiles.
             if in_pattern_source(doc, s, id) || in_pattern_source(&last.doc, &last.sensitive, id) {
@@ -302,6 +303,11 @@ fn patch(last: Frame, doc: &Arc<Document>, page: NodeId, view: &View, px: (i64, 
             }
             changed_areas(&last.doc, page, id, &mut areas)?;
             changed_areas(doc, page, id, &mut areas)?;
+            for src in crate::picabia::dependents(&last.doc, doc, &links, id) {
+                // PICABIA: a changed target repaints the copies placed on it, old and new.
+                changed_areas(&last.doc, page, src, &mut areas)?;
+                changed_areas(doc, page, src, &mut areas)?;
+            }
         }
         for r in areas {
             if let Some(p) = to_px(r, view.scale, px) {

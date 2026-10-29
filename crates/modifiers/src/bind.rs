@@ -43,8 +43,12 @@ pub fn bound_variable<'a>(node: &'a Node, modifier: &str, field: &str) -> Option
 
 /// The variable type a param takes, from its value in `kind`'s params: numbers take number
 /// variables, flags boolean ones, choices (`axis`, `group`) string ones naming a choice. `None`
-/// when `kind` has no such param, or it can't be bound (`<field>Expr` texts).
+/// when `kind` has no such param, or it can't be bound (`<field>Expr` texts, a copy-to-shape
+/// `target`, which is checked for cycles when set).
 pub fn field_type(kind: &ModifierKind, field: &str) -> Option<VariableType> {
+    if matches!(kind, ModifierKind::CopyToShape(_)) && field == "target" {
+        return None;
+    }
     match kind.params().get(field)? {
         Value::Number(_) => Some(VariableType::Number),
         Value::Bool(_) => Some(VariableType::Boolean),

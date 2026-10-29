@@ -194,9 +194,9 @@ fn nested_stacks_share_one_copy_budget() {
     let (mut outer, mut inner) = (0usize, 0usize);
     let gn = d.node(g).unwrap().clone();
     let rn = d.node(r).unwrap().clone();
-    each_copy(&gn, |_| {
+    each_copy(&d, &gn, |_| {
         outer += 1;
-        each_copy(&rn, |_| inner += 1);
+        each_copy(&d, &rn, |_| inner += 1);
     });
     assert_eq!(outer, 1000);
     assert!(inner <= MAX_NESTED_COPIES, "{inner}");
@@ -210,4 +210,60 @@ fn render_alone_draws_one_copy_for_export_walkers() {
     set_stack(&mut d, r, &linear(3, 40.0));
     let b = crate::raster_bounds(&d, r).unwrap();
     assert_eq!(b, Rect::new(10.0, 10.0, 30.0, 30.0));
+}
+
+/// A red 10×10 source at (0, 0) copied onto the corners of a hidden 100×40 target at (50, 10).
+fn copy_to_shape_doc() -> (Document, NodeId, NodeId, NodeId) {
+    let mut d = Document::new("picabia");
+    let page = d.first_page().unwrap();
+    let r = d.create(page, NodeKind::Rectangle, "R", 0.0, 0.0, 10.0, 10.0).unwrap();
+    d.get_mut(r).unwrap().fills = vec![Paint::solid(Color::from_hex("FF0000").unwrap())];
+    let t = d.create(page, NodeKind::Rectangle, "T", 50.0, 10.0, 100.0, 40.0).unwrap();
+    d.get_mut(t).unwrap().visible = false;
+    let src = format!(r#"{{"v":1,"stack":[{{"id":"m1","kind":"copyToShape","target":"{t}","mode":"points","align":false}}]}}"#);
+    set_stack(&mut d, r, &src);
+    (d, page, r, t)
+}
+
+#[test]
+fn copy_to_shape_draws_a_copy_on_each_corner_of_the_target() {
+    let (d, page, r, t) = copy_to_shape_doc();
+    let pix = render_view(&d, page, &View { origin: (0.0, 0.0), scale: 1.0, width: 200, height: 80 }, &white()).unwrap();
+    // Each corner holds a copy centred on it; the original spot is empty.
+    for (x, y) in [(50, 10), (150, 10), (150, 50), (50, 50)] {
+        assert_eq!(px(&pix, x, y), RED, "corner ({x}, {y})");
+    }
+    assert_eq!(px(&pix, 2, 2), WHITE, "the original isn't kept");
+    assert_eq!(px(&pix, 100, 30), WHITE);
+    // Bounds and hit testing follow the copies.
+    let b = paint_bounds(&d, r).unwrap();
+    assert!(b.x0 <= 45.0 && b.x1 >= 155.0 && b.y1 >= 55.0, "{b:?}");
+    assert_eq!(hit_with_copies(&d, page, Point::new(150.0, 50.0), 0.5, None, None), Some(r));
+    assert_eq!(target_links(&d), vec![(r, t)]);
+}
+
+#[test]
+fn moving_a_copy_to_shape_target_repaints_its_copies_in_retained_renders() {
+    let (d, page, _r, t) = copy_to_shape_doc();
+    let v = View { origin: (0.0, 0.0), scale: 1.0, width: 300, height: 120 };
+    let mut ret = Retained::default();
+    let mut doc = Arc::new(d);
+    ret.render(&doc, page, &v, &Options::default()).unwrap();
+    type Step = Box<dyn Fn(&mut Document)>;
+    let steps: [Step; 3] = [
+        Box::new(move |d| d.get_mut(t).unwrap().transform = figcraft_geom::Affine::translate((120.0, 60.0))),
+        Box::new(move |d| d.get_mut(t).unwrap().width = 60.0),
+        Box::new(move |d| {
+            d.remove(t).unwrap();
+        }),
+    ];
+    for (i, step) in steps.iter().enumerate() {
+        let mut nd = (*doc).clone();
+        step(&mut nd);
+        doc = Arc::new(nd);
+        let (shown, pix, work) = ret.render(&doc, page, &v, &Options::default()).unwrap();
+        let pix = pix.clone();
+        let full = render_view(&doc, page, &shown, &Options::default()).unwrap();
+        crate::retained_tests::assert_same(&pix, &full, &format!("step {i}: {work:?}"));
+    }
 }

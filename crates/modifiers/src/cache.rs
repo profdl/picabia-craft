@@ -1,4 +1,5 @@
-//! Process-wide caches: parsed stacks by source text, evaluated outputs by (source, bounds).
+//! Process-wide caches: parsed stacks by source text, evaluated outputs by (source, bounds,
+//! resolved copy-to-shape targets).
 //!
 //! One `Mutex` (works the same on wasm32, where there is one thread). Both maps are bounded; when
 //! one is full it is cleared, which is simple and fine for a cache that refills in microseconds.
@@ -10,8 +11,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use figcraft_geom::Rect;
 
-use crate::eval::{Output, evaluate};
+use crate::eval::{Output, evaluate_with};
 use crate::model::Stack;
+use crate::target::{NoTargets, TargetResolver, TargetShape};
 use crate::{ModError, parse};
 
 /// The most stacks kept parsed, and the most source bytes they may hold.
@@ -30,7 +32,7 @@ struct Parsed {
 struct Caches {
     parsed: HashMap<u64, Parsed>,
     parsed_bytes: usize,
-    outputs: HashMap<(u64, usize, [u64; 4]), Arc<Output>>,
+    outputs: HashMap<(u64, usize, [u64; 4], u64), Arc<Output>>,
     output_instances: usize,
 }
 
@@ -72,16 +74,47 @@ pub(crate) fn parsed(src: &str) -> Result<Arc<Stack>, ModError> {
     stack
 }
 
-/// [`evaluate`] once per distinct (source, bounds). `Err` when the source doesn't parse.
+/// [`crate::evaluate`] once per distinct (source, bounds). `Err` when the source doesn't parse.
 pub(crate) fn evaluated(src: &str, bounds: Rect) -> Result<Arc<Output>, ModError> {
+    evaluated_with(src, bounds, &NoTargets)
+}
+
+/// Targets resolved once, up front: the cache key hashes them, and evaluation reads them here.
+struct Resolved(Vec<(String, Result<Arc<TargetShape>, String>)>);
+
+impl TargetResolver for Resolved {
+    fn resolve(&self, target: &str) -> Result<Arc<TargetShape>, String> {
+        self.0.iter().find(|(t, _)| t == target).map_or_else(|| Err("the target wasn't resolved".into()), |(_, r)| r.clone())
+    }
+}
+
+/// [`crate::evaluate_with`] once per distinct (source, bounds, resolved targets): each target's
+/// outline hash (or the reason it didn't resolve) is part of the key. `Err` when the source
+/// doesn't parse.
+pub(crate) fn evaluated_with(src: &str, bounds: Rect, targets: &dyn TargetResolver) -> Result<Arc<Output>, ModError> {
     let stack = parsed(src)?;
-    let key = (hash(src), src.len(), [bounds.x0.to_bits(), bounds.y0.to_bits(), bounds.x1.to_bits(), bounds.y1.to_bits()]);
+    let mut resolved: Vec<(String, Result<Arc<TargetShape>, String>)> = Vec::new();
+    for (_, t) in stack.targets() {
+        if !resolved.iter().any(|(r, _)| r == t) {
+            resolved.push((t.to_string(), targets.resolve(t)));
+        }
+    }
+    let mut h = DefaultHasher::new();
+    for (t, r) in &resolved {
+        t.hash(&mut h);
+        match r {
+            Ok(shape) => shape.hash.hash(&mut h),
+            Err(e) => e.hash(&mut h),
+        }
+    }
+    let target_key = if resolved.is_empty() { 0 } else { h.finish() };
+    let key = (hash(src), src.len(), [bounds.x0.to_bits(), bounds.y0.to_bits(), bounds.x1.to_bits(), bounds.y1.to_bits()], target_key);
     if let Some(c) = lock().as_ref()
         && let Some(o) = c.outputs.get(&key)
     {
         return Ok(o.clone());
     }
-    let out = Arc::new(evaluate(&stack, bounds));
+    let out = Arc::new(evaluate_with(&stack, bounds, &Resolved(resolved)));
     let mut guard = lock();
     let c = guard.get_or_insert_with(Caches::default);
     let n = out.instances.len();

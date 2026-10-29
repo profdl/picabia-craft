@@ -20,6 +20,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("transformEach", "Transform each"),
     ("randomize", "Randomize"),
     ("wallpaper", "Wallpaper"),
+    ("copyToShape", "Copy to shape"),
 ];
 
 /// The label of kind id `kind` ("Linear array"), or `None` for a kind this build doesn't know.
@@ -121,6 +122,7 @@ pub enum ModifierKind {
     TransformEach(TransformEach),
     Randomize(Randomize),
     Wallpaper(Wallpaper),
+    CopyToShape(CopyToShape),
     /// A kind this build doesn't know, or a known kind whose params don't read (`error` says
     /// why). Kept on a round trip, ignored when evaluating.
     Other {
@@ -309,6 +311,51 @@ impl Default for Wallpaper {
     }
 }
 
+/// How a [`CopyToShape`] places its copies on the target.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CopyMode {
+    /// One copy at each anchor point of the target's outline.
+    Points,
+    /// `count` copies spaced evenly by arc length along the target's outline.
+    #[default]
+    AlongPath,
+    /// `count` copies at seeded pseudo-random points inside the target's fill area.
+    Populate,
+}
+
+/// `copyToShape`: copies of the previous set placed on another layer, the `target` (a layer id, as
+/// text), whose outline is read in this layer's parent space. Each copy moves the layer's pivot to
+/// its point, scaled by `scale` around it; with `align` (points and alongPath) it turns to follow
+/// the outline's direction there. The original isn't kept: every copy is on the target. A
+/// missing target, the layer itself, an ancestor or descendant of it, or a target whose own stack
+/// points back at it places no copies (with a warning).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct CopyToShape {
+    /// The target layer's id (`"12"`); empty = not chosen yet.
+    #[serde(deserialize_with = "lenient::target")]
+    pub target: String,
+    pub mode: CopyMode,
+    /// Copies for `alongPath` and `populate` (clamped to `1..=MAX_COUNT`); `points` makes one per
+    /// anchor.
+    #[serde(deserialize_with = "lenient::count")]
+    pub count: u32,
+    /// Factor each copy is scaled by around its pivot.
+    pub scale: f64,
+    /// Turn each copy to the outline's direction (points and alongPath).
+    pub align: bool,
+    /// Seed for `populate`.
+    #[serde(deserialize_with = "lenient::seed")]
+    pub seed: u32,
+}
+
+impl Default for CopyToShape {
+    fn default() -> Self {
+        CopyToShape { target: String::new(), mode: CopyMode::AlongPath, count: 10, scale: 1.0, align: true, seed: 1 }
+    }
+}
+
 /// `transformEach`: move, turn and scale every instance around its own centre; with
 /// `progressive` the amounts ramp from none on the first instance to the full amount on the last.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -444,6 +491,7 @@ impl ModifierKind {
             ModifierKind::TransformEach(_) => "transformEach",
             ModifierKind::Randomize(_) => "randomize",
             ModifierKind::Wallpaper(_) => "wallpaper",
+            ModifierKind::CopyToShape(_) => "copyToShape",
             ModifierKind::Other { kind, .. } => kind,
         }
     }
@@ -458,6 +506,7 @@ impl ModifierKind {
             "transformEach" => ModifierKind::TransformEach(TransformEach::default()),
             "randomize" => ModifierKind::Randomize(Randomize::default()),
             "wallpaper" => ModifierKind::Wallpaper(Wallpaper::default()),
+            "copyToShape" => ModifierKind::CopyToShape(CopyToShape::default()),
             _ => return None,
         })
     }
@@ -472,6 +521,7 @@ impl ModifierKind {
             ModifierKind::TransformEach(p) => params_of(p),
             ModifierKind::Randomize(p) => params_of(p),
             ModifierKind::Wallpaper(p) => params_of(p),
+            ModifierKind::CopyToShape(p) => params_of(p),
             ModifierKind::Other { .. } => Map::new(),
         }
     }
@@ -490,9 +540,21 @@ impl ModifierKind {
             "transformEach" => wrap(read(rest), ModifierKind::TransformEach),
             "randomize" => wrap(read(rest), ModifierKind::Randomize),
             "wallpaper" => wrap(read(rest), ModifierKind::Wallpaper),
+            "copyToShape" => wrap(read(rest), ModifierKind::CopyToShape),
             _ => return (ModifierKind::Other { kind: kind.to_string(), error: None }, rest.clone()),
         };
         r.unwrap_or_else(|e| (ModifierKind::Other { kind: kind.to_string(), error: Some(e) }, rest.clone()))
+    }
+}
+
+impl Stack {
+    /// The targets of the enabled `copyToShape` modifiers, as `(modifier id, target)`, in stack
+    /// order (empty targets left out).
+    pub fn targets(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.modifiers.iter().filter(|m| m.enabled).filter_map(|m| match &m.kind {
+            ModifierKind::CopyToShape(p) if !p.target.is_empty() => Some((m.id.as_str(), p.target.as_str())),
+            _ => None,
+        })
     }
 }
 

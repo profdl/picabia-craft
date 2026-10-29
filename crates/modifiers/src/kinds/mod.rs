@@ -4,6 +4,7 @@
 //! Unknown kinds ([`ModifierKind::Other`]) evaluate as [`Stage::Unchanged`].
 
 mod circular;
+mod copy_to_shape;
 mod grid;
 mod linear;
 mod mirror;
@@ -16,6 +17,7 @@ use figcraft_geom::{Affine, Point, Rect};
 
 use crate::eval::{Guide, Instance};
 use crate::model::ModifierKind;
+use crate::target::TargetResolver;
 use crate::{MAX_ANGLE, MAX_COUNT, MAX_LENGTH, MAX_SCALE};
 
 /// What a stage sees: the pivot (the layer's bounds centre, parent space), the bounds, and how
@@ -54,8 +56,8 @@ impl StageResult {
     }
 }
 
-/// The stage modifier `kind` makes in `ctx`.
-pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx) -> StageResult {
+/// The stage modifier `kind` makes in `ctx` (`targets` finds copy-to-shape targets).
+pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx, targets: &dyn TargetResolver) -> StageResult {
     match kind {
         ModifierKind::LinearArray(p) => linear::stage(p, ctx),
         ModifierKind::CircularArray(p) => circular::stage(p, ctx),
@@ -64,6 +66,7 @@ pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx) -> StageResult {
         ModifierKind::TransformEach(p) => transform_each::stage(p, ctx),
         ModifierKind::Randomize(p) => randomize::stage(p, ctx),
         ModifierKind::Wallpaper(p) => wallpaper::stage(p, ctx),
+        ModifierKind::CopyToShape(p) => copy_to_shape::stage(p, ctx, targets),
         ModifierKind::Other { .. } => StageResult::unchanged(),
     }
 }
