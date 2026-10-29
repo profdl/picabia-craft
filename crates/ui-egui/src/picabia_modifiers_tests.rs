@@ -565,3 +565,46 @@ fn a_refused_target_shows_its_reason_once() {
     assert_eq!(t.iter().filter(|t| gone(t)).count(), 1, "{t:?}");
     assert!(t.iter().any(|t| t == "Missing layer"));
 }
+
+/// Whether modifier row `index`'s `param` field is drawn.
+fn has_field(u: &mut Ui, param: &'static str, index: usize) -> bool {
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    u.ctx.read_response(Id::unique(("mod", param, index)).with("lead")).is_some()
+}
+
+#[test]
+fn wallpaper_shows_only_the_inputs_its_group_uses() {
+    use figcraft_modifiers::WallpaperGroup;
+    let (mut u, r) = setup(&["wallpaper"]);
+    open_settings(&mut u, 0);
+    for g in WallpaperGroup::ALL {
+        let name = serde_json::to_value(g).unwrap();
+        u.app.run("modifier.set", json!({"ids": [r], "index": 0, "props": {"group": name}}));
+        for p in ["cols", "rows", "cellWidth"] {
+            assert!(has_field(&mut u, p, 0), "{g:?} shows {p}");
+        }
+        assert_eq!(has_field(&mut u, "cellHeight", 0), g.uses_cell_height(), "{g:?} cellHeight");
+        assert_eq!(has_field(&mut u, "angle", 0), g.uses_angle(), "{g:?} angle");
+        assert_eq!(has_field(&mut u, "originX", 0), g.uses_origin(), "{g:?} originX");
+        assert_eq!(has_field(&mut u, "originY", 0), g.uses_origin(), "{g:?} originY");
+    }
+}
+
+#[test]
+fn wallpaper_numbers_have_the_evaluators_limits() {
+    let rows = fields_of("wallpaper");
+    let limits = |param: &str| {
+        rows.iter().flat_map(|r| r.iter()).find_map(|f| match f {
+            super::Field::Num { param: p, min, max, .. } if *p == param => Some((*min, *max)),
+            _ => None,
+        })
+    };
+    assert_eq!(limits("cols"), Some((1.0, 100.0)));
+    assert_eq!(limits("rows"), Some((1.0, 100.0)));
+    assert_eq!(limits("cellWidth"), Some((0.001, figcraft_modifiers::MAX_LENGTH)));
+    assert_eq!(limits("cellHeight"), Some((0.001, figcraft_modifiers::MAX_LENGTH)));
+    assert_eq!(limits("angle"), Some((1.0, 179.0)));
+    assert_eq!(limits("originX"), Some((-figcraft_modifiers::MAX_LENGTH, figcraft_modifiers::MAX_LENGTH)));
+}

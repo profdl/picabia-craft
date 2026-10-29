@@ -104,8 +104,11 @@ The 17 plane (wallpaper) symmetry groups. The layer is the motif in cell 0 at th
 other copies are the group's motif transforms in cell 0 plus the same set in every other cell of a
 `cols` x `rows` lattice (copies run cell by cell, columns fastest, so copy 0 is the original).
 Rotation centres and mirror or glide axes pass through the layer's **top-left corner** (plus
-`originX`/`originY`), so a motif drawn inside its cell tiles without overlapping itself. Guides
-show the lattice. Copies per cell: p1 1, p2 2, pm 2, pg 2, cm 2, pmm 4, pmg 4, pgg 4, cmm 4, p4 4,
+`originX`/`originY`). A motif tiles without overlapping itself only when it fits the group's
+fundamental domain (the cell divided by the copies per cell, next to the origin): a cell-sized
+motif is fine for p1 but overlaps its own rotations and reflections in the others. Guides draw the
+lattice lines through the origin, from the first to the last line the copies touch (reflections
+that land before the origin are enclosed too). Copies per cell: p1 1, p2 2, pm 2, pg 2, cm 2, pmm 4, pmg 4, pgg 4, cmm 4, p4 4,
 p4m 8, p4g 8, p3 3, p3m1 6, p31m 6, p6 6, p6m 12. The centred groups (cm, cmm) use their primitive
 cell, a parallelogram with edges `(w, 0)` and `(w/2, h/2)`.
 
@@ -114,11 +117,16 @@ cell, a parallelogram with edges `(w, 0)` and `(w/2, h/2)`.
 | `group` | choice | `p1` `p2` `pm` `pg` `cm` `pmm` `pmg` `pgg` `cmm` `p4` `p4m` `p4g` `p3` `p3m1` `p31m` `p6` `p6m` | `p4m` | The symmetry group |
 | `cols` | cells | 1 to 100 | 3 | Cells along the first lattice vector |
 | `rows` | cells | 1 to 100 | 3 | Cells along the second lattice vector (cols x rows x copies per cell x earlier copies is capped at 10 000) |
-| `cellWidth` | pt | 0.001 to 1 000 000 | 100 | Lattice width. For the square groups (p4*) it is the side; for the hexagonal groups (p3*, p6*) it is the lattice constant |
-| `cellHeight` | pt | 0.001 to 1 000 000 | 100 | Lattice height for the oblique and rectangular groups (p1, p2, pm, pg, cm, pmm, pmg, pgg, cmm); ignored by the square and hexagonal groups |
-| `angle` | deg | 1 to 179 | 90 | Angle between the lattice vectors for the oblique groups p1 and p2; ignored by the others |
-| `originX` | pt | any | 0 | Moves the symmetry origin from the layer's top-left corner, x |
+| `cellWidth` | pt | 0.001 to 1 000 000 | 100 | Lattice width, every group. For the square groups (p4*) it is the side; for the hexagonal groups (p3*, p6*) it is the lattice constant |
+| `cellHeight` | pt | 0.001 to 1 000 000 | 100 | Lattice height: p1, p2, pm, pg, cm, pmm, pmg, pgg, cmm only. Hidden for the square and hexagonal groups, which it can't shape |
+| `angle` | deg | 1 to 179 | 90 | Angle between the lattice vectors: p1 and p2 only (the other lattices have their angle fixed by the group); hidden for the rest |
+| `originX` | pt | any | 0 | Moves the symmetry origin from the layer's top-left corner, x. Every group but p1 (which has no symmetry element to move; hidden there) |
 | `originY` | pt | any | 0 | Same, y |
+
+Which inputs apply: `group`, `cols`, `rows` and `cellWidth` to all 17; `cellHeight` to the oblique,
+rectangular and centred groups; `angle` to p1 and p2; `originX`/`originY` to all but p1. The panel
+hides the fields a group ignores and keeps their values, so switching groups and back loses
+nothing; the evaluator ignores them too.
 
 ### copyToShape
 

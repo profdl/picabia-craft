@@ -187,7 +187,7 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
         &[
             &[Field::Choice { param: "group", options: GROUPS, translate: false }],
             &[int("cols", text(tr_noop("Columns")), 1.0, 100.0), int("rows", text(tr_noop("Rows")), 1.0, 100.0)],
-            &[num("cellWidth", FieldLead::Raw("W"), 0.0, BIG), num("cellHeight", FieldLead::Raw("H"), 0.0, BIG)],
+            &[num("cellWidth", FieldLead::Raw("W"), 0.001, BIG), num("cellHeight", FieldLead::Raw("H"), 0.001, BIG)],
             &[deg("angle", text(tr_noop("Angle")), 1.0, 179.0)],
             &[num("originX", X, -BIG, BIG), num("originY", Y, -BIG, BIG)],
         ],
@@ -485,6 +485,13 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
     }
     let half = widgets::col_width(ui.available_width());
     for fields in rows {
+        // Fields the row's current choice makes meaningless are left out (wallpaper: the height
+        // and angle of lattices the group fixes).
+        let shown: Vec<Field> = fields.iter().copied().filter(|f| applies(r, f)).collect();
+        if shown.is_empty() {
+            continue;
+        }
+        let fields = &shown[..];
         // A number alone on its row showing a chip (a bound variable or an expression) takes both
         // columns, so a text lead ("Count") leaves the chip room for its name.
         let width = match fields {
@@ -492,7 +499,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             _ => half,
         };
         row(ui, 32.0, |ui| {
-            for f in *fields {
+            for f in fields {
                 field(app, ui, ids, i, r, f, width);
             }
         });
@@ -501,11 +508,34 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             widgets::note(ui, &trf("Target: {reason}", &[("reason", reason)]), t.warning);
         }
         // Why an expression typed into this row doesn't read.
-        for f in *fields {
+        for f in fields {
             if let Some(e) = ui.data(|d| d.get_temp::<String>(expr_field_id(i, f.param()).with("error"))) {
                 widgets::note(ui, &trf("Expression: {error}", &[("error", &e)]), t.danger);
             }
         }
+    }
+}
+
+/// Whether field `f` of row `r` does anything for the row's current choices. Only wallpaper has
+/// conditional fields: `cellHeight`, `angle` and the origin are hidden when the group (the same on every
+/// selected layer; mixed groups show everything) has a lattice or symmetry they don't shape.
+fn applies(r: &RowView, f: &Field) -> bool {
+    if r.kind != "wallpaper" {
+        return true;
+    }
+    let group = |p: &Map<String, Value>| {
+        p.get("group").and_then(Value::as_str).and_then(|g| serde_json::from_value::<figcraft_modifiers::WallpaperGroup>(json!(g)).ok())
+    };
+    let mut groups = r.params.iter().map(|(_, p)| group(p));
+    let Some(Some(first)) = groups.next() else { return true };
+    if !groups.all(|g| g == Some(first)) {
+        return true;
+    }
+    match f.param() {
+        "cellHeight" => first.uses_cell_height(),
+        "angle" => first.uses_angle(),
+        "originX" | "originY" => first.uses_origin(),
+        _ => true,
     }
 }
 

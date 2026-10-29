@@ -285,6 +285,25 @@ impl WallpaperGroup {
         WallpaperGroup::P6,
         WallpaperGroup::P6m,
     ];
+
+    /// Whether `cellHeight` shapes the lattice: the oblique and rectangular groups (including the
+    /// centred ones) do; the square and hexagonal lattices are fixed by `cellWidth` alone.
+    pub fn uses_cell_height(self) -> bool {
+        !matches!(self, Self::P4 | Self::P4m | Self::P4g | Self::P3 | Self::P3m1 | Self::P31m | Self::P6 | Self::P6m)
+    }
+
+    /// Whether `angle` shapes the lattice: only the oblique groups, whose lattice vectors can meet
+    /// at any angle; every other lattice has its angle fixed by the group.
+    pub fn uses_angle(self) -> bool {
+        matches!(self, Self::P1 | Self::P2)
+    }
+
+    /// Whether `originX`/`originY` change the copies: p1 has no symmetry element to move (its only
+    /// copy of a cell is a translation), every other group's rotation centres and mirror or glide
+    /// axes pass through the origin.
+    pub fn uses_origin(self) -> bool {
+        self != Self::P1
+    }
 }
 
 /// `wallpaper`: one of the 17 plane groups as a lattice of `cols` x `rows` cells, each holding the
