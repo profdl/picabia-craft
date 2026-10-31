@@ -1,7 +1,8 @@
 # Picabia roadmap
 
 **Stage:** P0–P7 landed (2026-10-29); first upstream merge done (`PIC-merge: upstream 96eed159..f702105e`).
-Next: polish (handles for the remaining kinds, per-kind undo labels) and the release packaging ids.
+Stencil P8–P9 landed (2026-10-31). Next: stencil P10 (islands and ties), then polish (handles for
+the remaining kinds, per-kind undo labels) and the release packaging ids.
 
 Picabia is a thin fork of [FigCraft](https://github.com/storytold/figcraft): everything FigCraft does,
 plus a live, non-destructive **modifier stack** (arrays, mirrors, per-copy transforms, randomisation).
@@ -21,6 +22,8 @@ Grades are by behaviour, erring low (A: done and checked in the app; B: works, g
 | P5 | `modifier.apply`, menus, canvas handles, layers badge | B | Apply (and `upTo`), Object/context Modifiers submenu, layers badge, Inspect and a11y lines; handles for mirror axis, ring centre/radius, linear offset, grid gaps (snap, Esc cancel, one undo step). No handles yet for wallpaper, transform each, randomize, copy to shape or for a row whose panel settings are open (per-row focus) |
 | P6 | Variable bindings and per-copy expressions | A- | Bindings keyed by modifier id (survive reorder, save, collab, copy/paste/duplicate); expressions `i`, `n`, `t`, `value` with a chip in the panel |
 | P7 | Wallpaper groups and copy to shape | B | 17 plane groups; copy to shape on points/along the outline/populate with target checks (self, ancestor, descendant, page, missing, loops), remapping on duplicate/paste/component instances, panel picker. The canvas pick-a-layer tool (instead of the dropdown) isn't built |
+| P8 | Stencil foundations: `pathops` offset/open/close, `figcraft-stencil` crate (L3), `stencil` modifier kind (terminal row) | B+ | Offset passes a seeded jagged fuzz sweep; the stencil row saves, loads and draws; Apply keeps it live. S0: the engine computes off the UI thread (wasm: on the UI thread after 300 ms idle) into a render-side store keyed by node id + exact input snapshot, and stale sheets draw meanwhile. traced.svg computes in 97 ms natively, 300 jagged shapes in 0.67 s. wasm compute time not measured |
+| P9 | Stencil core: gather, visible regions, colour modes, clean-up, sheet, canvas preview, panel | B | Gather (strokes, text, booleans, clips, masks, copies above the row); threshold/pick/invert; area filter, opening/closing, simplify; paper and dyed-cloth previews on the canvas and in PNG/SVG/PDF; `modifier.stencilInfo`, `modifier.stencilFromSelection`; panel Colours/Size/Clean-up/Preview with the swatch list. Gaps: LOD path and `render_alone`/Copy as PNG can show the design or a stale sheet; clicking a cut-out hole selects the sheet; swatches come from the first selected layer only |
 
 ## Known issues
 
