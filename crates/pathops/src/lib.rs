@@ -13,6 +13,11 @@ mod brush_tests;
 mod dot_dash_tests;
 #[cfg(test)]
 mod ops_tests;
+// PICABIA: region offset and morphological open/close for the stencil (crates/pathops/src/offset.rs).
+mod offset;
+#[cfg(test)]
+mod offset_tests;
+pub use offset::{MAX_OFFSET_DISTANCE, MAX_OFFSET_ELEMENTS, OFFSET_MITER_LIMIT, close, offset, open};
 mod points;
 #[cfg(test)]
 mod rounded_side_strokes_tests;
