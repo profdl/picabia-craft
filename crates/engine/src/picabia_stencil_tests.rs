@@ -379,3 +379,20 @@ fn refresh_computes_in_the_background() {
     }
     assert!(store::is_fresh(&d, d.node(g).unwrap()));
 }
+
+#[test]
+fn svg_and_pdf_exports_draw_the_sheet() {
+    let mut s = Session::new();
+    let a = rect(&mut s, 0.0, BLACK);
+    let b = rect(&mut s, 100.0, WHITE);
+    let g = id_of(&ex(&mut s, "modifier.stencilFromSelection", json!({"ids": [a, b]}))["id"]).unwrap();
+    let out = ex(&mut s, "file.export", json!({"ids": [g], "format": "svg"}));
+    use base64::Engine as _;
+    let svg = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(out["data"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(svg.contains("fill=\"#c8a165\"") && svg.contains("fill-rule=\"evenodd\""), "{svg}");
+    assert!(!svg.contains("fill=\"#000000\""), "the design itself isn't written: {svg}");
+    // The export covers the sheet: 200 wide at 1.5 mm/unit plus 10 units each side.
+    assert!(svg.contains("width=\"220\""), "{svg}");
+    let out = ex(&mut s, "file.export", json!({"ids": [g], "format": "pdf"}));
+    assert!(out["data"].as_str().is_some_and(|d| !d.is_empty()));
+}

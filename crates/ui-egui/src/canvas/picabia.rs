@@ -115,3 +115,14 @@ pub(super) fn modifier_overlay(app: &FigApp, painter: &egui::Painter, col: egui:
         super::overlays::pill(painter, sp(hint.at) + egui::vec2(12.0, 12.0), egui::Align2::LEFT_TOP, hint.label.clone(), col);
     }
 }
+
+/// Every canvas frame: recompute stale stencil sheets of the shown document (off the UI thread
+/// natively; on it once a layer stops changing, in the browser) and keep repainting until the
+/// results land (the stale sheet shows meanwhile).
+pub(super) fn stencil_tick(app: &FigApp, ctx: &egui::Context) {
+    let Ok(ds) = app.session.ds() else { return };
+    figcraft_engine::picabia_stencil::refresh(&ds.doc);
+    if figcraft_engine::picabia_stencil::busy() {
+        ctx.request_repaint_after(std::time::Duration::from_millis(40));
+    }
+}

@@ -83,7 +83,7 @@ pub(super) fn request_render(app: &mut FigApp, worker: &mut Worker, ppp: f32, ma
         outlined: outlined.clone(),
         skip: vec![],
         solo: ds.focused(),
-        fonts: figcraft_text::layout_generation(),
+        fonts: figcraft_render::picabia::frame_generation(), // PICABIA: a stencil result arriving renders again, like fonts
         proof,
         dots,
     };

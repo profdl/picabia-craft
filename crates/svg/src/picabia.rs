@@ -23,6 +23,9 @@ impl W<'_> {
         if !n.visible || n.is_mask || !xf.is_finite() || xf.determinant().abs() < 1e-12 {
             return false;
         }
+        if self.stencil(n, xf) {
+            return true;
+        }
         let inv = xf.inverse();
         figcraft_render::picabia::each_copy(doc, n, |t| {
             let c = xf * t * inv;
@@ -36,6 +39,26 @@ impl W<'_> {
             self.body.push_str("</g></g>");
             self.clip = inherited;
         })
+    }
+
+    /// A stencil layer (its stack ends in a stencil row, with a computed sheet) as the canvas
+    /// shows it: the paper with the cut open, or the cloth with the paste. `false`: not one.
+    fn stencil(&mut self, n: &figcraft_doc::Node, xf: Affine) -> bool {
+        use figcraft_render::picabia::stencil;
+        let Some(d) = stencil::drawn(self.doc, n) else { return false };
+        let at = xf * n.transform;
+        if !at.is_finite() {
+            return true;
+        }
+        let opacity = if n.opacity < 1.0 { format!(" opacity=\"{}\"", crate::num(f64::from(n.opacity.max(0.0)))) } else { String::new() };
+        for f in stencil::fills(&d) {
+            let rule = if f.even_odd { " fill-rule=\"evenodd\"" } else { "" };
+            let [r, g, b] = f.rgb;
+            let el = format!("<path transform=\"{}\" d=\"{}\" fill=\"#{r:02x}{g:02x}{b:02x}\"{rule}{opacity}/>", matrix(at), crate::path_d(&f.path));
+            let clip = clip_attr(&self.clip);
+            self.body.push_str(&crate::clipped(&clip, el));
+        }
+        true
     }
 }
 

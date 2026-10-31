@@ -21,6 +21,9 @@ impl Exporter<'_> {
         if n.is_mask || !parent_xf.is_finite() || parent_xf.determinant().abs() < 1e-12 {
             return false;
         }
+        if self.stencil(s, n, parent_xf) {
+            return true;
+        }
         let inv = parent_xf.inverse();
         figcraft_render::picabia::each_copy(doc, n, |t| {
             let c = parent_xf * t * inv;
@@ -32,6 +35,26 @@ impl Exporter<'_> {
             self.node_once(s, id, parent_xf, depth, as_mask);
             s.pop();
         })
+    }
+
+    /// A stencil layer (its stack ends in a stencil row, with a computed sheet) as the canvas
+    /// shows it: the paper with the cut open, or the cloth with the paste. `false`: not one.
+    fn stencil(&mut self, s: &mut Surface, n: &figcraft_doc::Node, parent_xf: Affine) -> bool {
+        use figcraft_render::picabia::stencil;
+        let Some(d) = stencil::drawn(self.doc, n) else { return false };
+        if !n.visible {
+            return true;
+        }
+        let xf = parent_xf * n.transform;
+        for f in stencil::fills(&d) {
+            let [r, g, b] = f.rgb;
+            let mut paint = figcraft_color::Paint::solid(figcraft_color::Color::from_rgba8(r, g, b, 255));
+            paint.opacity = n.opacity.clamp(0.0, 1.0);
+            let rule = if f.even_odd { krilla::paint::FillRule::EvenOdd } else { krilla::paint::FillRule::NonZero };
+            let frame = super::PaintFrame { size: super::PaintSize { width: 1.0, height: 1.0 }, transform: xf };
+            self.fill(s, &f.path, rule, &paint, frame);
+        }
+        true
     }
 }
 
