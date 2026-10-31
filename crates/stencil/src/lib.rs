@@ -22,7 +22,7 @@ mod rings;
 mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
-pub use compute::{MAX_PAINTS, Stats, StencilError, StencilOut, compute};
+pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, compute};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
 use figcraft_geom::kurbo::BezPath;

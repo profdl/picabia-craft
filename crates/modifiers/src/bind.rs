@@ -49,6 +49,10 @@ pub fn field_type(kind: &ModifierKind, field: &str) -> Option<VariableType> {
     if matches!(kind, ModifierKind::CopyToShape(_)) && field == "target" {
         return None;
     }
+    // `null` until set: still a number field.
+    if matches!(kind, ModifierKind::Stencil(_)) && field == "tieAngle" {
+        return Some(VariableType::Number);
+    }
     match kind.params().get(field)? {
         Value::Number(_) => Some(VariableType::Number),
         Value::Bool(_) => Some(VariableType::Boolean),

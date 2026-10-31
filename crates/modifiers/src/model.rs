@@ -402,6 +402,44 @@ pub enum StencilPreview {
     Cloth,
 }
 
+/// What a [`Stencil`] does with paper islands (paper pieces the cut separates from the sheet).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilTieMode {
+    /// Every island is held by `tiesPerIsland` tie bars to the paper around it.
+    #[default]
+    Ties,
+    /// No ties: the islands are kept (held by a gauze or silk mesh laid on the stencil) and flagged.
+    Gauze,
+    /// A lattice of thin paper bars across the cut (`pattern*` fields) holds the islands it
+    /// crosses; the ones it misses get automatic ties.
+    Pattern,
+}
+
+/// The lattice of a [`Stencil`] in `pattern` tie mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilPatternType {
+    /// Horizontal and vertical bars.
+    #[default]
+    Grid,
+    /// Horizontal bars only.
+    Horizontal,
+    /// Vertical bars only.
+    Vertical,
+}
+
+/// Where a [`Stencil`]'s lattice goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilPatternWhere {
+    /// Across every cut-out.
+    #[default]
+    Everywhere,
+    /// Only in the cut-outs that border an island.
+    Islands,
+}
+
 /// `stencil`: turn the layer (everything the rows above it drew) into a laser-cut katagami stencil.
 /// **Terminal**: it adds no copies (the copies of the rows above stand), and enabled rows below it
 /// are ignored with a warning; the evaluated [`crate::Output::stencil`] carries its params (clamped)
@@ -445,10 +483,51 @@ pub struct Stencil {
     pub paste_colour: String,
     #[serde(deserialize_with = "lenient::cloth_colour")]
     pub cloth_colour: String,
+    /// Ties or gauze for the paper islands. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub tie_mode: StencilTieMode,
+    /// Width of each tie bar, 0.05–50 mm.
+    pub tie_width_mm: f64,
+    /// Ties holding each island, 1–8.
+    #[serde(deserialize_with = "lenient::count")]
+    pub ties_per_island: u32,
+    /// Keep an island's ties apart (spread around it) rather than all on its shortest gaps.
+    pub tie_spread: bool,
+    /// Preferred tie direction in degrees (0 = right, 90 = up on the canvas; the opposite
+    /// direction counts too), wrapped to `0..360`; `None` (`null`) = no preference.
+    #[serde(deserialize_with = "lenient::optional_number")]
+    pub tie_angle: Option<f64>,
+    /// Breaks ties between equally short gaps.
+    #[serde(deserialize_with = "lenient::seed")]
+    pub tie_seed: u32,
+    /// `pattern` mode: the lattice's bars. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub pattern_type: StencilPatternType,
+    /// `pattern` mode: bar width (the tie size), 0.05–50 mm.
+    pub pattern_width_mm: f64,
+    /// `pattern` mode: centre-to-centre bar spacing, 0.5–500 mm and at least twice the width.
+    pub pattern_spacing_mm: f64,
+    /// `pattern` mode: the lattice's rotation in degrees (counter-clockwise on the canvas), wrapped
+    /// to `0..360`. The lattice is anchored at the sheet's top-left corner.
+    pub pattern_angle: f64,
+    /// `pattern` mode: every cut-out, or only those bordering an island. Unknown values read as the
+    /// default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub pattern_where: StencilPatternWhere,
 }
 
 /// The most entries [`Stencil::cut_colours`] keeps.
 pub const MAX_CUT_COLOURS: usize = 256;
+/// [`Stencil::ties_per_island`]'s range is `1..=MAX_TIES_PER_ISLAND`.
+pub const MAX_TIES_PER_ISLAND: u32 = 8;
+/// [`Stencil::tie_width_mm`]'s range, mm.
+pub const MIN_TIE_WIDTH_MM: f64 = 0.05;
+/// [`Stencil::tie_width_mm`]'s range, mm.
+pub const MAX_TIE_WIDTH_MM: f64 = 50.0;
+/// [`Stencil::pattern_spacing_mm`]'s range, mm (it is also at least twice the width).
+pub const MIN_PATTERN_SPACING_MM: f64 = 0.5;
+/// [`Stencil::pattern_spacing_mm`]'s range, mm.
+pub const MAX_PATTERN_SPACING_MM: f64 = 500.0;
 /// [`Stencil::paper_colour`]'s default: kakishibu (persimmon-tannin) paper brown.
 pub const STENCIL_PAPER: &str = "#c8a165";
 /// [`Stencil::paste_colour`]'s default: indigo.
@@ -473,6 +552,17 @@ impl Default for Stencil {
             paper_colour: STENCIL_PAPER.into(),
             paste_colour: STENCIL_PASTE.into(),
             cloth_colour: STENCIL_CLOTH.into(),
+            tie_mode: StencilTieMode::Ties,
+            tie_width_mm: 1.0,
+            ties_per_island: 2,
+            tie_spread: true,
+            tie_angle: None,
+            tie_seed: 1,
+            pattern_type: StencilPatternType::Grid,
+            pattern_width_mm: 0.6,
+            pattern_spacing_mm: 8.0,
+            pattern_angle: 0.0,
+            pattern_where: StencilPatternWhere::Everywhere,
         }
     }
 }
@@ -782,7 +872,8 @@ impl Modifier {
                         let names: Vec<&str> = params.keys().map(String::as_str).chain(["enabled"]).collect();
                         return Err(ModError::Invalid(format!("`{}` has no param `{k}` (it takes {})", self.kind.id(), names.join(", "))));
                     };
-                    let v = if cur.is_number() {
+                    // `null` passes through: optional numbers (`tieAngle`) take it, the rest refuse it.
+                    let v = if cur.is_number() && !v.is_null() {
                         let f = lenient::finite(v).ok_or_else(|| ModError::Invalid(format!("`{k}` must be a finite number, got {}", short(v))))?;
                         serde_json::Number::from_f64(f).map(Value::Number).ok_or_else(|| ModError::Invalid(format!("`{k}` must be finite")))?
                     } else {

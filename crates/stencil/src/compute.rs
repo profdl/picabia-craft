@@ -27,6 +27,15 @@ pub struct Stats {
     pub cut_length_mm: f64,
     /// Area cut out, mm².
     pub area_cut_mm2: f64,
+    /// Paper islands found (paper pieces not joined to the outer sheet before tying), nested ones
+    /// included.
+    pub islands: usize,
+    /// Tie bars added.
+    pub ties: usize,
+    /// Islands held by the lattice (`pattern` mode), not counted in `ties`' islands.
+    pub pattern_held: usize,
+    /// Islands left without a tie (gauze mode, or no bar could be placed).
+    pub untied: usize,
 }
 
 /// The computed stencil, in the layer's units and space.
@@ -45,6 +54,27 @@ pub struct StencilOut {
     pub stats: Stats,
     /// Every colour of the design, largest visible area first.
     pub colours: Vec<ColourInfo>,
+    /// The tie bars and, in `pattern` mode, the lattice bars that ended up in the paper (non-zero;
+    /// rectangles), already merged into `paper` and removed from `cut`; for the preview overlay.
+    /// Empty in gauze mode.
+    pub ties: BezPath,
+    /// Every paper island found in the cut sheet, outermost first.
+    pub islands: Vec<Island>,
+}
+
+/// A paper island: a piece of paper the cut separates from the outer sheet (it would fall out
+/// without ties).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Island {
+    /// Its outer contour's bounds, layer units.
+    pub bounds: Rect,
+    /// Tie bars holding it (0 in gauze mode, when the lattice holds it, or when no bar could be
+    /// placed).
+    pub tied: u32,
+    /// The `pattern` lattice holds it.
+    pub pattern_held: bool,
+    /// How deep it sits: 0 = in a cut-out of the sheet, 1 = in a cut-out of a depth-0 island, ...
+    pub nested_depth: u32,
 }
 
 /// Why [`compute`] made nothing.
@@ -130,7 +160,7 @@ pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result
     let mut stats = measure(&cut, mpu);
     stats.dropped_specks = cleaned.dropped_specks;
     stats.filled_holes = cleaned.filled_holes;
-    Ok(StencilOut { paper: paper(sheet, &cut), cut, sheet, mm_per_unit: mpu, warnings, stats, colours })
+    Ok(StencilOut { paper: paper(sheet, &cut), cut, sheet, mm_per_unit: mpu, warnings, stats, colours, ..StencilOut::default() })
 }
 
 fn contains(outer: Rect, inner: Rect) -> bool {

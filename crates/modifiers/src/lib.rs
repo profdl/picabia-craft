@@ -72,10 +72,13 @@ pub use bind::{
 pub use eval::{Guide, Instance, Output, StencilRow, Warning, evaluate, evaluate_with, splitmix64};
 pub use model::{
     CircularArray, CopyMode, CopyToShape, GridArray, KINDS, LinearArray, MAX_CUT_COLOURS, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize,
-    Stack, Stencil, StencilColourMode, StencilPreview, TransformEach, Wallpaper, WallpaperGroup, expr_field, expr_fields, expr_key, hex_colour,
-    kind_label, parse_hex_colour,
+    Stack, Stencil, StencilColourMode, StencilPatternType, StencilPatternWhere, StencilPreview, StencilTieMode, TransformEach, Wallpaper,
+    WallpaperGroup, expr_field, expr_fields, expr_key, hex_colour, kind_label, parse_hex_colour,
 };
-pub use model::{STENCIL_CLOTH, STENCIL_PAPER, STENCIL_PASTE};
+pub use model::{
+    MAX_PATTERN_SPACING_MM, MAX_TIE_WIDTH_MM, MAX_TIES_PER_ISLAND, MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, STENCIL_CLOTH, STENCIL_PAPER,
+    STENCIL_PASTE,
+};
 pub use node::{
     evaluate_node, evaluate_node_in, evaluate_node_in_doc, evaluate_node_with, has_modifiers, node_bounds, node_instances, node_instances_in_doc,
     node_stack,

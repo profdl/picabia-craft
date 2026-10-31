@@ -30,6 +30,16 @@ pub(crate) fn seed<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
     whole(d, f64::from(u32::MAX))
 }
 
+/// An optional number: `null` or a blank text = none, a number (or numeric text) = it; anything
+/// else is an error (the row doesn't read, as for any mistyped number).
+pub(crate) fn optional_number<'de, D: Deserializer<'de>>(d: D) -> Result<Option<f64>, D::Error> {
+    match Value::deserialize(d)? {
+        Value::Null => Ok(None),
+        Value::String(s) if s.trim().is_empty() => Ok(None),
+        v => finite(&v).map(Some).ok_or_else(|| D::Error::custom(format!("expected a number or null, got {v}"))),
+    }
+}
+
 /// An expression text: a string (blank = none) or a number (taken as its text); `null` = none.
 pub(crate) fn expr<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
     match Value::deserialize(d)? {

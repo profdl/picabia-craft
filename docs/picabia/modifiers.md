@@ -229,6 +229,17 @@ read too; they are written lowercase).
 | `paperColour` | colour | | `#c8a165` | The sheet in the paper preview (kakishibu brown) |
 | `pasteColour` | colour | | `#1f3a8a` | Where the paste goes through, in the cloth preview (indigo) |
 | `clothColour` | colour | | `#f4efe6` | The undyed cloth, in the cloth preview |
+| `tieMode` | choice | `ties`, `gauze` | `ties` | What holds the **islands** (paper pieces the cut separates from the sheet, such as a crescent inside a cut swoosh). `ties`: each island gets tie bars to the paper around it. `gauze`: no ties; the islands are kept (a gauze or silk mesh laid on the stencil holds them) and flagged. `pattern`: a lattice of thin paper bars across the cut (the `pattern...` fields) holds every island it crosses; islands it misses get ties as in `ties` mode. An unknown value reads as `ties` |
+| `tieWidthMm` | mm | 0.05 to 50 | 1 | Width of each tie bar |
+| `tiesPerIsland` | count | 1 to 8 | 2 | Tie bars per island, along the shortest cut gaps to the paper enclosing it |
+| `tieSpread` | on/off | | on | Keep an island's ties apart (spread around it) instead of all on its very shortest gaps |
+| `tieAngle` | degrees or none | wrapped to 0 to 360 | none | Preferred tie direction (0 = to the right, 90 = up on the canvas; the opposite direction counts too). `null` = no preference |
+| `tieSeed` | whole number | | 1 | Breaks ties between equally short gaps (same result on every platform) |
+| `patternType` | choice | `grid`, `horizontal`, `vertical` | `grid` | `pattern`: the lattice's bars. An unknown value reads as `grid` |
+| `patternWidthMm` | mm | 0.05 to 50 | 0.6 | `pattern`: bar width (the tie size). Bars thinner than `minBridgeMm` give a warning |
+| `patternSpacingMm` | mm | 0.5 to 500, at least twice the width | 8 | `pattern`: centre-to-centre spacing of the bars |
+| `patternAngle` | degrees | wrapped to 0 to 360 | 0 | `pattern`: rotates the lattice (counter-clockwise on the canvas). The lattice is anchored at the sheet's top-left corner, so it stays put when the design changes |
+| `patternWhere` | choice | `everywhere`, `islands` | `everywhere` | `pattern`: across every cut-out, or only in the cut-outs that border an island. An unknown value reads as `everywhere` |
 
 Numbers outside their range are clamped when evaluating (a warning names the field); a colour that
 doesn't read takes its default. `cutColours` can't be bound to a variable.

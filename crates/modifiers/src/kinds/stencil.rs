@@ -5,7 +5,16 @@
 //! above drew. This module only puts the params in range.
 
 use super::Clamp;
-use crate::model::{Stencil, StencilColourMode, hex_colour, parse_hex_colour};
+use crate::model::{
+    MAX_PATTERN_SPACING_MM, MAX_TIE_WIDTH_MM, MAX_TIES_PER_ISLAND, MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, Stencil, StencilColourMode, hex_colour,
+    parse_hex_colour,
+};
+
+/// `a` degrees in `0..360` (the same direction).
+fn wrap_degrees(a: f64) -> f64 {
+    let w = a.rem_euclid(360.0) + 0.0;
+    if w >= 360.0 { 0.0 } else { w }
+}
 
 /// [`Stencil::clamped`]: every number in its range (non-finite: the default), `separate` as
 /// `threshold`, colours normalised; a warning per change.
@@ -20,6 +29,20 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
     let min_cut_width_mm = c.within("minCutWidthMm", p.min_cut_width_mm, 0.0, 100.0, d.min_cut_width_mm);
     let min_bridge_mm = c.within("minBridgeMm", p.min_bridge_mm, 0.0, 100.0, d.min_bridge_mm);
     let tolerance_mm = c.within("toleranceMm", p.tolerance_mm, 0.0, 10.0, d.tolerance_mm);
+    let pattern_width_mm = c.within("patternWidthMm", p.pattern_width_mm, MIN_TIE_WIDTH_MM, MAX_TIE_WIDTH_MM, d.pattern_width_mm);
+    let mut pattern_spacing_mm =
+        c.within("patternSpacingMm", p.pattern_spacing_mm, MIN_PATTERN_SPACING_MM, MAX_PATTERN_SPACING_MM, d.pattern_spacing_mm);
+    let pattern_angle = if p.pattern_angle.is_finite() {
+        wrap_degrees(p.pattern_angle)
+    } else {
+        c.warnings.push("`patternAngle` isn't a finite number; using 0".into());
+        0.0
+    };
+    if pattern_spacing_mm < 2.0 * pattern_width_mm {
+        c.warnings.push("`patternSpacingMm` is at least twice `patternWidthMm`".into());
+        pattern_spacing_mm = 2.0 * pattern_width_mm;
+    }
+    let tie_width_mm = c.within("tieWidthMm", p.tie_width_mm, MIN_TIE_WIDTH_MM, MAX_TIE_WIDTH_MM, d.tie_width_mm);
     let colour_mode = match p.colour_mode {
         StencilColourMode::Separate => {
             warnings.push("one stencil per colour (`separate`) isn't available yet; cutting by threshold".into());
@@ -53,6 +76,18 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
         cut_colours.truncate(crate::model::MAX_CUT_COLOURS);
         warnings.push(format!("`cutColours` is limited to {} colours", crate::model::MAX_CUT_COLOURS));
     }
+    if !(1..=MAX_TIES_PER_ISLAND).contains(&p.ties_per_island) {
+        warnings.push(format!("`tiesPerIsland` is limited to 1..{MAX_TIES_PER_ISLAND}"));
+    }
+    let ties_per_island = p.ties_per_island.clamp(1, MAX_TIES_PER_ISLAND);
+    let tie_angle = match p.tie_angle {
+        Some(a) if a.is_finite() => Some(wrap_degrees(a)),
+        Some(_) => {
+            warnings.push("`tieAngle` isn't a finite number; no preferred direction".into());
+            None
+        }
+        None => None,
+    };
     let out = Stencil {
         colour_mode,
         cut_colours,
@@ -68,6 +103,17 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
         paper_colour,
         paste_colour,
         cloth_colour,
+        tie_mode: p.tie_mode,
+        tie_width_mm,
+        ties_per_island,
+        tie_spread: p.tie_spread,
+        tie_angle,
+        tie_seed: p.tie_seed,
+        pattern_type: p.pattern_type,
+        pattern_width_mm,
+        pattern_spacing_mm,
+        pattern_angle,
+        pattern_where: p.pattern_where,
     };
     (out, warnings)
 }
@@ -102,7 +148,9 @@ mod tests {
             v,
             json!({"id": "m1", "enabled": true, "kind": "stencil", "colourMode": "threshold", "cutColours": [], "threshold": 0.5,
                 "invert": false, "widthMm": 300.0, "marginMm": 15.0, "minCutAreaMm2": 0.5, "minCutWidthMm": 0.3, "minBridgeMm": 0.5,
-                "toleranceMm": 0.05, "preview": "paper", "paperColour": "#c8a165", "pasteColour": "#1f3a8a", "clothColour": "#f4efe6"})
+                "toleranceMm": 0.05, "preview": "paper", "paperColour": "#c8a165", "pasteColour": "#1f3a8a", "clothColour": "#f4efe6",
+                "tieMode": "ties", "tieWidthMm": 1.0, "tiesPerIsland": 2, "tieSpread": true, "tieAngle": null, "tieSeed": 1,
+                "patternType": "grid", "patternWidthMm": 0.6, "patternSpacingMm": 8.0, "patternAngle": 0.0, "patternWhere": "everywhere"})
         );
         assert_eq!(Stencil::default().clamped(), (Stencil::default(), Vec::new()), "defaults are in range");
     }
@@ -110,14 +158,15 @@ mod tests {
     #[test]
     fn round_trip_keeps_values_and_unknown_fields() {
         let row = json!({"id": "s", "enabled": true, "kind": "stencil", "colourMode": "pick", "cutColours": ["#FFFFFF", "#0a0", "#ffffff", "nope", 7],
-            "threshold": 0.25, "invert": true, "widthMm": 450, "preview": "cloth", "paperColour": "#ABCDEF", "tieWidthMm": 0.8, "future": {"a": [1]}});
+            "threshold": 0.25, "invert": true, "widthMm": 450, "preview": "cloth", "paperColour": "#ABCDEF", "tieWidthMm": 0.8, "tieAngle": "-90", "tieMode": "gauze", "tiesText": "flag", "future": {"a": [1]}});
         let m = Modifier::from_value(&row).unwrap();
         let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
         assert_eq!(p.colour_mode, StencilColourMode::Pick);
         assert_eq!(p.cut_colours, ["#ffffff", "#00aa00"], "normalised, invalid dropped, repeats once");
         assert_eq!((p.threshold, p.invert, p.width_mm, p.preview), (0.25, true, 450.0, StencilPreview::Cloth));
         assert_eq!(p.paper_colour, "#abcdef");
-        assert_eq!(m.extra.get("tieWidthMm"), Some(&json!(0.8)), "later fields kept");
+        assert_eq!((p.tie_width_mm, p.tie_angle, p.tie_mode), (0.8, Some(-90.0), StencilTieMode::Gauze));
+        assert_eq!(m.extra.get("tiesText"), Some(&json!("flag")), "later fields kept");
         let back = m.to_value();
         assert_eq!(back["future"], json!({"a": [1]}));
         assert_eq!(Modifier::from_value(&back).unwrap(), m, "a second round trip changes nothing");
@@ -244,10 +293,74 @@ mod tests {
             (StencilColourMode::Pick, ["#ff0000".to_string()].as_slice(), 200.0, true)
         );
         let before = m.clone();
-        for bad in [json!({"widthMm": "NaN"}), json!({"invert": 1}), json!({"tieWidthMm": 1})] {
+        for bad in [
+            json!({"widthMm": "NaN"}),
+            json!({"invert": 1}),
+            json!({"tieText": 1}),
+            json!({"widthMm": null}),
+            json!({"tieAngle": "north"}),
+            json!({"tieSpread": 0}),
+        ] {
             assert!(m.set_props(bad.as_object().unwrap()).is_err(), "{bad}");
             assert_eq!(m, before);
         }
+    }
+
+    #[test]
+    fn tie_fields() {
+        let p = stencil_of(json!({"kind": "stencil", "tieMode": "silk", "tiesPerIsland": 3.6, "tieAngle": null, "tieSeed": -4, "tieSpread": false}));
+        assert_eq!((p.tie_mode, p.ties_per_island, p.tie_angle, p.tie_seed, p.tie_spread), (StencilTieMode::Ties, 4, None, 0, false));
+        assert_eq!(stencil_of(json!({"kind": "stencil", "tieAngle": ""})).tie_angle, None, "a blank text is no angle");
+        assert_eq!(stencil_of(json!({"kind": "stencil", "tieAngle": 45})).tie_angle, Some(45.0));
+        let m = Modifier::from_value(&json!({"kind": "stencil", "tieAngle": [1]})).unwrap();
+        assert!(matches!(&m.kind, ModifierKind::Other { error: Some(_), .. }), "a mistyped angle doesn't read");
+        // Clamping.
+        let (c, w) = Stencil { tie_width_mm: 0.0, ties_per_island: 0, tie_angle: Some(-30.0), ..Stencil::default() }.clamped();
+        assert_eq!((c.tie_width_mm, c.ties_per_island, c.tie_angle), (MIN_TIE_WIDTH_MM, 1, Some(330.0)));
+        assert_eq!(w.len(), 2, "wrapping the angle isn't a warning: {w:?}");
+        let (c, w) = Stencil { tie_width_mm: f64::NAN, ties_per_island: 1000, tie_angle: Some(f64::INFINITY), ..Stencil::default() }.clamped();
+        assert_eq!((c.tie_width_mm, c.ties_per_island, c.tie_angle), (1.0, MAX_TIES_PER_ISLAND, None));
+        assert_eq!(w.len(), 3, "{w:?}");
+        for (a, want) in [(720.0, 0.0), (-0.0, 0.0), (-1e-20, 0.0), (359.5, 359.5), (1e300, 1e300f64.rem_euclid(360.0))] {
+            let (c, _) = Stencil { tie_angle: Some(a), ..Stencil::default() }.clamped();
+            let got = c.tie_angle.unwrap();
+            assert!((0.0..360.0).contains(&got) && got.to_bits() == want.to_bits(), "{a} → {got}");
+        }
+        let (c, _) = Stencil { tie_width_mm: 1e9, ..Stencil::default() }.clamped();
+        assert_eq!(c.tie_width_mm, MAX_TIE_WIDTH_MM);
+        // Editing: an angle can be set and cleared.
+        let mut m = Modifier::new("m1", "stencil").unwrap();
+        m.set_props(json!({"tieAngle": 90, "tiesPerIsland": 5, "tieMode": "gauze"}).as_object().unwrap()).unwrap();
+        let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
+        assert_eq!((p.tie_angle, p.ties_per_island, p.tie_mode), (Some(90.0), 5, StencilTieMode::Gauze));
+        m.set_props(json!({"tieAngle": null}).as_object().unwrap()).unwrap();
+        let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
+        assert_eq!(p.tie_angle, None);
+        assert_eq!(crate::field_type(&m.kind, "tieAngle"), Some(figcraft_doc::VariableType::Number), "an unset angle still binds to numbers");
+    }
+
+    #[test]
+    fn pattern_fields() {
+        let p =
+            stencil_of(json!({"kind": "stencil", "tieMode": "pattern", "patternType": "vertical", "patternWidthMm": "0.8", "patternSpacingMm": 5,
+            "patternAngle": 30, "patternWhere": "islands"}));
+        assert_eq!(
+            (p.tie_mode, p.pattern_type, p.pattern_where),
+            (StencilTieMode::Pattern, StencilPatternType::Vertical, StencilPatternWhere::Islands)
+        );
+        assert_eq!((p.pattern_width_mm, p.pattern_spacing_mm, p.pattern_angle), (0.8, 5.0, 30.0));
+        assert_eq!(p.clamped(), (p.clone(), Vec::new()), "in range");
+        let p = stencil_of(json!({"kind": "stencil", "patternType": "hex", "patternWhere": 4}));
+        assert_eq!((p.pattern_type, p.pattern_where), (StencilPatternType::Grid, StencilPatternWhere::Everywhere), "unknown choices: defaults");
+        let (c, w) = Stencil { pattern_width_mm: 3.0, pattern_spacing_mm: 4.0, pattern_angle: -90.0, ..Stencil::default() }.clamped();
+        assert_eq!((c.pattern_width_mm, c.pattern_spacing_mm, c.pattern_angle), (3.0, 6.0, 270.0), "spacing ≥ 2 × width");
+        assert_eq!(w.len(), 1, "{w:?}");
+        let (c, w) = Stencil { pattern_width_mm: 1e6, pattern_spacing_mm: 0.0, pattern_angle: f64::NAN, ..Stencil::default() }.clamped();
+        assert_eq!((c.pattern_width_mm, c.pattern_spacing_mm, c.pattern_angle), (MAX_TIE_WIDTH_MM, 2.0 * MAX_TIE_WIDTH_MM, 0.0));
+        assert_eq!(w.len(), 4, "{w:?}");
+        let (c, _) = Stencil { pattern_spacing_mm: 1e9, ..Stencil::default() }.clamped();
+        assert_eq!(c.pattern_spacing_mm, MAX_PATTERN_SPACING_MM);
+        let _ = MIN_PATTERN_SPACING_MM;
     }
 
     #[test]
