@@ -10,6 +10,7 @@ mod linear;
 mod mirror;
 mod randomize;
 mod rng;
+mod stencil;
 mod transform_each;
 mod wallpaper;
 
@@ -67,8 +68,15 @@ pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx, targets: &dyn TargetResolver
         ModifierKind::Randomize(p) => randomize::stage(p, ctx),
         ModifierKind::Wallpaper(p) => wallpaper::stage(p, ctx),
         ModifierKind::CopyToShape(p) => copy_to_shape::stage(p, ctx, targets),
+        // Terminal: the evaluator stops before it; were it reached, it would add nothing.
+        ModifierKind::Stencil(_) => StageResult::unchanged(),
         ModifierKind::Other { .. } => StageResult::unchanged(),
     }
+}
+
+/// [`crate::model::Stencil::clamped`].
+pub(crate) fn stencil_clamped(p: &crate::model::Stencil) -> (crate::model::Stencil, Vec<String>) {
+    stencil::clamped(p)
 }
 
 /// Clamp helpers: every param reaches a transform through one of these.

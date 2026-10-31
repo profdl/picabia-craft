@@ -58,3 +58,57 @@ pub(crate) fn target<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error
         v => Err(D::Error::custom(format!("expected a layer id, got {v}"))),
     }
 }
+
+/// A choice (an enum written as its camelCase name): anything it doesn't name reads as the
+/// default, so a newer build's choice degrades to the default in this one.
+pub(crate) fn choice<'de, D: Deserializer<'de>, T: Default + for<'a> Deserialize<'a>>(d: D) -> Result<T, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(serde_json::from_value(v).unwrap_or_default())
+}
+
+/// A colour text, normalised to lowercase `#rrggbb`; `None` for anything else.
+fn colour_of(v: &Value) -> Option<String> {
+    v.as_str().and_then(crate::model::parse_hex_colour).map(crate::model::hex_colour)
+}
+
+fn colour_or<'de, D: Deserializer<'de>>(d: D, default: &str) -> Result<String, D::Error> {
+    let v = Value::deserialize(d)?;
+    Ok(colour_of(&v).unwrap_or_else(|| default.to_string()))
+}
+
+/// A stencil's paper colour (not a colour: the default).
+pub(crate) fn paper_colour<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    colour_or(d, crate::model::STENCIL_PAPER)
+}
+
+/// A stencil's paste colour (not a colour: the default).
+pub(crate) fn paste_colour<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    colour_or(d, crate::model::STENCIL_PASTE)
+}
+
+/// A stencil's cloth colour (not a colour: the default).
+pub(crate) fn cloth_colour<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    colour_or(d, crate::model::STENCIL_CLOTH)
+}
+
+/// A list of colour texts: entries that aren't colours are dropped, repeats kept once, at most
+/// [`crate::model::MAX_CUT_COLOURS`]; one colour text reads as a list of one, anything else as
+/// none.
+pub(crate) fn colours<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    let v = Value::deserialize(d)?;
+    let items: Vec<Value> = match v {
+        Value::Array(a) => a,
+        s @ Value::String(_) => vec![s],
+        _ => Vec::new(),
+    };
+    let mut out: Vec<String> = Vec::new();
+    for c in items.iter().filter_map(colour_of) {
+        if out.len() >= crate::model::MAX_CUT_COLOURS {
+            break;
+        }
+        if !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}

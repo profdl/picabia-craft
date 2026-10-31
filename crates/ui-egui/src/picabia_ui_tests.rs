@@ -49,6 +49,7 @@ fn the_submenu_lists_every_kind_and_enables_by_selection() {
     if figcraft_modifiers::kind_label("wallpaper").is_some() {
         want.push("wallpaper");
     }
+    want.push("stencil");
     assert_eq!(kinds, want);
     let on = |u: &Ui| crate::picabia_ui::items(&u.app).iter().filter(|i| !i.1.is_empty()).map(|i| (i.1, i.3)).collect::<Vec<_>>();
     assert!(on(&u).iter().all(|(_, e)| !e), "nothing selected: all off");

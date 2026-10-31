@@ -21,6 +21,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("randomize", "Randomize"),
     ("wallpaper", "Wallpaper"),
     ("copyToShape", "Copy to shape"),
+    ("stencil", "Stencil"),
 ];
 
 /// The label of kind id `kind` ("Linear array"), or `None` for a kind this build doesn't know.
@@ -123,6 +124,8 @@ pub enum ModifierKind {
     Randomize(Randomize),
     Wallpaper(Wallpaper),
     CopyToShape(CopyToShape),
+    /// Terminal: the stack ends here (see [`Stencil`]).
+    Stencil(Stencil),
     /// A kind this build doesn't know, or a known kind whose params don't read (`error` says
     /// why). Kept on a round trip, ignored when evaluating.
     Other {
@@ -375,6 +378,135 @@ impl Default for CopyToShape {
     }
 }
 
+/// How a [`Stencil`] chooses the colours it cuts out.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilColourMode {
+    /// Colours whose luminance is above `threshold` are cut (below with `invert`).
+    #[default]
+    Threshold,
+    /// Colours listed in `cutColours` are cut (the others with `invert`).
+    Pick,
+    /// One stencil per colour (P12): reads and writes, evaluates as `threshold` with a warning.
+    Separate,
+}
+
+/// How the canvas previews a [`Stencil`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilPreview {
+    /// The sheet in `paperColour` with the cut-outs open.
+    #[default]
+    Paper,
+    /// The dyed cloth: `pasteColour` where the paste goes through, `clothColour` elsewhere.
+    Cloth,
+}
+
+/// `stencil`: turn the layer (everything the rows above it drew) into a laser-cut katagami stencil.
+/// **Terminal**: it adds no copies (the copies of the rows above stand), and enabled rows below it
+/// are ignored with a warning; the evaluated [`crate::Output::stencil`] carries its params (clamped)
+/// for the engine and renderer, which compute and draw the sheet (`figcraft-stencil`).
+///
+/// Lengths are in **millimetres** at the stencil's physical size: `mm_per_unit = widthMm / layer
+/// width`. Colours are `"#rrggbb"` texts (lowercase when written). Ranges are applied by
+/// [`Stencil::clamped`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Stencil {
+    /// Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub colour_mode: StencilColourMode,
+    /// `pick`: the colours cut out. At most [`MAX_CUT_COLOURS`]; entries that aren't colours are
+    /// dropped, repeats kept once.
+    #[serde(deserialize_with = "lenient::colours")]
+    pub cut_colours: Vec<String>,
+    /// `threshold`: the luminance level, 0–1 (Rec. 709 on sRGB-decoded values).
+    pub threshold: f64,
+    /// Swap what is cut and what stays paper (both modes).
+    pub invert: bool,
+    /// The design's physical width (the height follows the aspect ratio), 1–10000 mm.
+    pub width_mm: f64,
+    /// The paper border around the design, 0–1000 mm.
+    pub margin_mm: f64,
+    /// Smaller cut pieces and paper holes are dropped, 0–10000 mm².
+    pub min_cut_area_mm2: f64,
+    /// Narrower cut slivers are removed, 0–100 mm.
+    pub min_cut_width_mm: f64,
+    /// Narrower paper bridges are removed, 0–100 mm.
+    pub min_bridge_mm: f64,
+    /// Simplification tolerance, 0–10 mm.
+    pub tolerance_mm: f64,
+    /// Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub preview: StencilPreview,
+    #[serde(deserialize_with = "lenient::paper_colour")]
+    pub paper_colour: String,
+    #[serde(deserialize_with = "lenient::paste_colour")]
+    pub paste_colour: String,
+    #[serde(deserialize_with = "lenient::cloth_colour")]
+    pub cloth_colour: String,
+}
+
+/// The most entries [`Stencil::cut_colours`] keeps.
+pub const MAX_CUT_COLOURS: usize = 256;
+/// [`Stencil::paper_colour`]'s default: kakishibu (persimmon-tannin) paper brown.
+pub const STENCIL_PAPER: &str = "#c8a165";
+/// [`Stencil::paste_colour`]'s default: indigo.
+pub const STENCIL_PASTE: &str = "#1f3a8a";
+/// [`Stencil::cloth_colour`]'s default: undyed cloth.
+pub const STENCIL_CLOTH: &str = "#f4efe6";
+
+impl Default for Stencil {
+    fn default() -> Self {
+        Stencil {
+            colour_mode: StencilColourMode::Threshold,
+            cut_colours: Vec::new(),
+            threshold: 0.5,
+            invert: false,
+            width_mm: 300.0,
+            margin_mm: 15.0,
+            min_cut_area_mm2: 0.5,
+            min_cut_width_mm: 0.3,
+            min_bridge_mm: 0.5,
+            tolerance_mm: 0.05,
+            preview: StencilPreview::Paper,
+            paper_colour: STENCIL_PAPER.into(),
+            paste_colour: STENCIL_PASTE.into(),
+            cloth_colour: STENCIL_CLOTH.into(),
+        }
+    }
+}
+
+impl Stencil {
+    /// These params with every number in its range (a non-finite one takes its default), `separate`
+    /// evaluated as `threshold`, and the colours checked; with a warning for each change. What
+    /// [`crate::evaluate`] puts in [`crate::Output::stencil`].
+    pub fn clamped(&self) -> (Stencil, Vec<String>) {
+        crate::kinds::stencil_clamped(self)
+    }
+}
+
+/// `"#rrggbb"` (also `#rgb`, any case, `#` optional) as 8-bit sRGB channels.
+pub fn parse_hex_colour(s: &str) -> Option<[u8; 3]> {
+    let h = s.trim();
+    let h = h.strip_prefix('#').unwrap_or(h);
+    if !h.is_ascii() {
+        return None;
+    }
+    let nib = |i: usize| h.get(i..=i).and_then(|c| u8::from_str_radix(c, 16).ok());
+    let byte = |i: usize| h.get(i..i + 2).and_then(|c| u8::from_str_radix(c, 16).ok());
+    match h.len() {
+        3 => Some([nib(0)? * 17, nib(1)? * 17, nib(2)? * 17]),
+        6 => Some([byte(0)?, byte(2)?, byte(4)?]),
+        _ => None,
+    }
+}
+
+/// 8-bit sRGB channels as `"#rrggbb"` (lowercase).
+pub fn hex_colour(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
 /// `transformEach`: move, turn and scale every instance around its own centre; with
 /// `progressive` the amounts ramp from none on the first instance to the full amount on the last.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -511,6 +643,7 @@ impl ModifierKind {
             ModifierKind::Randomize(_) => "randomize",
             ModifierKind::Wallpaper(_) => "wallpaper",
             ModifierKind::CopyToShape(_) => "copyToShape",
+            ModifierKind::Stencil(_) => "stencil",
             ModifierKind::Other { kind, .. } => kind,
         }
     }
@@ -526,6 +659,7 @@ impl ModifierKind {
             "randomize" => ModifierKind::Randomize(Randomize::default()),
             "wallpaper" => ModifierKind::Wallpaper(Wallpaper::default()),
             "copyToShape" => ModifierKind::CopyToShape(CopyToShape::default()),
+            "stencil" => ModifierKind::Stencil(Stencil::default()),
             _ => return None,
         })
     }
@@ -541,6 +675,7 @@ impl ModifierKind {
             ModifierKind::Randomize(p) => params_of(p),
             ModifierKind::Wallpaper(p) => params_of(p),
             ModifierKind::CopyToShape(p) => params_of(p),
+            ModifierKind::Stencil(p) => params_of(p),
             ModifierKind::Other { .. } => Map::new(),
         }
     }
@@ -560,6 +695,7 @@ impl ModifierKind {
             "randomize" => wrap(read(rest), ModifierKind::Randomize),
             "wallpaper" => wrap(read(rest), ModifierKind::Wallpaper),
             "copyToShape" => wrap(read(rest), ModifierKind::CopyToShape),
+            "stencil" => wrap(read(rest), ModifierKind::Stencil),
             _ => return (ModifierKind::Other { kind: kind.to_string(), error: None }, rest.clone()),
         };
         r.unwrap_or_else(|e| (ModifierKind::Other { kind: kind.to_string(), error: Some(e) }, rest.clone()))
@@ -567,6 +703,16 @@ impl ModifierKind {
 }
 
 impl Stack {
+    /// The stack's terminal stencil row: the first enabled `stencil` modifier, as `(modifier id,
+    /// params as written)`. Rows below it are ignored when evaluating. [`crate::Output::stencil`]
+    /// has the same row with its params clamped.
+    pub fn stencil(&self) -> Option<(&str, &Stencil)> {
+        self.modifiers.iter().filter(|m| m.enabled).find_map(|m| match &m.kind {
+            ModifierKind::Stencil(p) => Some((m.id.as_str(), p)),
+            _ => None,
+        })
+    }
+
     /// The targets of the enabled `copyToShape` modifiers, as `(modifier id, target)`, in stack
     /// order (empty targets left out).
     pub fn targets(&self) -> impl Iterator<Item = (&str, &str)> + '_ {

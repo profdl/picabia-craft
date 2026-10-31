@@ -69,11 +69,13 @@ mod tests;
 pub use bind::{
     BINDING_PREFIX, apply_bound_values, binding_key, binding_takes, bound_variable, field_type, is_binding_key, parse_binding_key, stale_binding_keys,
 };
-pub use eval::{Guide, Instance, Output, Warning, evaluate, evaluate_with, splitmix64};
+pub use eval::{Guide, Instance, Output, StencilRow, Warning, evaluate, evaluate_with, splitmix64};
 pub use model::{
-    CircularArray, CopyMode, CopyToShape, GridArray, KINDS, LinearArray, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize, Stack, TransformEach,
-    Wallpaper, WallpaperGroup, expr_field, expr_fields, expr_key, kind_label,
+    CircularArray, CopyMode, CopyToShape, GridArray, KINDS, LinearArray, MAX_CUT_COLOURS, Mirror, MirrorAxis, Modifier, ModifierKind, Randomize,
+    Stack, Stencil, StencilColourMode, StencilPreview, TransformEach, Wallpaper, WallpaperGroup, expr_field, expr_fields, expr_key, hex_colour,
+    kind_label, parse_hex_colour,
 };
+pub use model::{STENCIL_CLOTH, STENCIL_PAPER, STENCIL_PASTE};
 pub use node::{
     evaluate_node, evaluate_node_in, evaluate_node_in_doc, evaluate_node_with, has_modifiers, node_bounds, node_instances, node_instances_in_doc,
     node_stack,

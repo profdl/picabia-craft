@@ -18,6 +18,9 @@
 //! axes shifts one offset for both, and per-copy rows (transform each, randomize, wallpaper) now
 //! act on the whole block, as a modifier on any group does.
 //!
+//! A stencil row is never baked here: `upTo` stops above it, and it moves onto the group with the
+//! rows after it (it cuts the same copies there).
+//!
 //! A layer whose stack makes no copies (empty, all rows off, or one unmoved copy) is left alone;
 //! when no target has anything to apply the command is refused. Main components and layers inside
 //! instances are refused: their copies can't become free layers there.
@@ -75,6 +78,13 @@ fn apply_one(s: &mut Session, id: NodeId, up_to: Option<usize>, budget: &mut usi
     if cut > last {
         return Err(bad(CMD, format!("layer {id} has {} modifiers: `upTo` is at most {last}", stack.len())));
     }
+    // A stencil row ends the stack and has no copies to bake: only the rows above it are baked,
+    // and it stays live on the group (with any rows below it), cutting the same copies.
+    let cut = match stack.modifiers.iter().position(|m| m.enabled && matches!(m.kind, ModifierKind::Stencil(_))) {
+        Some(0) => return Ok(None),
+        Some(at) => cut.min(at - 1),
+        None => cut,
+    };
     let baked = Stack { modifiers: stack.modifiers.get(..=cut).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let rest = Stack { modifiers: stack.modifiers.get(cut + 1..).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let node = doc.get(id)?;

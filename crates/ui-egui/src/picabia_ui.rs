@@ -27,6 +27,7 @@ pub const KINDS: &[(&str, &str)] = &[
     ("transformEach", tr_noop("Transform each")),
     ("randomize", tr_noop("Randomize")),
     ("wallpaper", tr_noop("Wallpaper")),
+    ("stencil", tr_noop("Stencil")),
 ];
 
 /// The context menu's row standing for the Modifiers submenu (its command-id slot).

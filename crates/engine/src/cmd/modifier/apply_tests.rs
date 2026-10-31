@@ -285,3 +285,27 @@ fn bindings_leave_the_copies_and_follow_the_rows_that_stay_live() {
     let keys: Vec<&String> = doc(&s).node(g).unwrap().bound.keys().collect();
     assert_eq!(keys, ["picabia.modifiers/m2/rows"]);
 }
+
+#[test]
+fn a_stencil_row_stays_live_and_only_the_rows_above_it_are_baked() {
+    let mut s = Session::new();
+    let r = rect(&mut s, 0.0, None);
+    add(&mut s, r, "linearArray", json!({"count": 3, "offsetX": 150}));
+    add(&mut s, r, "stencil", json!({"widthMm": 200}));
+    add(&mut s, r, "mirror", json!({}));
+    let want = drawn(&s, r);
+    assert_eq!(want.len(), 3, "the mirror below the stencil is ignored");
+    let g = id_of(&ex(&mut s, "modifier.apply", json!({"ids": [r]}))["ids"][0]).unwrap();
+    assert_eq!(children(&s, g).len(), 3, "the copies above the stencil are baked");
+    let l = ex(&mut s, "modifier.list", json!({"id": g}));
+    let kinds: Vec<&str> = l["modifiers"].as_array().unwrap().iter().map(|m| m["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["stencil", "mirror"], "the stencil and the rows below it move onto the group");
+    assert_eq!(l["modifiers"][0]["widthMm"], json!(200.0));
+    assert_eq!(key(&drawn_group(&s, g)), key(&want), "the result looks unchanged");
+    // A stencil on top: nothing to bake.
+    let r2 = rect(&mut s, 2000.0, None);
+    add(&mut s, r2, "stencil", json!({}));
+    add(&mut s, r2, "gridArray", json!({"rows": 2, "cols": 2}));
+    assert!(matches!(s.execute("modifier.apply", &json!({"ids": [r2]})), Err(EngineError::Disabled(..))));
+    assert_eq!(drawn(&s, r2).len(), 1, "a stencil alone draws the layer once, unchanged");
+}

@@ -12,7 +12,7 @@ use figcraft_doc::NodeId;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
-use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, fields_of, known, shared_targets};
+use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, STENCIL_LATER, fields_of, known, shared_targets};
 use crate::layers_drag_tests::Ui;
 use crate::list_drag::grip_id;
 use crate::live_tests::{flat, text_center};
@@ -177,6 +177,9 @@ fn the_field_table_covers_every_kind_and_parameter() {
             assert!(defaults.contains_key(*p), "{kind} has no param {p}");
         }
         for p in defaults.keys() {
+            if *kind == "stencil" && STENCIL_LATER.contains(&p.as_str()) {
+                continue;
+            }
             assert!(fields.contains(&p.as_str()), "{kind}'s param {p} has no field");
         }
     }

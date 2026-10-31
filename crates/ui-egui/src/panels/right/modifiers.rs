@@ -38,6 +38,7 @@ pub(crate) const KIND_MENU: &[(&str, &str)] = &[
     ("randomize", tr_noop("Randomize")),
     ("wallpaper", tr_noop("Wallpaper")),
     ("copyToShape", tr_noop("Copy to shape")),
+    ("stencil", tr_noop("Stencil")),
 ];
 
 /// A field's label: plain text not translated ("X"), a catalog key, or an icon with its name.
@@ -92,6 +93,11 @@ const fn int(param: &'static str, lead: FieldLead, min: f64, max: f64) -> Field 
     Field::Num { param, lead, unit: "", min, max, step: 1.0, scale: 1.0, int: true }
 }
 
+/// A physical length in millimetres (stencil sizes and limits).
+const fn mm(param: &'static str, lead: FieldLead, unit: &'static str, max: f64) -> Field {
+    Field::Num { param, lead, unit, min: 0.0, max, step: 0.1, scale: 1.0, int: false }
+}
+
 const X: FieldLead = FieldLead::Raw("X");
 const Y: FieldLead = FieldLead::Raw("Y");
 const fn text(key: &'static str) -> FieldLead {
@@ -126,6 +132,17 @@ const GROUPS: &[(&str, &str)] = &[
 /// Copy-to-shape placements: (value written in `mode`, label).
 const COPY_MODES: &[(&str, &str)] =
     &[("points", tr_noop("On each point")), ("alongPath", tr_noop("Along the outline")), ("populate", tr_noop("Scattered inside"))];
+
+/// Stencil colour modes: (value written in `colourMode`, label). `separate` (P12) isn't offered.
+const STENCIL_MODES: &[(&str, &str)] = &[("threshold", tr_noop("Cut the lighter colours")), ("pick", tr_noop("Cut the colours I pick"))];
+
+/// Stencil previews: (value written in `preview`, label).
+const STENCIL_PREVIEWS: &[(&str, &str)] = &[("paper", tr_noop("Paper preview")), ("cloth", tr_noop("Dyed cloth preview"))];
+
+/// The stencil params the field table leaves to the stencil's own section (PIC9: the swatch list
+/// with cut toggles, the preview colours).
+#[cfg(test)]
+pub(crate) const STENCIL_LATER: &[&str] = &["cutColours", "paperColour", "pasteColour", "clothColour"];
 
 /// Each kind's settings, one inner slice per 32 pt row (numbers two to a row, like the Effects
 /// grid). Parameters per `docs/picabia/modifiers.md`.
@@ -200,6 +217,18 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[int("count", text(tr_noop("Count")), 1.0, 1000.0), pct("scale", text(tr_noop("Scale")), 0.0, 10_000.0)],
             &[int("seed", text(tr_noop("Seed")), 0.0, SEED_MAX)],
             &[Field::Check { param: "align", label: tr_noop("Follow the outline's direction") }],
+        ],
+    ),
+    (
+        "stencil",
+        &[
+            &[Field::Choice { param: "colourMode", options: STENCIL_MODES, translate: true }],
+            &[pct("threshold", text(tr_noop("Threshold")), 0.0, 100.0)],
+            &[Field::Check { param: "invert", label: tr_noop("Invert (cut the other colours)") }],
+            &[mm("widthMm", FieldLead::Raw("W"), "mm", 10_000.0), mm("marginMm", text(tr_noop("Margin")), "mm", 1000.0)],
+            &[mm("minCutAreaMm2", text(tr_noop("Smallest cut")), "mm²", 10_000.0), mm("minCutWidthMm", text(tr_noop("Thinnest cut")), "mm", 100.0)],
+            &[mm("minBridgeMm", text(tr_noop("Thinnest paper")), "mm", 100.0), mm("toleranceMm", text(tr_noop("Smoothing")), "mm", 10.0)],
+            &[Field::Choice { param: "preview", options: STENCIL_PREVIEWS, translate: true }],
         ],
     ),
 ];

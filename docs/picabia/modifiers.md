@@ -1,6 +1,6 @@
 # Modifiers
 
-> Params as of P7 (this page follows the code).
+> Params as of P8 (this page follows the code).
 
 A **modifier stack** is a list of live, non-destructive steps attached to a layer. The layer keeps
 its own geometry; the stack describes how it is repeated and transformed. Edit the layer or any
@@ -20,6 +20,8 @@ source, and copies never take part in auto layout.
   wherever their row sits in the stack: each copy gets its own values, and `i`/`n` count all the
   copies. (Their position among the arrays doesn't change the result; their order among
   themselves does.)
+- A **stencil** step ends the stack (see `stencil` below): it adds no copies, and the enabled steps
+  below it are ignored with one warning.
 - A disabled step is skipped. An empty or fully disabled stack draws the layer normally.
 - Limits: at most 64 steps, `count` at most 1000 per array, and at most **10 000 instances** per
   layer in total. A stack that would exceed this is cut at the last step that fits, with a warning.
@@ -192,6 +194,44 @@ moves along its turned axes).
 
 Randomize derives its numbers from `seed` and the copy index only (SplitMix64 inside the crate, no
 platform generator), so a copy never changes when other copies are added after it.
+
+### stencil
+
+Turns the layer, with every copy the rows above it made, into a laser-cut **katagami** stencil: one
+sheet of paper or film whose cut-outs let resist paste through. It is the last step: it adds no
+copies (the copies above it stand), and enabled rows below it are ignored with one warning (only
+the first enabled stencil counts). Apply bakes only the rows above it; the stencil row moves onto
+the new group, live.
+
+**Status: P8.** The row saves, loads, round-trips and is clamped, and the layer draws unchanged
+(the copies above it, as without the row). Computing the sheet (visible regions by paint order,
+colour selection, clean-up, margin) and drawing it on the canvas come in **P9**; ties for floating
+paper islands in P10; laser export (kerf, cut order, bed size) and `separate` in P12.
+
+Lengths here are **millimetres** at the stencil's physical size, unlike the point-based steps:
+`mm per point = widthMm / layer width` (the height follows the aspect ratio), and every `...Mm`
+limit converts to layer units with that factor. Colours are `"#rrggbb"` texts (`#rgb` and any case
+read too; they are written lowercase).
+
+| Field | Unit | Range | Default | Meaning |
+|---|---|---|---|---|
+| `colourMode` | choice | `threshold`, `pick` (`separate` reads and saves, P12) | `threshold` | `threshold`: colours whose luminance (Rec. 709 on sRGB-decoded values, 0 to 1) is above `threshold` are cut, so lighter is cut. `pick`: the colours in `cutColours` are cut, every other colour stays paper. `separate` (one stencil per colour) evaluates as `threshold` with a warning for now. An unknown value reads as `threshold` |
+| `cutColours` | list of colours | at most 256 | none | `pick`: the colours cut out (exact match after rounding to 8 bits). Entries that aren't colours are left out, repeats kept once; one colour text reads as a list of one |
+| `threshold` | 0 to 1 | 0 to 1 | 0.5 | `threshold`: the luminance level |
+| `invert` | on/off | | off | Swap what is cut and what stays paper (both modes) |
+| `widthMm` | mm | 1 to 10 000 | 300 | The design's physical width |
+| `marginMm` | mm | 0 to 1000 | 15 | Paper border around the design (the sheet is the design's bounds plus this) |
+| `minCutAreaMm2` | mm² | 0 to 10 000 | 0.5 | Cut pieces and paper holes smaller than this are dropped |
+| `minCutWidthMm` | mm | 0 to 100 | 0.3 | Cut slivers narrower than this are removed (an opening: shrink, then grow) |
+| `minBridgeMm` | mm | 0 to 100 | 0.5 | Paper bridges narrower than this are removed (a closing: grow, then shrink) |
+| `toleranceMm` | mm | 0 to 10 | 0.05 | Outline simplification |
+| `preview` | choice | `paper`, `cloth` | `paper` | Canvas preview: the paper sheet with its cut-outs open, or the dyed cloth |
+| `paperColour` | colour | | `#c8a165` | The sheet in the paper preview (kakishibu brown) |
+| `pasteColour` | colour | | `#1f3a8a` | Where the paste goes through, in the cloth preview (indigo) |
+| `clothColour` | colour | | `#f4efe6` | The undyed cloth, in the cloth preview |
+
+Numbers outside their range are clamped when evaluating (a warning names the field); a colour that
+doesn't read takes its default. `cutColours` can't be bound to a variable.
 
 ## Variable bindings
 

@@ -30,6 +30,8 @@ pub enum Glyph {
     Wallpaper,
     /// Copy to shape: three squares riding a curved outline.
     CopyToShape,
+    /// Stencil: a filled sheet with a square cut-out, a diamond island held in it by two ties.
+    Stencil,
 }
 
 impl Glyph {
@@ -43,6 +45,7 @@ impl Glyph {
         Glyph::TransformEach,
         Glyph::Randomize,
         Glyph::Wallpaper,
+        Glyph::Stencil,
     ];
 
     /// The glyph of modifier kind id `kind` (the section's for kinds this build doesn't know).
@@ -56,6 +59,7 @@ impl Glyph {
             "randomize" => Glyph::Randomize,
             "wallpaper" => Glyph::Wallpaper,
             "copyToShape" => Glyph::CopyToShape,
+            "stencil" => Glyph::Stencil,
             _ => Glyph::Modifiers,
         }
     }
@@ -215,6 +219,17 @@ fn draw(g: &G, glyph: Glyph) {
                 let pts = g.turned(x, y, 3.5, std::f32::consts::PI * (a - 1.0));
                 if k == 0 { g.fill(pts) } else { g.outline(pts) }
             }
+        }
+        Glyph::Stencil => {
+            // The sheet: four filled bands round a square window (the cut-out).
+            g.block(1.0, 1.0, 15.0, 5.0);
+            g.block(1.0, 11.0, 15.0, 15.0);
+            g.block(1.0, 5.0, 5.0, 11.0);
+            g.block(11.0, 5.0, 15.0, 11.0);
+            // A paper island in the window, held to the sheet by a tie on each side.
+            g.fill(vec![g.at(8.0, 6.0), g.at(10.0, 8.0), g.at(8.0, 10.0), g.at(6.0, 8.0)]);
+            g.line(5.0, 8.0, 6.5, 8.0);
+            g.line(9.5, 8.0, 11.0, 8.0);
         }
     }
 }

@@ -28,14 +28,14 @@ pub use targets::{check_target, target_choices};
 
 pub use apply::MAX_APPLY_LAYERS;
 
-const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape";
+const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil";
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
             "modifier.add",
             "Add modifier",
-            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
+            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed; stencil (ends the stack; rows below it are ignored): colourMode (threshold|pick), cutColours [\"#rrggbb\"], threshold (0-1), invert, widthMm, marginMm, minCutAreaMm2, minCutWidthMm, minBridgeMm, toleranceMm (mm), preview (paper|cloth), paperColour, pasteColour, clothColour}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
             true,
             add
         ),

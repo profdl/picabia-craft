@@ -3,7 +3,7 @@
 use figcraft_geom::{Affine, Point, Rect};
 
 use crate::kinds::{self, Ctx, Stage};
-use crate::model::{ModifierKind, Stack};
+use crate::model::{ModifierKind, Stack, Stencil};
 use crate::target::{NoTargets, TargetResolver};
 use crate::{MAX_INSTANCES_PER_NODE, MAX_LENGTH};
 
@@ -51,12 +51,33 @@ pub struct Output {
     pub instances: Vec<Instance>,
     pub guides: Vec<Guide>,
     pub warnings: Vec<Warning>,
+    /// The stack's terminal stencil row, when it has an enabled one: the stack ends there and the
+    /// engine and renderer turn what the copies above it draw into a stencil sheet. `None` = no
+    /// stencil (draw the copies as they are).
+    pub stencil: Option<StencilRow>,
+}
+
+/// The terminal stencil row of an evaluated stack ([`Output::stencil`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StencilRow {
+    /// The stencil modifier's id (warnings and commands name it).
+    pub modifier: String,
+    /// Its params, clamped ([`Stencil::clamped`]).
+    pub params: Stencil,
 }
 
 impl Output {
     /// The instance transforms, in draw order.
     pub fn transforms(&self) -> impl Iterator<Item = Affine> + '_ {
         self.instances.iter().map(|i| i.transform)
+    }
+
+    fn set_stencil(&mut self, id: &str, p: &Stencil) {
+        let (params, warnings) = p.clamped();
+        for w in warnings {
+            self.warn(Some(id), w);
+        }
+        self.stencil = Some(StencilRow { modifier: id.to_string(), params });
     }
 
     fn warn(&mut self, modifier: Option<&str>, message: impl Into<String>) {
@@ -110,7 +131,13 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
     let pivot = bounds.center();
     let mut set = vec![Instance::identity()];
     let mut each: Vec<kinds::EachFn> = Vec::new();
-    for m in stack.modifiers.iter().filter(|m| m.enabled) {
+    let mut rows = stack.modifiers.iter().filter(|m| m.enabled);
+    for m in rows.by_ref() {
+        // Terminal: no copies of its own, and the rows below it are ignored (one warning, below).
+        if let ModifierKind::Stencil(p) = &m.kind {
+            out.set_stencil(&m.id, p);
+            break;
+        }
         if let ModifierKind::Other { kind, error } = &m.kind {
             out.warn(Some(&m.id), other_message(kind, error.as_deref()));
             continue;
@@ -149,6 +176,23 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             out.warn(Some(&m.id), format!("{} copies with invalid transforms were dropped", before - set.len()));
         }
         reindex(&mut set);
+    }
+    if out.stencil.is_none() {
+        // A cap stopped the rows early: a stencil further down still ends the stack.
+        if let Some((id, p)) = rows.by_ref().find_map(|m| match &m.kind {
+            ModifierKind::Stencil(p) => Some((m.id.as_str(), p)),
+            _ => None,
+        }) {
+            out.set_stencil(id, p);
+        }
+    }
+    if let Some(st) = &out.stencil {
+        let below = rows.count();
+        if below > 0 {
+            let rows = if below == 1 { "1 row".to_string() } else { format!("{below} rows") };
+            let id = st.modifier.clone();
+            out.warn(Some(&id), format!("a stencil ends the stack: the {rows} below it are ignored"));
+        }
     }
     // Per-copy stages see the final copies: `i` and `n` count all of them. Each acts in the copy's
     // own frame (`S_i · pivot · L · pivot⁻¹`), so where it sat among the arrays doesn't change

@@ -1,0 +1,262 @@
+//! `stencil`.
+//!
+//! Terminal and geometric: it makes no copies here (the evaluator stops at it and reports its
+//! params in [`crate::Output::stencil`]); `figcraft-stencil` computes the sheet from what the rows
+//! above drew. This module only puts the params in range.
+
+use super::Clamp;
+use crate::model::{Stencil, StencilColourMode, hex_colour, parse_hex_colour};
+
+/// [`Stencil::clamped`]: every number in its range (non-finite: the default), `separate` as
+/// `threshold`, colours normalised; a warning per change.
+pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
+    let d = Stencil::default();
+    let mut warnings = Vec::new();
+    let mut c = Clamp { warnings: &mut warnings };
+    let threshold = c.within("threshold", p.threshold, 0.0, 1.0, d.threshold);
+    let width_mm = c.within("widthMm", p.width_mm, 1.0, 10_000.0, d.width_mm);
+    let margin_mm = c.within("marginMm", p.margin_mm, 0.0, 1000.0, d.margin_mm);
+    let min_cut_area_mm2 = c.within("minCutAreaMm2", p.min_cut_area_mm2, 0.0, 10_000.0, d.min_cut_area_mm2);
+    let min_cut_width_mm = c.within("minCutWidthMm", p.min_cut_width_mm, 0.0, 100.0, d.min_cut_width_mm);
+    let min_bridge_mm = c.within("minBridgeMm", p.min_bridge_mm, 0.0, 100.0, d.min_bridge_mm);
+    let tolerance_mm = c.within("toleranceMm", p.tolerance_mm, 0.0, 10.0, d.tolerance_mm);
+    let colour_mode = match p.colour_mode {
+        StencilColourMode::Separate => {
+            warnings.push("one stencil per colour (`separate`) isn't available yet; cutting by threshold".into());
+            StencilColourMode::Threshold
+        }
+        m => m,
+    };
+    let mut colour = |name: &str, v: &str, default: &str| match parse_hex_colour(v) {
+        Some(c) => hex_colour(c),
+        None => {
+            warnings.push(format!("`{name}` isn't a colour; using {default}"));
+            default.to_string()
+        }
+    };
+    let paper_colour = colour("paperColour", &p.paper_colour, &d.paper_colour);
+    let paste_colour = colour("pasteColour", &p.paste_colour, &d.paste_colour);
+    let cloth_colour = colour("clothColour", &p.cloth_colour, &d.cloth_colour);
+    let mut cut_colours: Vec<String> = Vec::new();
+    let mut bad = 0usize;
+    for c in &p.cut_colours {
+        match parse_hex_colour(c).map(hex_colour) {
+            Some(c) if !cut_colours.contains(&c) => cut_colours.push(c),
+            Some(_) => {}
+            None => bad += 1,
+        }
+    }
+    if bad > 0 {
+        warnings.push(format!("{bad} of `cutColours` aren't colours; left out"));
+    }
+    if cut_colours.len() > crate::model::MAX_CUT_COLOURS {
+        cut_colours.truncate(crate::model::MAX_CUT_COLOURS);
+        warnings.push(format!("`cutColours` is limited to {} colours", crate::model::MAX_CUT_COLOURS));
+    }
+    let out = Stencil {
+        colour_mode,
+        cut_colours,
+        threshold,
+        invert: p.invert,
+        width_mm,
+        margin_mm,
+        min_cut_area_mm2,
+        min_cut_width_mm,
+        min_bridge_mm,
+        tolerance_mm,
+        preview: p.preview,
+        paper_colour,
+        paste_colour,
+        cloth_colour,
+    };
+    (out, warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use figcraft_geom::{Affine, Rect};
+    use serde_json::{Value, json};
+
+    use crate::*;
+
+    const B: Rect = Rect::new(0.0, 0.0, 20.0, 10.0);
+
+    fn stack(mods: Value) -> Stack {
+        parse(&json!({"v": 1, "stack": mods}).to_string()).unwrap()
+    }
+
+    fn stencil_of(row: Value) -> Stencil {
+        match Modifier::from_value(&row).unwrap().kind {
+            ModifierKind::Stencil(p) => p,
+            k => panic!("not a stencil: {k:?}"),
+        }
+    }
+
+    #[test]
+    fn defaults_match_the_contract() {
+        let m = Modifier::new("m1", "stencil").unwrap();
+        assert_eq!(m.label(), "Stencil");
+        assert_eq!(kind_label("stencil"), Some("Stencil"));
+        let v = m.to_value();
+        assert_eq!(
+            v,
+            json!({"id": "m1", "enabled": true, "kind": "stencil", "colourMode": "threshold", "cutColours": [], "threshold": 0.5,
+                "invert": false, "widthMm": 300.0, "marginMm": 15.0, "minCutAreaMm2": 0.5, "minCutWidthMm": 0.3, "minBridgeMm": 0.5,
+                "toleranceMm": 0.05, "preview": "paper", "paperColour": "#c8a165", "pasteColour": "#1f3a8a", "clothColour": "#f4efe6"})
+        );
+        assert_eq!(Stencil::default().clamped(), (Stencil::default(), Vec::new()), "defaults are in range");
+    }
+
+    #[test]
+    fn round_trip_keeps_values_and_unknown_fields() {
+        let row = json!({"id": "s", "enabled": true, "kind": "stencil", "colourMode": "pick", "cutColours": ["#FFFFFF", "#0a0", "#ffffff", "nope", 7],
+            "threshold": 0.25, "invert": true, "widthMm": 450, "preview": "cloth", "paperColour": "#ABCDEF", "tieWidthMm": 0.8, "future": {"a": [1]}});
+        let m = Modifier::from_value(&row).unwrap();
+        let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
+        assert_eq!(p.colour_mode, StencilColourMode::Pick);
+        assert_eq!(p.cut_colours, ["#ffffff", "#00aa00"], "normalised, invalid dropped, repeats once");
+        assert_eq!((p.threshold, p.invert, p.width_mm, p.preview), (0.25, true, 450.0, StencilPreview::Cloth));
+        assert_eq!(p.paper_colour, "#abcdef");
+        assert_eq!(m.extra.get("tieWidthMm"), Some(&json!(0.8)), "later fields kept");
+        let back = m.to_value();
+        assert_eq!(back["future"], json!({"a": [1]}));
+        assert_eq!(Modifier::from_value(&back).unwrap(), m, "a second round trip changes nothing");
+        let s = stack(json!([row]));
+        assert_eq!(parse(&to_json(&s)).unwrap(), s);
+    }
+
+    #[test]
+    fn lenient_parsing() {
+        let p = stencil_of(json!({"kind": "stencil", "colourMode": "rainbow", "preview": 3, "paperColour": "brown", "pasteColour": null,
+            "clothColour": 12, "cutColours": "#123456", "threshold": "0.75"}));
+        assert_eq!(p.colour_mode, StencilColourMode::Threshold, "unknown choice: default");
+        assert_eq!(p.preview, StencilPreview::Paper);
+        assert_eq!((p.paper_colour.as_str(), p.paste_colour.as_str(), p.cloth_colour.as_str()), (STENCIL_PAPER, STENCIL_PASTE, STENCIL_CLOTH));
+        assert_eq!(p.cut_colours, ["#123456"], "one colour reads as a list of one");
+        assert_eq!(p.threshold, 0.75, "numeric strings read as numbers");
+        let many: Vec<String> = (0..400).map(|i| format!("#{:06x}", i * 1000)).collect();
+        let p = stencil_of(json!({"kind": "stencil", "cutColours": many}));
+        assert_eq!(p.cut_colours.len(), MAX_CUT_COLOURS);
+        let p = stencil_of(json!({"kind": "stencil", "colourMode": "separate", "cutColours": {"a": 1}}));
+        assert_eq!(p.colour_mode, StencilColourMode::Separate, "separate reads and writes");
+        assert!(p.cut_colours.is_empty());
+        // A wrongly typed flag doesn't read: the row is kept as it was, unevaluated.
+        let m = Modifier::from_value(&json!({"id": "s", "kind": "stencil", "invert": "yes"})).unwrap();
+        assert!(matches!(&m.kind, ModifierKind::Other { kind, error: Some(_) } if kind == "stencil"));
+        assert_eq!(m.to_value()["invert"], json!("yes"));
+    }
+
+    #[test]
+    fn clamping_and_non_finite_values() {
+        let p = Stencil {
+            colour_mode: StencilColourMode::Separate,
+            threshold: 3.0,
+            width_mm: 0.0,
+            margin_mm: f64::NAN,
+            min_cut_area_mm2: -1.0,
+            min_cut_width_mm: f64::INFINITY,
+            min_bridge_mm: 1e9,
+            tolerance_mm: f64::NEG_INFINITY,
+            paper_colour: "zz".into(),
+            cut_colours: vec!["#ABC".into(), "x".into()],
+            ..Stencil::default()
+        };
+        let (c, w) = p.clamped();
+        let d = Stencil::default();
+        assert_eq!(c.colour_mode, StencilColourMode::Threshold, "separate evaluates as threshold");
+        assert_eq!((c.threshold, c.width_mm, c.margin_mm, c.min_cut_area_mm2), (1.0, 1.0, d.margin_mm, 0.0));
+        assert_eq!((c.min_cut_width_mm, c.min_bridge_mm, c.tolerance_mm), (d.min_cut_width_mm, 100.0, d.tolerance_mm));
+        assert_eq!(c.paper_colour, STENCIL_PAPER);
+        assert_eq!(c.cut_colours, ["#aabbcc"]);
+        assert_eq!(w.len(), 10, "{w:?}");
+        let (c, _) = Stencil { width_mm: 1e12, threshold: -1.0, ..Stencil::default() }.clamped();
+        assert_eq!((c.width_mm, c.threshold), (10_000.0, 0.0));
+    }
+
+    #[test]
+    fn a_stencil_alone_draws_the_layer_unchanged() {
+        let out = evaluate(&stack(json!([{"id": "s", "kind": "stencil"}])), B);
+        assert_eq!(out.instances.len(), 1);
+        assert_eq!(out.instances[0].transform, Affine::IDENTITY);
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        assert_eq!(out.stencil, Some(StencilRow { modifier: "s".into(), params: Stencil::default() }));
+        // A disabled stencil is no stencil: nothing active, draw normally.
+        let out = evaluate(&stack(json!([{"id": "s", "enabled": false, "kind": "stencil"}])), B);
+        assert!(out.instances.is_empty() && out.stencil.is_none());
+        // Through a node: saves, loads and draws once, as the original.
+        let mut n = figcraft_doc::Node::new(figcraft_doc::NodeId(3), figcraft_doc::NodeKind::Rectangle, "r", 20.0, 10.0);
+        n.plugin_data.insert(PLUGIN_KEY.into(), to_json(&stack(json!([{"id": "s", "kind": "stencil", "widthMm": 120}]))));
+        let out = node_instances(&n).unwrap();
+        assert_eq!(out.transforms().collect::<Vec<_>>(), [Affine::IDENTITY]);
+        assert_eq!(out.stencil.as_ref().map(|s| s.params.width_mm), Some(120.0));
+    }
+
+    #[test]
+    fn the_stencil_is_terminal() {
+        let s = stack(json!([
+            {"id": "a", "kind": "linearArray", "count": 3},
+            {"id": "s", "kind": "stencil", "threshold": 2},
+            {"id": "b", "kind": "gridArray", "rows": 4, "cols": 4},
+            {"id": "c", "enabled": false, "kind": "mirror"},
+            {"id": "d", "kind": "spiralArray"},
+        ]));
+        let out = evaluate(&s, B);
+        assert_eq!(out.instances.len(), 3, "the copies above stand, the rows below add none");
+        let st = out.stencil.as_ref().unwrap();
+        assert_eq!((st.modifier.as_str(), st.params.threshold), ("s", 1.0));
+        let below: Vec<&Warning> = out.warnings.iter().filter(|w| w.message.contains("below it are ignored")).collect();
+        assert_eq!(below.len(), 1, "one warning: {:?}", out.warnings);
+        assert!(below[0].message.contains("2 rows"), "the disabled row isn't counted: {}", below[0].message);
+        assert_eq!(below[0].modifier.as_deref(), Some("s"));
+        assert!(!out.warnings.iter().any(|w| w.modifier.as_deref() == Some("d")), "the unknown row below isn't evaluated");
+        assert_eq!(s.stencil().map(|(id, p)| (id, p.threshold)), Some(("s", 2.0)), "Stack::stencil has the params as written");
+        // The first enabled stencil ends the stack; one below it is just another ignored row.
+        let out = evaluate(&stack(json!([{"id": "s1", "kind": "stencil"}, {"id": "s2", "kind": "stencil", "invert": true}])), B);
+        assert_eq!(out.stencil.as_ref().map(|s| s.modifier.as_str()), Some("s1"));
+        assert!(out.warnings.iter().any(|w| w.message.contains("the 1 row below")), "{:?}", out.warnings);
+        // A per-copy row above still applies to the copies.
+        let out = evaluate(&stack(json!([{"kind": "linearArray", "count": 2}, {"kind": "transformEach", "offsetX": 5}, {"kind": "stencil"}])), B);
+        assert_eq!(out.instances.len(), 2);
+        assert!((out.instances[0].transform.translation().x - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_stencil_below_a_capped_row_still_ends_the_stack() {
+        let s = stack(json!([
+            {"id": "a", "kind": "linearArray", "count": 1000},
+            {"id": "b", "kind": "linearArray", "count": 1000},
+            {"id": "s", "kind": "stencil"},
+            {"id": "c", "kind": "mirror"},
+        ]));
+        let out = evaluate(&s, B);
+        assert_eq!(out.instances.len(), 1000);
+        assert_eq!(out.stencil.as_ref().map(|s| s.modifier.as_str()), Some("s"));
+        assert!(out.warnings.iter().any(|w| w.message.contains("the 1 row below")), "{:?}", out.warnings);
+    }
+
+    #[test]
+    fn set_props_edits_a_stencil() {
+        let mut m = Modifier::new("m1", "stencil").unwrap();
+        m.set_props(json!({"colourMode": "pick", "cutColours": ["#FF0000"], "widthMm": "200", "invert": true}).as_object().unwrap()).unwrap();
+        let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
+        assert_eq!(
+            (p.colour_mode, p.cut_colours.as_slice(), p.width_mm, p.invert),
+            (StencilColourMode::Pick, ["#ff0000".to_string()].as_slice(), 200.0, true)
+        );
+        let before = m.clone();
+        for bad in [json!({"widthMm": "NaN"}), json!({"invert": 1}), json!({"tieWidthMm": 1})] {
+            assert!(m.set_props(bad.as_object().unwrap()).is_err(), "{bad}");
+            assert_eq!(m, before);
+        }
+    }
+
+    #[test]
+    fn hex_colours() {
+        assert_eq!(parse_hex_colour("#C8A165"), Some([200, 161, 101]));
+        assert_eq!(parse_hex_colour(" fff "), Some([255, 255, 255]));
+        for bad in ["", "#", "#12345", "#1234567", "#gggggg", "#ééé", "#12é4"] {
+            assert_eq!(parse_hex_colour(bad), None, "{bad}");
+        }
+        assert_eq!(hex_colour([31, 58, 138]), STENCIL_PASTE);
+    }
+}

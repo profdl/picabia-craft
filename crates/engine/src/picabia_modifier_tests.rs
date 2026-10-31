@@ -246,6 +246,9 @@ fn modifier_commands_survive_junk() {
         json!({"kind": "copyToShape", "props": {"target": 1e308, "mode": "populate", "count": 1000}}),
         json!({"kind": "copyToShape", "props": {"target": "x".repeat(10_000), "align": "x"}, "modifier": "m1", "index": 0}),
         json!({"kind": "copyToShape", "props": {"target": -3, "mode": "points"}, "id": -1}),
+        json!({"kind": "stencil", "props": {"threshold": 1e308, "widthMm": -1e308, "marginMm": "inf", "toleranceMm": "NaN", "minCutAreaMm2": 1e308}}),
+        json!({"kind": "stencil", "props": {"colourMode": 7, "preview": [1], "paperColour": "\u{0}", "cutColours": ["#zzz", 5, null, "x".repeat(10_000)]}}),
+        json!({"kind": "stencil", "props": {"cutColours": vec!["#abcdef"; 5_000], "invert": "x", "clothColour": {"a": 1}}, "index": 0}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
     assert_eq!(ids.len(), 12, "{ids:?}");
