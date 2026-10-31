@@ -396,3 +396,38 @@ fn svg_and_pdf_exports_draw_the_sheet() {
     let out = ex(&mut s, "file.export", json!({"ids": [g], "format": "pdf"}));
     assert!(out["data"].as_str().is_some_and(|d| !d.is_empty()));
 }
+
+#[test]
+fn stencil_info_lists_islands_and_their_stats() {
+    let (d, g) = doc_with(|d, g| {
+        rect_in(d, g, Rect::new(0.0, 0.0, 100.0, 100.0), BLACK);
+    });
+    let mut i = (*compute_now(&d, g).unwrap()).clone();
+    i.islands = vec![
+        figcraft_stencil::Island { bounds: Rect::new(40.0, 40.0, 60.0, 70.0), tied: 2, pattern_held: false, nested_depth: 0 },
+        figcraft_stencil::Island { bounds: Rect::new(45.0, 45.0, 50.0, 50.0), tied: 0, pattern_held: true, nested_depth: 1 },
+        figcraft_stencil::Island { bounds: Rect::new(f64::NAN, 0.0, 1.0, 1.0), tied: 0, pattern_held: false, nested_depth: 0 },
+    ];
+    i.stats.islands = 3;
+    i.stats.ties = 2;
+    i.stats.pattern_held = 1;
+    i.stats.untied = 1;
+    let v = crate::picabia_stencil::info_json(&i);
+    assert_eq!(
+        v["islands"],
+        json!([
+            {"x": 40.0, "y": 40.0, "w": 20.0, "h": 30.0, "tied": 2, "patternHeld": false, "depth": 0},
+            {"x": 45.0, "y": 45.0, "w": 5.0, "h": 5.0, "tied": 0, "patternHeld": true, "depth": 1},
+            {"x": 0.0, "y": 0.0, "w": 0.0, "h": 1.0, "tied": 0, "patternHeld": false, "depth": 0},
+        ]),
+        "layer space; what isn't a number reads 0"
+    );
+    assert_eq!(v["stats"]["islands"], 3);
+    assert_eq!(v["stats"]["ties"], 2);
+    assert_eq!(v["stats"]["patternHeld"], 1);
+    assert_eq!(v["stats"]["untied"], 1);
+    // The command lists them too (none in a plain square).
+    let w = crate::picabia_stencil::info_value(&d, g);
+    assert_eq!(w["islands"], json!([]));
+    assert_eq!(w["stats"]["islands"], 0);
+}

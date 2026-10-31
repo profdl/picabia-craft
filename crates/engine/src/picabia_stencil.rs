@@ -13,8 +13,8 @@
 //!   worker thread per layer; wasm: on the UI thread once the layer has stopped changing for
 //!   [`SETTLE`]), drawing the latest result meanwhile. [`busy`] says a result is still coming.
 //! - [`ensure`]: compute what's stale now (exports, headless renders, commands).
-//! - [`info`] / [`info_json`]: the swatch list, stats and warnings (`modifier.stencilInfo` and
-//!   the Design panel).
+//! - [`info`] / [`info_json`]: the swatch list, stats, warnings and islands
+//!   (`modifier.stencilInfo` and the Design panel); the tie bars for the canvas markers.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -25,7 +25,7 @@ use figcraft_geom::Affine;
 use figcraft_geom::kurbo::BezPath;
 use figcraft_render::FillRule;
 use figcraft_render::picabia::stencil::{self as store, Frame, StencilShape};
-use figcraft_stencil::{ColourInfo, Paint, Stats};
+use figcraft_stencil::{ColourInfo, Island, Paint, Stats};
 use serde_json::{Value, json};
 
 /// Deepest nesting gathered below the stencil layer.
@@ -296,6 +296,10 @@ pub struct Info {
     pub sheet_mm: (f64, f64),
     /// Shapes gathered from the design.
     pub paints: usize,
+    /// Every paper island of the cut sheet (layer space), outermost first.
+    pub islands: Vec<Island>,
+    /// The tie bars (layer space; already part of the paper), for the canvas markers.
+    pub ties: BezPath,
 }
 
 /// Gather and compute layer `id`'s stencil now and keep it for the renderer. `None`: not a
@@ -316,6 +320,8 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
                 stats: out.stats,
                 sheet_mm: (out.sheet.width() * mpu, out.sheet.height() * mpu),
                 paints: g.paints.len(),
+                islands: out.islands,
+                ties: out.ties,
             };
             (StencilShape { cut: out.cut, paper: out.paper, sheet: out.sheet, extra: None }, info)
         }
@@ -329,6 +335,8 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
                 stats: Stats::default(),
                 sheet_mm: (sheet.width() * frame.mm_per_unit, sheet.height() * frame.mm_per_unit),
                 paints: g.paints.len(),
+                islands: Vec::new(),
+                ties: BezPath::new(),
             };
             let paper = figcraft_geom::kurbo::Shape::to_path(&sheet, 0.1);
             (StencilShape { cut: BezPath::new(), paper, sheet, extra: None }, info)
@@ -361,10 +369,23 @@ pub fn info_json(info: &Info) -> Value {
             "filledHoles": info.stats.filled_holes,
             "cutLengthMm": info.stats.cut_length_mm,
             "areaCutMm2": info.stats.area_cut_mm2,
+            "islands": info.stats.islands,
+            "ties": info.stats.ties,
+            "untied": info.stats.untied,
+            "patternHeld": info.stats.pattern_held,
         },
+        "islands": info.islands.iter().map(island_json).collect::<Vec<_>>(),
         "sheetMm": {"w": info.sheet_mm.0, "h": info.sheet_mm.1},
         "shapes": info.paints,
     })
+}
+
+/// One island as `modifier.stencilInfo` lists it: its bounds in the layer's space, the ties
+/// holding it, whether a tie pattern holds it and how deep it sits (0: in a cut-out of the sheet).
+fn island_json(i: &Island) -> Value {
+    let b = i.bounds;
+    let num = |v: f64| if v.is_finite() { json!(v) } else { json!(0.0) };
+    json!({"x": num(b.x0), "y": num(b.y0), "w": num(b.width()), "h": num(b.height()), "tied": i.tied, "patternHeld": i.pattern_held, "depth": i.nested_depth})
 }
 
 /// [`info`] as JSON for layer `id`, without waiting: `{stencil: null}` when it isn't a stencil

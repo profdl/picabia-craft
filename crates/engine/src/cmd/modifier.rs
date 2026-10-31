@@ -89,7 +89,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "modifier.stencilInfo",
             "Stencil info",
-            "{id?} (computes the stencil when it is out of date) → {stencil (the stencil row's id; null when the layer's stack doesn't end in one), colours: [{hex, cut, area (mm², visible)}], warnings: [..], stats: {cutPieces, droppedSpecks, filledHoles, cutLengthMm, areaCutMm2}, sheetMm: {w, h}, shapes (outlines gathered)}",
+            "{id?} (computes the stencil when it is out of date) → {stencil (the stencil row's id; null when the layer's stack doesn't end in one), colours: [{hex, cut, area (mm², visible)}], warnings: [..], stats: {cutPieces, droppedSpecks, filledHoles, cutLengthMm, areaCutMm2, islands, ties, untied, patternHeld}, islands: [{x, y, w, h (bounds, the layer's space), tied (tie bars holding it), patternHeld (the tie pattern holds it), depth (0: in a cut-out of the sheet)}], sheetMm: {w, h}, shapes (outlines gathered)}",
             false,
             stencil_info
         ),
