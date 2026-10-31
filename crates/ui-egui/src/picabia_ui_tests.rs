@@ -178,7 +178,7 @@ fn a_selected_stencil_marks_its_ties_and_flags_untied_islands() {
         egui::Shape::Path(p) => corners.iter().all(|c| p.points.iter().any(|q| q.distance(*c) < 0.6)),
         _ => false,
     });
-    assert!(tie, "the tie bar is outlined");
+    assert!(tie, "the tie bar is tinted");
     // Not selected: no markers.
     u.app.run("select.set", json!({"ids": []}));
     let shapes = flat(&u.frame_output(vec![]).shapes);

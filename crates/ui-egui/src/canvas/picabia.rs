@@ -129,11 +129,51 @@ pub(super) fn stencil_tick(app: &FigApp, ctx: &egui::Context) {
     }
 }
 
+/// Whether the closed polygon `pts` turns one way only (collinear runs allowed).
+fn convex(pts: &[Pos2]) -> bool {
+    let n = pts.len();
+    let mut sign = 0.0f32;
+    for i in 0..n {
+        let (Some(a), Some(b), Some(c)) = (pts.get(i), pts.get((i + 1) % n), pts.get((i + 2) % n)) else { return false };
+        let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        if !cross.is_finite() {
+            return false;
+        }
+        if cross.abs() < 1e-3 {
+            continue;
+        }
+        if sign == 0.0 {
+            sign = cross.signum();
+        } else if cross.signum() != sign {
+            return false;
+        }
+    }
+    true
+}
+
+/// The most pieces [`separate_convex`] compares pairwise; more are outlined.
+const MAX_TINTED: usize = 2000;
+
+/// Whether `polys` are separate convex pieces that can each be filled: all convex, wound the same
+/// way, and none's box inside another's (a hole).
+fn separate_convex(polys: &[Vec<Pos2>]) -> bool {
+    if polys.len() > MAX_TINTED {
+        return false;
+    }
+    let area = |p: &[Pos2]| p.iter().zip(p.iter().cycle().skip(1)).map(|(a, b)| a.x * b.y - b.x * a.y).sum::<f32>();
+    let signs: Vec<f32> = polys.iter().map(|p| area(p).signum()).collect();
+    if !polys.iter().all(|p| convex(p)) || signs.windows(2).any(|w| w.first() != w.get(1)) {
+        return false;
+    }
+    let boxes: Vec<egui::Rect> = polys.iter().map(|p| egui::Rect::from_points(p)).collect();
+    !boxes.iter().enumerate().any(|(i, a)| boxes.iter().enumerate().any(|(k, b)| i != k && a.contains_rect(*b) && a != b))
+}
+
 /// The most outline segments the stencil markers draw (a fine lattice over a big sheet has many).
 const MAX_MARKER_SEGMENTS: usize = 50_000;
 
-/// Over each selected stencil layer with a result: its tie bars (and lattice bars) outlined
-/// thinly in the selection colour `col`, and every island no tie holds outlined (its bounds,
+/// Over each selected stencil layer with a result: its tie bars tinted with the selection colour
+/// `col` (a lattice outlined faintly in it), and every island no tie holds outlined (its bounds,
 /// dashed) in the warning colour, as the panel warns of them. Islands are expected to be loose
 /// with gauze, so nothing is flagged then.
 fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
@@ -154,12 +194,13 @@ fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
             let q = w * p;
             app.to_screen(q.x, q.y)
         };
-        let ties = stroke(col.gamma_multiply(0.85), 1.0);
+        // The bars as screen polygons, within the budget.
+        let mut polys: Vec<Vec<Pos2>> = Vec::new();
         let mut cur: Vec<Pos2> = Vec::new();
-        let flush = |cur: &mut Vec<Pos2>, budget: &mut usize| {
-            if cur.len() > 1 && *budget >= cur.len() {
-                *budget -= cur.len();
-                painter.add(Shape::line(std::mem::take(cur), ties));
+        let mut keep = |cur: &mut Vec<Pos2>| {
+            if cur.len() > 2 && budget >= cur.len() {
+                budget -= cur.len();
+                polys.push(std::mem::take(cur));
             }
             cur.clear();
         };
@@ -167,20 +208,27 @@ fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
             use figcraft_geom::kurbo::PathEl::*;
             match el {
                 MoveTo(q) => {
-                    flush(&mut cur, &mut budget);
+                    keep(&mut cur);
                     cur.push(screen(q));
                 }
                 LineTo(q) => cur.push(screen(q)),
-                ClosePath => {
-                    if let Some(f) = cur.first().copied() {
-                        cur.push(f);
-                    }
-                    flush(&mut cur, &mut budget);
-                }
+                ClosePath => keep(&mut cur),
                 _ => {}
             }
         });
-        flush(&mut cur, &mut budget);
+        keep(&mut cur);
+        // Separate bars (convex pieces, none inside another) are tinted: an outline would cover a
+        // thin bar whole. Merged lattice bars (contours with corners in and out, holes) can't be
+        // filled by egui, so they're outlined faintly instead.
+        if separate_convex(&polys) {
+            for p in polys {
+                painter.add(Shape::convex_polygon(p, col.gamma_multiply(0.4), Stroke::NONE));
+            }
+        } else {
+            for p in polys {
+                painter.add(Shape::closed_line(p, stroke(col.gamma_multiply(0.5), 1.0)));
+            }
+        }
         let gauze = store::frame(doc, n).is_some_and(|f| f.params.tie_mode == figcraft_modifiers::StencilTieMode::Gauze);
         if gauze {
             continue;
@@ -195,5 +243,27 @@ fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
             let c = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1), Point::new(b.x0, b.y0)];
             painter.add(Shape::dashed_line(&c.map(screen), loose, 4.0, 3.0));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui::pos2;
+
+    #[test]
+    fn only_convex_tie_pieces_are_tinted() {
+        let square = [pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(10.0, 10.0), pos2(0.0, 10.0)];
+        assert!(super::convex(&square));
+        let ell = [pos2(0.0, 0.0), pos2(10.0, 0.0), pos2(10.0, 5.0), pos2(5.0, 5.0), pos2(5.0, 10.0), pos2(0.0, 10.0)];
+        assert!(!super::convex(&ell));
+        assert!(!super::convex(&[pos2(0.0, 0.0), pos2(f32::NAN, 0.0), pos2(1.0, 1.0)]));
+        // Two bars are tinted; a frame with a hole (a lattice cell) isn't.
+        let shifted: Vec<_> = square.iter().map(|p| *p + egui::vec2(20.0, 0.0)).collect();
+        assert!(super::separate_convex(&[square.to_vec(), shifted]));
+        let hole: Vec<_> = square.iter().rev().map(|p| *p * 0.5 + egui::vec2(2.0, 2.0)).collect();
+        assert!(!super::separate_convex(&[square.to_vec(), hole.clone()]));
+        let same_way: Vec<_> = hole.into_iter().rev().collect();
+        assert!(!super::separate_convex(&[square.to_vec(), same_way]), "nested the same way: an even-odd hole");
+        assert!(!super::separate_convex(&[ell.to_vec()]));
     }
 }

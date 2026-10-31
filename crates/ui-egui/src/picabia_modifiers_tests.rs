@@ -922,6 +922,8 @@ fn untied_islands_are_warned_of_under_the_row() {
     let (mut u, r) = setup(&["stencil"]);
     let mut i = info(&[("#1f3a8a", true, 1200.0)]);
     i.stats = Some(stats(3, 4, 1, 0));
+    // The stencil's own words for it give way to the panel's (translated) ones.
+    i.warnings.push("1 islands couldn't be tied and would fall out".into());
     cache_stencil_info(&u.ctx, &u.app.session, r, i.clone());
     open_settings(&mut u, 0);
     to_bottom(&mut u);
@@ -929,12 +931,15 @@ fn untied_islands_are_warned_of_under_the_row() {
     for t in ["4 pieces, 2 islands tied with 4 ties, 2 specks dropped, 812.5 mm cut", "1 island has no tie and would fall out"] {
         assert!(drawn.iter().any(|d| d == t), "{t:?} is drawn: {drawn:?}");
     }
+    assert!(!drawn.iter().any(|d| d.contains("couldn't be tied")), "said once: {drawn:?}");
     // With gauze nothing falls out.
     u.app.run("modifier.set", json!({"ids": [r], "index": 0, "props": {"tieMode": "gauze"}}));
     i.stats = Some(stats(3, 0, 3, 0));
+    i.warnings = vec!["3 islands are left untied (gauze mode): a mesh must hold them".into()];
     cache_stencil_info(&u.ctx, &u.app.session, r, i);
     to_bottom(&mut u);
     let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
     assert!(drawn.iter().any(|d| d == "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut"), "{drawn:?}");
     assert!(!drawn.iter().any(|d| d.contains("would fall out")), "{drawn:?}");
+    assert!(!drawn.iter().any(|d| d.contains("left untied")), "{drawn:?}");
 }

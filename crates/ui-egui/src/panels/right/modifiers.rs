@@ -497,7 +497,8 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
             widgets::note(ui, w, t.warning);
         }
         // What the stencil's own computation warns of (images skipped, gradients averaged...).
-        for w in r.stencil.iter().flat_map(|s| s.warnings.iter()).filter(|w| !own.contains(&w.as_str())) {
+        let counted = r.stencil.as_ref().and_then(|s| s.stats).map(|s| island_warnings(&s)).unwrap_or_default();
+        for w in r.stencil.iter().flat_map(|s| s.warnings.iter()).filter(|w| !own.contains(&w.as_str()) && !counted.contains(w)) {
             widgets::note(ui, w, t.warning);
         }
         // Islands no tie holds would fall out of the cut sheet.
@@ -643,6 +644,8 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
         };
         let width = match fields {
             [f @ Field::Num { .. }] if shows_chip(app, ids, r, f.param()) || long_lead(f) => half * 2.0 + widgets::GUTTER,
+            // A stencil's numbers take a row each, all as wide (their names are long).
+            [Field::Num { .. }] if r.kind == "stencil" => half * 2.0 + widgets::GUTTER,
             [Field::AnyAngle { .. }] => half * 2.0 + widgets::GUTTER,
             _ => half,
         };
@@ -708,6 +711,15 @@ pub(crate) fn stats_line(stats: &StencilStats, gauze: bool) -> String {
         }
     };
     trf("{pieces}, {islands}, {specks}, {length} mm cut", &[("pieces", &pieces), ("islands", &islands), ("specks", &specks), ("length", &length)])
+}
+
+/// What `figcraft-stencil` warns of the islands it left loose (its exact words for these counts):
+/// the panel says it in the stats line and [`untied_warning`] instead, in the UI's language.
+fn island_warnings(stats: &StencilStats) -> [String; 2] {
+    [
+        format!("{} islands couldn't be tied and would fall out", stats.untied),
+        format!("{} islands are left untied (gauze mode): a mesh must hold them", stats.untied),
+    ]
 }
 
 /// The warning for a stencil's islands no tie holds (they'd fall out of the cut sheet); `None`
