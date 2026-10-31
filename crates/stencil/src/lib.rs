@@ -7,13 +7,22 @@
 //!    subtraction, same-colour runs merged first; booleans, not an arrangement).
 //! 2. [`Selector`]: which colours are cut (`threshold` by [`luminance`], or `pick`; `invert` swaps),
 //!    [`colour_infos`] for the swatch list, at the physical scale [`mm_per_unit`].
+//! 3. Clean-up at physical size: specks and tiny paper holes by area, an opening by
+//!    `minCutWidthMm / 2` (thin cuts), a closing by `minBridgeMm / 2` (thin paper bridges),
+//!    simplification to the tolerance. The limits are widths; the radii are half of them.
+//! 4. The sheet (layer bounds plus `marginMm`) and `paper = sheet − cut`.
+//!
+//! [`compute`] runs them all and returns a [`StencilOut`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod clean;
 mod colour;
+mod compute;
 mod rings;
 mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
+pub use compute::{MAX_PAINTS, Stats, StencilError, StencilOut, compute};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
 use figcraft_geom::kurbo::BezPath;
@@ -35,5 +44,7 @@ pub struct Paint {
 
 #[cfg(test)]
 mod colour_tests;
+#[cfg(test)]
+mod compute_tests;
 #[cfg(test)]
 mod visible_tests;
