@@ -7,15 +7,20 @@
 //! Every edit is a `modifier.*` command. The fields come from [`FIELDS`], one table row per
 //! settings row, so a parameter change in `figcraft-modifiers` is a one-line change here.
 
-use egui::{CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use std::sync::Arc;
+
+use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use figcraft_color::{Color, Paint};
 use figcraft_doc::{Document, NodeId, VariableType};
+use figcraft_engine::cmd::lists::{moved_index, removed_index};
 use figcraft_modifiers::ModifierKind;
 use serde_json::{Map, Value, json};
 
 use super::menu::{context_popup, menu_item, menu_popup, row, row_context_menu, row_rect};
 use crate::FigApp;
 use crate::a11y::Tip;
-use crate::i18n::{tr, tr_noop, trf};
+use crate::colorpicker::PickerTarget;
+use crate::i18n::{tr, tr_noop, trf, trn};
 use crate::icons::{self, Icon};
 use crate::icons_picabia::{self, Glyph};
 use crate::list_drag::{ListDrag, move_flags, remove_flags};
@@ -63,12 +68,23 @@ pub(crate) enum Field {
     /// Another layer on the page (its id as text), as a dropdown of the layers every selected
     /// layer can copy onto (`modifier::target_choices`).
     Target { param: &'static str },
+    /// A `"#rrggbb"` colour: a swatch that opens FigCraft's colour picker and the hex, drawn like a
+    /// fill row's colour, under a small label naming it.
+    Colour { param: &'static str, label: &'static str },
+    /// A stencil's `cutColours`: the design's colours (`modifier.stencilInfo`), one row each with
+    /// its swatch, hex and area and a toggle that cuts it out.
+    CutColours { param: &'static str },
 }
 
 impl Field {
     pub(crate) fn param(&self) -> &'static str {
         match self {
-            Field::Num { param, .. } | Field::Check { param, .. } | Field::Choice { param, .. } | Field::Target { param } => param,
+            Field::Num { param, .. }
+            | Field::Check { param, .. }
+            | Field::Choice { param, .. }
+            | Field::Target { param }
+            | Field::Colour { param, .. }
+            | Field::CutColours { param } => param,
         }
     }
 }
@@ -139,10 +155,19 @@ const STENCIL_MODES: &[(&str, &str)] = &[("threshold", tr_noop("Cut the lighter 
 /// Stencil previews: (value written in `preview`, label).
 const STENCIL_PREVIEWS: &[(&str, &str)] = &[("paper", tr_noop("Paper preview")), ("cloth", tr_noop("Dyed cloth preview"))];
 
-/// The stencil params the field table leaves to the stencil's own section (PIC9: the swatch list
-/// with cut toggles, the preview colours).
-#[cfg(test)]
-pub(crate) const STENCIL_LATER: &[&str] = &["cutColours", "paperColour", "pasteColour", "clothColour"];
+/// Small grey labels that group a kind's settings (`widgets::sublabels`, as the Design panel labels
+/// "Position" and "Rotation"): (kind, the first parameter of the row they go over, label).
+const HEADINGS: &[(&str, &str, &str)] = &[
+    ("stencil", "colourMode", tr_noop("Colours")),
+    ("stencil", "widthMm", tr_noop("Size")),
+    ("stencil", "minCutAreaMm2", tr_noop("Clean-up")),
+    ("stencil", "preview", tr_noop("Preview")),
+];
+
+/// The heading over the settings row of `kind` that starts with parameter `param`.
+fn heading(kind: &str, param: &str) -> Option<&'static str> {
+    HEADINGS.iter().find(|(k, p, _)| *k == kind && *p == param).map(|(_, _, l)| *l)
+}
 
 /// Each kind's settings, one inner slice per 32 pt row (numbers two to a row, like the Effects
 /// grid). Parameters per `docs/picabia/modifiers.md`.
@@ -224,11 +249,17 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
         &[
             &[Field::Choice { param: "colourMode", options: STENCIL_MODES, translate: true }],
             &[pct("threshold", text(tr_noop("Threshold")), 0.0, 100.0)],
+            &[Field::CutColours { param: "cutColours" }],
             &[Field::Check { param: "invert", label: tr_noop("Invert (cut the other colours)") }],
             &[mm("widthMm", FieldLead::Raw("W"), "mm", 10_000.0), mm("marginMm", text(tr_noop("Margin")), "mm", 1000.0)],
-            &[mm("minCutAreaMm2", text(tr_noop("Smallest cut")), "mm²", 10_000.0), mm("minCutWidthMm", text(tr_noop("Thinnest cut")), "mm", 100.0)],
-            &[mm("minBridgeMm", text(tr_noop("Thinnest paper")), "mm", 100.0), mm("toleranceMm", text(tr_noop("Smoothing")), "mm", 10.0)],
+            // One to a row: their names don't fit half a row.
+            &[mm("minCutAreaMm2", text(tr_noop("Smallest cut")), "mm²", 10_000.0)],
+            &[mm("minCutWidthMm", text(tr_noop("Thinnest cut")), "mm", 100.0)],
+            &[mm("minBridgeMm", text(tr_noop("Thinnest paper")), "mm", 100.0)],
+            &[mm("toleranceMm", text(tr_noop("Smoothing")), "mm", 10.0)],
             &[Field::Choice { param: "preview", options: STENCIL_PREVIEWS, translate: true }],
+            &[Field::Colour { param: "paperColour", label: tr_noop("Paper") }],
+            &[Field::Colour { param: "pasteColour", label: tr_noop("Paste") }, Field::Colour { param: "clothColour", label: tr_noop("Cloth") }],
         ],
     ),
 ];
@@ -260,6 +291,9 @@ struct RowView {
     /// Why its copy-to-shape target can't be used, on the first layer where it can't
     /// (`modifier::check_target`); `None` when every set target is valid (or it has none).
     target_problem: Option<String>,
+    /// A stencil row's result on the first layer (`modifier.stencilInfo`); `None` for other kinds
+    /// and before the engine has drawn it.
+    stencil: Option<Arc<StencilInfo>>,
 }
 
 /// What the section shows for the selection.
@@ -296,6 +330,7 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
             let mods: Vec<(NodeId, figcraft_modifiers::Modifier)> = stacks.iter().filter_map(|(id, s)| Some((*id, at(s)?))).collect();
             RowView {
                 target_problem: target_problem(doc, &mods),
+                stencil: None,
                 kind: kind.clone(),
                 enabled: mods.iter().all(|(_, m)| m.enabled),
                 id: mods.first().map(|(_, m)| m.id.clone()).unwrap_or_default(),
@@ -366,7 +401,7 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         }
     });
     let t = Tokens::get(ui.ctx());
-    let rows = match v {
+    let mut rows = match v {
         View::Rows(r) => r,
         View::Mixed => return,
         View::Damaged(e) => {
@@ -382,6 +417,11 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         .and_then(|n| figcraft_modifiers::evaluate_node_in_doc(doc, n))
         .map(|o| o.warnings.clone())
         .unwrap_or_default();
+    if let Some(first) = sel.first() {
+        for r in rows.iter_mut().filter(|r| r.kind == "stencil") {
+            r.stencil = stencil_info(app, ui, *first);
+        }
+    }
     let mut drag = ListDrag::in_order(ui, LIST);
     let mut removed = None;
     for (i, r) in rows.iter().enumerate() {
@@ -420,8 +460,13 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         }
         // An open row already shows its target's problem under the target field.
         let shown = if open { r.target_problem.as_deref() } else { None };
-        for w in warnings.iter().filter(|w| w.modifier.as_deref() == Some(r.id.as_str()) && Some(w.message.as_str()) != shown) {
-            widgets::note(ui, &w.message, t.warning);
+        let own: Vec<&str> = warnings.iter().filter(|w| w.modifier.as_deref() == Some(r.id.as_str())).map(|w| w.message.as_str()).collect();
+        for w in own.iter().filter(|w| Some(**w) != shown) {
+            widgets::note(ui, w, t.warning);
+        }
+        // What the stencil's own computation warns of (images skipped, gradients averaged...).
+        for w in r.stencil.iter().flat_map(|s| s.warnings.iter()).filter(|w| !own.contains(&w.as_str())) {
+            widgets::note(ui, w, t.warning);
         }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
     }
@@ -431,9 +476,19 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
     if let Some((from, to)) = drag.finish(ui) {
         app.run("modifier.move", json!({"ids": ids, "from": from, "to": to}));
         move_flags(ui, MOD_OPEN, rows.len(), from, to);
+        if let Some(PickerTarget::PicabiaModifier { index, .. }) = &mut app.ui.picker {
+            *index = moved_index(*index, from, to);
+        }
     }
+    // Open settings and an open colour picker stay with their rows, or go with theirs.
     if let Some(i) = removed {
         remove_flags(ui, MOD_OPEN, rows.len(), i);
+        if let Some(PickerTarget::PicabiaModifier { index, .. }) = &mut app.ui.picker {
+            match removed_index(*index, i) {
+                Some(k) => *index = k,
+                None => app.ui.picker = None,
+            }
+        }
     }
 }
 
@@ -520,11 +575,34 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
         if shown.is_empty() {
             continue;
         }
+        if let Some(h) = fields.first().and_then(|f| heading(&r.kind, f.param())) {
+            widgets::sublabels(ui, tr(h), None);
+        }
         let fields = &shown[..];
+        // Colours are named by small labels over their columns, like the Layout grid's fields.
+        if let [Field::Colour { label: a, .. }, rest @ ..] = fields {
+            let b = rest.iter().find_map(|f| match f {
+                Field::Colour { label, .. } => Some(tr(label)),
+                _ => None,
+            });
+            widgets::sublabels(ui, tr(a), b);
+        }
+        // The swatch list takes rows of its own.
+        if let [Field::CutColours { param }] = fields {
+            cut_colours(app, ui, i, r, param);
+            continue;
+        }
         // A number alone on its row showing a chip (a bound variable or an expression) takes both
         // columns, so a text lead ("Count") leaves the chip room for its name.
+        // So does one whose text lead wouldn't fit a column ("Threshold" with its "%").
+        let long_lead = |f: &Field| match f {
+            Field::Num { lead: FieldLead::Text(k), .. } => {
+                ui.painter().layout_no_wrap(tr(k).to_string(), regular(11.0), egui::Color32::PLACEHOLDER).size().x + 12.0 > half - 40.0
+            }
+            _ => false,
+        };
         let width = match fields {
-            [f @ Field::Num { .. }] if shows_chip(app, ids, r, f.param()) => half * 2.0 + widgets::GUTTER,
+            [f @ Field::Num { .. }] if shows_chip(app, ids, r, f.param()) || long_lead(f) => half * 2.0 + widgets::GUTTER,
             _ => half,
         };
         row(ui, 32.0, |ui| {
@@ -532,6 +610,11 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
                 field(app, ui, ids, i, r, f, width);
             }
         });
+        // The stencil's sheet, read-only under its size.
+        if let (Some(sheet), true) = (r.stencil.as_ref().and_then(|s| s.sheet), fields.iter().any(|f| f.param() == "widthMm")) {
+            let (w, h) = (mm_text(sheet.0), mm_text(sheet.1));
+            widgets::note(ui, &trf("Sheet {w} × {h} mm, with the margin", &[("w", &w), ("h", &h)]), t.text_secondary);
+        }
         // Why the target this row picks can't be used.
         if let (Some(reason), true) = (&r.target_problem, fields.iter().any(|f| matches!(f, Field::Target { .. }))) {
             widgets::note(ui, &trf("Target: {reason}", &[("reason", reason)]), t.warning);
@@ -543,15 +626,53 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             }
         }
     }
+    // What the stencil came to: its pieces, the specks clean-up dropped and the length to cut.
+    if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
+        let line = trn(
+            "{n} pieces, {specks} specks dropped, {length} mm cut",
+            stats.cut_pieces,
+            &[("specks", &stats.dropped_specks.to_string()), ("length", &mm_text(stats.cut_length_mm))],
+        );
+        widgets::note(ui, &line, t.text_secondary);
+    }
 }
 
-/// Whether field `f` of row `r` does anything for the row's current choices. Only wallpaper has
-/// conditional fields: `cellHeight`, `angle` and the origin are hidden when the group (the same on every
-/// selected layer; mixed groups show everything) has a lattice or symmetry they don't shape.
+/// Whether field `f` of row `r` does anything for the row's current choices (wallpaper and
+/// stencil have fields that depend on another).
 fn applies(r: &RowView, f: &Field) -> bool {
-    if r.kind != "wallpaper" {
-        return true;
+    match r.kind.as_str() {
+        "wallpaper" => wallpaper_applies(r, f),
+        "stencil" => stencil_applies(r, f),
+        _ => true,
     }
+}
+
+/// The text every layer has for `param` (None when they differ or it isn't text).
+fn common_str<'a>(params: &'a [(NodeId, Map<String, Value>)], param: &str) -> Option<&'a str> {
+    let mut vals = params.iter().map(|(_, p)| p.get(param).and_then(Value::as_str));
+    let first = vals.next()??;
+    vals.all(|v| v == Some(first)).then_some(first)
+}
+
+/// A stencil's conditional fields: the threshold only when it cuts by lightness, the swatch list
+/// only when it cuts the colours picked, the paper colour for the paper preview and the paste and
+/// cloth colours for the cloth one. Layers that differ show both.
+fn stencil_applies(r: &RowView, f: &Field) -> bool {
+    let mode = common_str(&r.params, "colourMode");
+    let preview = common_str(&r.params, "preview");
+    match f.param() {
+        "threshold" => mode != Some("pick"),
+        "cutColours" => mode.is_none_or(|m| m == "pick"),
+        "paperColour" => preview != Some("cloth"),
+        "pasteColour" | "clothColour" => preview != Some("paper"),
+        _ => true,
+    }
+}
+
+/// Wallpaper's conditional fields: `cellHeight`, `angle` and the origin are hidden when the group
+/// (the same on every selected layer; mixed groups show everything) has a lattice or symmetry they
+/// don't shape.
+fn wallpaper_applies(r: &RowView, f: &Field) -> bool {
     let group = |p: &Map<String, Value>| {
         p.get("group").and_then(Value::as_str).and_then(|g| serde_json::from_value::<figcraft_modifiers::WallpaperGroup>(json!(g)).ok())
     };
@@ -635,6 +756,8 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 expression_menu(app, ui, ids, i, param, area, None);
             }
         }
+        Field::Colour { label, .. } => colour_field(app, ui, ids, i, r, param, tr(label), half),
+        Field::CutColours { .. } => cut_colours(app, ui, i, r, param),
         // Dropdowns span both field columns, ending where the number fields do.
         Field::Target { .. } => target_field(app, ui, ids, i, r, param, half * 2.0 + widgets::GUTTER),
         Field::Check { label, .. } => {
@@ -684,6 +807,222 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
             }
         }
     }
+}
+
+/// A length or area in millimetres as the panel writes it: two decimals at most, one from 100 up.
+fn mm_text(v: f64) -> String {
+    widgets::fmt_num(if v.abs() >= 100.0 { (v * 10.0).round() / 10.0 } else { v })
+}
+
+/// `c` as a stencil colour parameter: `"#rrggbb"`, lowercase.
+fn hex_param(c: Color) -> String {
+    let [r, g, b, _] = c.to_rgba8();
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// The colour of `param` on every layer of `r` (None when they differ or one isn't a colour).
+fn common_colour(r: &RowView, param: &str) -> Option<Color> {
+    common_str(&r.params, param).and_then(Color::from_hex).map(|c| c.with_alpha(1.0))
+}
+
+/// Colour field `param` of row `i`, `width` wide: its swatch (opens the colour picker on it) and
+/// its hex, like an effect's colour.
+#[allow(clippy::too_many_arguments)]
+fn colour_field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &str, label: &str, width: f32) {
+    let colour = common_colour(r, param);
+    let target = PickerTarget::PicabiaModifier { ids: ids.to_vec(), index: i, param: param.to_string() };
+    let shown = colour.map_or_else(|| Paint::solid(Color::WHITE), Paint::solid);
+    let sw = widgets::swatch_named(ui, &shown, 16.0, label);
+    // While the picker edits this colour, its swatch is held out of the popover's closing, so a
+    // press on it again reaches the toggle.
+    if app.ui.picker.as_ref() == Some(&target) {
+        app.ui.picker_button = Some(sw.rect);
+    }
+    if sw.clicked() {
+        app.toggle_picker(target, Some(sw.rect.min.y));
+    }
+    let hex = colour.map_or_else(|| tr("Mixed").to_string(), Color::to_hex);
+    let w = (width - 16.0 - widgets::GUTTER).max(40.0);
+    if let Some(h) = widgets::text_field_named(ui, Id::unique(("mod_hex", param, i)), &hex, w, label) {
+        match Color::from_hex_or_name(&h) {
+            Some(c) => {
+                app.run("modifier.set", json!({"ids": ids, "index": i, "props": {param: hex_param(c)}}));
+            }
+            None => app.toast(tr("Invalid color")),
+        }
+    }
+}
+
+/// The paint the colour picker shows for colour `param` of modifier `index` on the first of
+/// `ids` (`PickerTarget::PicabiaModifier`).
+pub(crate) fn picker_paint(doc: &Document, ids: &[NodeId], index: usize, param: &str) -> Option<Paint> {
+    let stack = figcraft_modifiers::node_stack(doc.node(*ids.first()?)?)?.ok()?;
+    let params = stack.modifiers.get(index)?.kind.params();
+    let c = Color::from_hex(params.get(param)?.as_str()?)?;
+    Some(Paint::solid(c.with_alpha(1.0)))
+}
+
+/// The command the colour picker runs to set colour `param` of modifier `index` to `paint`'s colour.
+pub(crate) fn picker_command(ids: &[NodeId], index: usize, param: &str, paint: &Paint) -> (&'static str, Value) {
+    let c = paint.solid_color().unwrap_or(Color::BLACK);
+    ("modifier.set", json!({"ids": ids, "index": index, "props": {param: hex_param(c)}}))
+}
+
+/// The stencil's swatch list for field `param` (`cutColours`) of row `i`: one 32 pt row per colour
+/// of the design, largest first, with its swatch, hex and area and a toggle (on: listed in
+/// `cutColours` on every layer) that adds or removes it on each layer, in one undo step.
+fn cut_colours(app: &mut FigApp, ui: &mut Ui, i: usize, r: &RowView, param: &str) {
+    let t = Tokens::get(ui.ctx());
+    let Some(info) = r.stencil.clone() else {
+        widgets::note(ui, tr("The design's colours show here once the stencil is drawn"), t.text_secondary);
+        return;
+    };
+    if info.colours.is_empty() {
+        widgets::note(ui, tr("The layer has no colours the stencil can cut"), t.text_secondary);
+        return;
+    }
+    let listed = |p: &Map<String, Value>, hex: &str| {
+        p.get(param).and_then(Value::as_array).is_some_and(|l| l.iter().filter_map(Value::as_str).any(|h| h.eq_ignore_ascii_case(hex)))
+    };
+    let mut toggled = None;
+    // Bounded like the Selection colors list: a design with many colours scrolls.
+    egui::ScrollArea::vertical().id_salt(("mod_stencil_colours", i)).max_height(240.0).show_rows(ui, 32.0, info.colours.len(), |ui, range| {
+        for c in info.colours.get(range).unwrap_or_default() {
+            let on = r.params.iter().all(|(_, p)| listed(p, &c.hex));
+            ui.push_id((&c.hex, "stencil_colour"), |ui| {
+                row(ui, 32.0, |ui| {
+                    let colour = Color::from_hex(&c.hex).unwrap_or(Color::BLACK).with_alpha(1.0);
+                    widgets::swatch_named(ui, &Paint::solid(colour), 24.0, tr("Design colour"));
+                    let w = (ui.available_width() - 24.0 - widgets::GUTTER).max(40.0);
+                    let (text, _) = ui.allocate_exact_size(vec2(w, FIELD_H), Sense::hover());
+                    ui.painter().text(text.left_center(), Align2::LEFT_CENTER, colour.to_hex(), regular(11.0), t.text);
+                    let area = trf("{area} mm²", &[("area", &mm_text(c.area))]);
+                    ui.painter().text(text.right_center(), Align2::RIGHT_CENTER, area, regular(11.0), t.text_secondary);
+                    let tip = trf("Cut out {colour}", &[("colour", &colour.to_css_hex())]);
+                    if icons::button(ui, Icon::Cut, 24.0, on, &tip).clicked() {
+                        toggled = Some((c.hex.clone(), on));
+                    }
+                });
+            });
+        }
+    });
+    let Some((hex, on)) = toggled else { return };
+    let steps = r
+        .params
+        .iter()
+        .filter_map(|(id, p)| {
+            let mut list: Vec<String> = p
+                .get(param)
+                .and_then(Value::as_array)
+                .map(|l| l.iter().filter_map(Value::as_str).map(str::to_lowercase).collect())
+                .unwrap_or_default();
+            if on {
+                list.retain(|h| !h.eq_ignore_ascii_case(&hex));
+            } else if !list.iter().any(|h| h.eq_ignore_ascii_case(&hex)) {
+                list.push(hex.to_lowercase());
+            } else {
+                return None;
+            }
+            Some(("modifier.set", json!({"ids": [id], "index": i, "props": {param: list}})))
+        })
+        .collect();
+    one_step(app, "Set modifier", steps);
+}
+
+/// A stencil's computed result as the panel shows it (what `modifier.stencilInfo` reports).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct StencilInfo {
+    /// The design's colours, largest visible area first.
+    pub(crate) colours: Vec<StencilColour>,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) stats: Option<StencilStats>,
+    /// The sheet (design plus margin), mm: (width, height).
+    pub(crate) sheet: Option<(f64, f64)>,
+}
+
+/// One colour of a stencil's design.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct StencilColour {
+    /// `"#rrggbb"`, lowercase.
+    pub(crate) hex: String,
+    /// Whether the stencil cuts it out.
+    pub(crate) cut: bool,
+    /// Its visible area at physical size, mm².
+    pub(crate) area: f64,
+}
+
+/// What a stencil came to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StencilStats {
+    pub(crate) cut_pieces: usize,
+    pub(crate) dropped_specks: usize,
+    pub(crate) cut_length_mm: f64,
+}
+
+impl StencilInfo {
+    /// The panel's view of the engine's result (`picabia_stencil::Info`).
+    fn of(i: &figcraft_engine::picabia_stencil::Info) -> StencilInfo {
+        let finite = |v: f64| if v.is_finite() { v } else { 0.0 };
+        StencilInfo {
+            colours: i
+                .colours
+                .iter()
+                .filter(|c| Color::from_hex(&c.hex).is_some())
+                .map(|c| StencilColour { hex: c.hex.to_lowercase(), cut: c.cut, area: finite(c.area) })
+                .collect(),
+            warnings: i.warnings.clone(),
+            stats: Some(StencilStats {
+                cut_pieces: i.stats.cut_pieces,
+                dropped_specks: i.stats.dropped_specks,
+                cut_length_mm: finite(i.stats.cut_length_mm),
+            }),
+            sheet: Some((finite(i.sheet_mm.0), finite(i.sheet_mm.1))),
+        }
+    }
+}
+
+/// The stencil result the panel last showed for a layer.
+#[derive(Clone)]
+struct InfoCache {
+    document: u64,
+    revision: u64,
+    node: NodeId,
+    /// Computed from the document at `revision` (nothing newer is coming until it changes).
+    fresh: bool,
+    info: Option<Arc<StencilInfo>>,
+}
+
+/// Layer `node`'s stencil result, as the engine's store has it (computed off the UI thread as the
+/// canvas draws; the latest one stands while a newer one is coming). Looked up again only while
+/// the one shown isn't fresh or once the document has changed.
+fn stencil_info(app: &FigApp, ui: &Ui, node: NodeId) -> Option<Arc<StencilInfo>> {
+    let ds = app.session.ds().ok()?;
+    let key = Id::unique(("mod_stencil_info", node));
+    let cached = ui.data(|d| d.get_temp::<InfoCache>(key)).filter(|c| c.document == ds.uid && c.node == node);
+    if let Some(c) = &cached
+        && c.fresh
+        && c.revision == ds.revision
+    {
+        return c.info.clone();
+    }
+    let found = ds.doc.node(node).and_then(|n| figcraft_engine::picabia_stencil::info(&ds.doc, n));
+    let fresh = found.as_ref().is_some_and(|(_, f)| *f);
+    let info = match (found, cached) {
+        (Some((i, _)), Some(c)) if c.info.as_deref() == Some(&StencilInfo::of(&i)) => c.info,
+        (Some((i, _)), _) => Some(Arc::new(StencilInfo::of(&i))),
+        (None, _) => None,
+    };
+    ui.data_mut(|d| d.insert_temp(key, InfoCache { document: ds.uid, revision: ds.revision, node, fresh, info: info.clone() }));
+    info
+}
+
+/// Put `info` in the panel's cache for layer `node` at the session's current revision (tests: a
+/// swatch list without computing a stencil).
+#[cfg(test)]
+pub(crate) fn cache_stencil_info(ctx: &egui::Context, session: &figcraft_engine::Session, node: NodeId, info: StencilInfo) {
+    let Ok(ds) = session.ds() else { return };
+    let c = InfoCache { document: ds.uid, revision: ds.revision, node, fresh: true, info: Some(Arc::new(info)) };
+    ctx.data_mut(|d| d.insert_temp(Id::unique(("mod_stencil_info", node)), c));
 }
 
 /// The most layers the target dropdown lists.

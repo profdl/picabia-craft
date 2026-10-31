@@ -59,6 +59,12 @@ pub enum PickerTarget {
         control: String,
         pending: Option<String>,
     },
+    /// PICABIA: a colour parameter (`"#rrggbb"`) of modifier `index` (the stencil's preview colours).
+    PicabiaModifier {
+        ids: Vec<NodeId>,
+        index: usize,
+        param: String,
+    },
 }
 
 /// The paints of colour style `id`.
@@ -106,6 +112,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
             _ => None,
         },
         PickerTarget::Style { id, index } => style_paints(doc, id)?.get(*index).cloned(),
+        PickerTarget::PicabiaModifier { ids, index, param } => crate::right::modifiers::picker_paint(doc, ids, *index, param), // PICABIA
         PickerTarget::PluginField { plugin, control, pending } => {
             let hex = match pending {
                 Some(hex) => hex.clone(),
@@ -123,6 +130,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
 fn paint_command(app: &FigApp, target: &PickerTarget, paint: &Paint) -> Option<(&'static str, serde_json::Value)> {
     Some(match target {
         PickerTarget::PluginField { .. } => return None,
+        PickerTarget::PicabiaModifier { ids, index, param } => crate::right::modifiers::picker_command(ids, *index, param, paint), // PICABIA
         PickerTarget::SelectionColor { targets, .. } => ("selection.setPaint", json!({"targets": targets, "paint": paint})),
         PickerTarget::PageBackground => {
             let c = paint.solid_color().unwrap_or(Color::DEFAULT_PAGE);
@@ -888,14 +896,22 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         // Paint type.
         if !matches!(
             target,
-            PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+            PickerTarget::Effect { .. }
+                | PickerTarget::PageBackground
+                | PickerTarget::Variable { .. }
+                | PickerTarget::PluginField { .. }
+                | PickerTarget::PicabiaModifier { .. } // PICABIA: solid colours only
         ) {
             paint_type_row(ui, app, &target, &mut paint);
         }
         // The paint's own blend mode, with the paints and layers under it.
         if !matches!(
             target,
-            PickerTarget::Effect { .. } | PickerTarget::PageBackground | PickerTarget::Variable { .. } | PickerTarget::PluginField { .. }
+            PickerTarget::Effect { .. }
+                | PickerTarget::PageBackground
+                | PickerTarget::Variable { .. }
+                | PickerTarget::PluginField { .. }
+                | PickerTarget::PicabiaModifier { .. } // PICABIA: solid colours only
         ) {
             blend_row(ui, app, &target, &mut paint);
         }

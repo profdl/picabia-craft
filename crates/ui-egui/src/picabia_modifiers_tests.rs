@@ -4,7 +4,8 @@
 //! toggling rows, scrubbing a field as one undo step, "Mixed" across layers, the row and header
 //! menus, and the field table covering every kind's parameters; the copy-to-shape target picker
 //! (the layers every selected layer can copy onto, a refused target flagged with its reason) and
-//! Duplicate carrying variable bindings.
+//! Duplicate carrying variable bindings; the stencil's grouped settings (colour mode, swatch list
+//! with cut toggles, size, clean-up, preview colours with FigCraft's swatch and picker).
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Modifiers, PointerButton, Pos2, pos2};
@@ -12,7 +13,7 @@ use figcraft_doc::NodeId;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
-use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, STENCIL_LATER, fields_of, known, shared_targets};
+use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, StencilColour, StencilInfo, cache_stencil_info, fields_of, known, shared_targets};
 use crate::layers_drag_tests::Ui;
 use crate::list_drag::grip_id;
 use crate::live_tests::{flat, text_center};
@@ -177,9 +178,6 @@ fn the_field_table_covers_every_kind_and_parameter() {
             assert!(defaults.contains_key(*p), "{kind} has no param {p}");
         }
         for p in defaults.keys() {
-            if *kind == "stencil" && STENCIL_LATER.contains(&p.as_str()) {
-                continue;
-            }
             assert!(fields.contains(&p.as_str()), "{kind}'s param {p} has no field");
         }
     }
@@ -610,4 +608,190 @@ fn wallpaper_numbers_have_the_evaluators_limits() {
     assert_eq!(limits("cellHeight"), Some((0.001, figcraft_modifiers::MAX_LENGTH)));
     assert_eq!(limits("angle"), Some((1.0, 179.0)));
     assert_eq!(limits("originX"), Some((-figcraft_modifiers::MAX_LENGTH, figcraft_modifiers::MAX_LENGTH)));
+}
+
+fn enter(u: &mut Ui) {
+    let key = |pressed| Event::Key { key: egui::Key::Enter, physical_key: None, pressed, repeat: false, modifiers: Modifiers::NONE };
+    u.frame(vec![key(true), key(false)]);
+    u.frame(vec![]);
+}
+
+/// Scroll the Design panel until the widget `id` lies in its upper part (clear of the panel's
+/// foot); its rect.
+fn centred(u: &mut Ui, id: Id) -> egui::Rect {
+    let mut r = into_view(u, id);
+    for _ in 0..40 {
+        if r.min.y > 150.0 && r.max.y < 600.0 {
+            break;
+        }
+        wheel(u, if r.max.y >= 600.0 { -100.0 } else { 100.0 });
+        let moved = into_view(u, id);
+        if moved == r {
+            break;
+        }
+        r = moved;
+    }
+    r
+}
+
+/// Scroll the Design panel to its end.
+fn to_bottom(u: &mut Ui) {
+    for _ in 0..5 {
+        wheel(u, -1000.0);
+    }
+}
+
+/// Type `text` into modifier row 0's `param` number field and press Enter.
+fn type_into(u: &mut Ui, param: &'static str, text: &str) {
+    let id = Id::unique(("mod", param, 0)).with("lead");
+    centred(u, id);
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    let lead = u.ctx.read_response(id).unwrap().rect;
+    click(u, pos2(lead.max.x + 6.0, lead.center().y));
+    u.frame(vec![Event::Text(text.into())]);
+    enter(u);
+}
+
+#[test]
+fn stencil_numbers_set_their_params() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    for (param, typed, want) in [
+        ("threshold", "30", json!(0.3)),
+        ("widthMm", "420", json!(420.0)),
+        ("marginMm", "20", json!(20.0)),
+        ("minCutAreaMm2", "2", json!(2.0)),
+        ("minCutWidthMm", "0.4", json!(0.4)),
+        ("minBridgeMm", "0.8", json!(0.8)),
+        ("toleranceMm", "0.1", json!(0.1)),
+    ] {
+        let steps = undo_steps(&u);
+        type_into(&mut u, param, typed);
+        assert_eq!(stack(&mut u, r)[0][param], want, "{param}");
+        assert_eq!(undo_steps(&u), steps + 1, "{param}: one undo step");
+    }
+    // Typed past the model's limits, a number stops at them.
+    type_into(&mut u, "toleranceMm", "50");
+    assert_eq!(stack(&mut u, r)[0]["toleranceMm"], json!(10.0));
+}
+
+#[test]
+fn stencil_settings_are_grouped_under_small_labels() {
+    let (mut u, _) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
+    let at = |label: &str| drawn.iter().position(|t| t == label).unwrap_or_else(|| panic!("{label:?} is drawn"));
+    assert!(at("Colours") < at("Size") && at("Size") < at("Clean-up") && at("Clean-up") < at("Preview"), "in order: {drawn:?}");
+    assert!(at("Preview") < at("Paper"), "the paper colour is named under Preview");
+}
+
+#[test]
+fn the_colour_mode_shows_the_threshold_or_the_swatch_list() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    assert!(has_field(&mut u, "threshold", 0), "threshold mode shows the threshold");
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Cut the lighter colours"));
+    click(&mut u, text_center(&menu, "Cut the colours I pick"));
+    assert_eq!(stack(&mut u, r)[0]["colourMode"], json!("pick"));
+    assert!(!has_field(&mut u, "threshold", 0), "pick mode hides the threshold");
+    // ...and lists the design's colours once the engine has computed the stencil (off the UI
+    // thread): the rectangle's grey, with its cut toggle, which picks it.
+    let mut toggle = Vec::new();
+    for _ in 0..400 {
+        toggle = labelled(&mut u, "Cut out #D9D9D9");
+        if !toggle.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(toggle.len(), 1, "the rectangle's colour is listed");
+    click(&mut u, toggle[0]);
+    assert_eq!(stack(&mut u, r)[0]["cutColours"], json!(["#d9d9d9"]));
+    // Invert stays in both modes.
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    click(&mut u, text_center(&shapes, "Invert (cut the other colours)"));
+    assert_eq!(stack(&mut u, r)[0]["invert"], json!(true));
+}
+
+fn info(colours: &[(&str, bool, f64)]) -> StencilInfo {
+    StencilInfo {
+        colours: colours.iter().map(|(hex, cut, area)| StencilColour { hex: hex.to_string(), cut: *cut, area: *area }).collect(),
+        warnings: vec!["Image fills are skipped".into()],
+        stats: Some(super::StencilStats { cut_pieces: 4, dropped_specks: 2, cut_length_mm: 812.5 }),
+        sheet: Some((330.0, 245.5)),
+    }
+}
+
+#[test]
+fn a_swatch_toggle_writes_cut_colours_in_one_step() {
+    let (mut u, r) = setup(&["stencil"]);
+    u.app.run("modifier.set", json!({"ids": [r], "index": 0, "props": {"colourMode": "pick", "cutColours": ["#ffffff"]}}));
+    cache_stencil_info(&u.ctx, &u.app.session, r, info(&[("#1f3a8a", false, 1200.0), ("#ffffff", true, 300.25)]));
+    open_settings(&mut u, 0);
+    // Notes are drawn only in view: look at the size, then at the foot of the panel.
+    for (bottom, want) in [
+        (false, &["1F3A8A", "1200 mm²", "FFFFFF", "300.3 mm²", "Sheet 330 × 245.5 mm, with the margin"][..]),
+        (true, &["4 pieces, 2 specks dropped, 812.5 mm cut", "Image fills are skipped"][..]),
+    ] {
+        if bottom {
+            to_bottom(&mut u);
+        } else {
+            into_view(&mut u, Id::unique(("mod", "widthMm", 0)).with("lead"));
+        }
+        let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
+        for t in want {
+            assert!(drawn.iter().any(|d| d == t), "{t:?} is drawn: {drawn:?}");
+        }
+    }
+    let steps = undo_steps(&u);
+    let blue = labelled(&mut u, "Cut out #1F3A8A");
+    assert_eq!(blue.len(), 1, "one cut toggle per colour, named by it");
+    click(&mut u, blue[0]);
+    assert_eq!(stack(&mut u, r)[0]["cutColours"], json!(["#ffffff", "#1f3a8a"]));
+    assert_eq!(undo_steps(&u), steps + 1);
+    cache_stencil_info(&u.ctx, &u.app.session, r, info(&[("#1f3a8a", true, 1200.0), ("#ffffff", true, 300.25)]));
+    let white = labelled(&mut u, "Cut out #FFFFFF");
+    click(&mut u, white[0]);
+    assert_eq!(stack(&mut u, r)[0]["cutColours"], json!(["#1f3a8a"]), "a cut colour toggled off leaves the list");
+}
+
+#[test]
+fn the_preview_shows_its_colours_and_the_picker_edits_them() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    to_bottom(&mut u);
+    assert!(!labelled(&mut u, "Paper").is_empty(), "the paper preview shows the paper colour");
+    assert!(labelled(&mut u, "Paste").is_empty() && labelled(&mut u, "Cloth").is_empty());
+    // A hex typed into the paper colour is written lowercase, as the model keeps it.
+    let hex = *labelled(&mut u, "Paper").iter().max_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    click(&mut u, hex);
+    u.frame(vec![Event::Text("FF0000".into())]);
+    enter(&mut u);
+    assert_eq!(stack(&mut u, r)[0]["paperColour"], json!("#ff0000"));
+    // The swatch opens FigCraft's colour picker on that parameter; its edits are modifier.set.
+    let swatch = *labelled(&mut u, "Paper").iter().min_by(|a, b| a.x.total_cmp(&b.x)).unwrap();
+    click(&mut u, swatch);
+    let target = crate::colorpicker::PickerTarget::PicabiaModifier { ids: vec![r], index: 0, param: "paperColour".into() };
+    assert_eq!(u.app.ui.picker, Some(target));
+    let doc = u.app.session.doc().unwrap();
+    let paint = super::picker_paint(doc, &[r], 0, "paperColour").unwrap();
+    assert_eq!(paint.solid_color().map(|c| c.to_css_hex()), Some("#FF0000".into()));
+    let (cmd, params) =
+        super::picker_command(&[r], 0, "paperColour", &figcraft_color::Paint::solid(figcraft_color::Color::from_hex("00ff80").unwrap()));
+    u.app.run(cmd, params);
+    assert_eq!(stack(&mut u, r)[0]["paperColour"], json!("#00ff80"));
+    // The cloth preview shows the paste and cloth colours instead.
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Paper preview"));
+    click(&mut u, text_center(&menu, "Dyed cloth preview"));
+    assert_eq!(stack(&mut u, r)[0]["preview"], json!("cloth"));
+    for _ in 0..3 {
+        u.frame(vec![]);
+    }
+    assert!(labelled(&mut u, "Paper").is_empty());
+    assert_eq!(labelled(&mut u, "Paste").len(), 2, "swatch and hex");
+    assert_eq!(labelled(&mut u, "Cloth").len(), 2, "swatch and hex");
 }

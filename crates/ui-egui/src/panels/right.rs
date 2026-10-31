@@ -22,7 +22,7 @@ use crate::{FigApp, RightTab};
 mod effects;
 mod inspect;
 mod menu;
-mod modifiers; // PICABIA: the Modifiers section (below Effects)
+pub(crate) mod modifiers; // PICABIA: the Modifiers section (below Effects); the colour picker reads its colours
 mod paints;
 mod stroke;
 
