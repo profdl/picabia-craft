@@ -5,11 +5,15 @@
 //! # Pipeline
 //! 1. [`visible_regions`]: what each colour shows once everything above it is painted (top-down
 //!    subtraction, same-colour runs merged first; booleans, not an arrangement).
+//! 2. [`Selector`]: which colours are cut (`threshold` by [`luminance`], or `pick`; `invert` swaps),
+//!    [`colour_infos`] for the swatch list, at the physical scale [`mm_per_unit`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod colour;
 mod rings;
 mod visible;
 
+pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
 use figcraft_geom::kurbo::BezPath;
@@ -29,5 +33,7 @@ pub struct Paint {
     pub order: u32,
 }
 
+#[cfg(test)]
+mod colour_tests;
 #[cfg(test)]
 mod visible_tests;
