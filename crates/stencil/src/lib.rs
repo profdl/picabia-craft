@@ -45,6 +45,8 @@ pub struct Paint {
 #[cfg(test)]
 extern crate self as figcraft_stencil;
 #[cfg(test)]
+mod clean_tests;
+#[cfg(test)]
 mod colour_tests;
 #[cfg(test)]
 mod compute_tests;

@@ -1,5 +1,5 @@
 //! The stencil of a real traced design (`fixtures/traced.svg`: three flat colours, 920 × 752,
-//! 85 jagged paths plus tracer specks).
+//! 85 jagged paths plus tracer specks), and timings (`--ignored`, release).
 //!
 //! The SVG is read by a minimal test-only parser (class fills from the `<style>` block; `path`,
 //! `rect` and `circle` in document order; `translate`/`rotate` transforms), enough for this file.
@@ -7,7 +7,11 @@
 //! in text and fonts for no gain here.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+#[path = "support/fixture.rs"]
+mod fixture;
+
 use std::collections::HashMap;
+use std::time::Instant;
 
 use figcraft_geom::kurbo::{Affine, BezPath, Circle, Rect, Shape};
 use figcraft_geom::split_subpaths;
@@ -117,4 +121,35 @@ fn the_traced_design_makes_a_sane_stencil() {
     // Inverted: the two darker colours are cut instead.
     let inv = compute(&paints, &Stencil { invert: true, ..p }, BOUNDS).unwrap();
     assert!(inv.cut.area() > cut && inv.stats.cut_pieces > 0);
+}
+
+fn time<T>(label: &str, runs: u32, mut f: impl FnMut() -> T) -> T {
+    let mut out = f();
+    let t = Instant::now();
+    for _ in 0..runs {
+        out = f();
+    }
+    eprintln!("{label}: {:.1} ms", t.elapsed().as_secs_f64() * 1000.0 / f64::from(runs));
+    out
+}
+
+fn report(name: &str, paints: &[Paint], bounds: Rect) {
+    let p = Stencil::default();
+    let mpu = mm_per_unit(p.width_mm, bounds).unwrap();
+    let elements: usize = paints.iter().map(|p| p.path.elements().len()).sum();
+    eprintln!("{name}: {} paints, {elements} elements", paints.len());
+    let tol = p.tolerance_mm / mpu;
+    time(&format!("  {name} visible regions"), 5, || visible_regions(paints, tol / 4.0, tol / 2.0));
+    let raw = Stencil { min_cut_width_mm: 0.0, min_bridge_mm: 0.0, ..p.clone() };
+    time(&format!("  {name} compute, no opening/closing"), 5, || compute(paints, &raw, bounds).unwrap());
+    let out = time(&format!("  {name} compute, defaults"), 5, || compute(paints, &p, bounds).unwrap());
+    eprintln!("  {name} out: {} cut elements, {:?}", out.cut.elements().len(), out.stats);
+}
+
+#[test]
+#[ignore = "timing: cargo test --release -p figcraft-stencil --test traced -- --ignored --nocapture"]
+fn timing() {
+    report("traced.svg", &traced(), BOUNDS);
+    let (paints, _) = fixture::design(300, 42);
+    report("synthetic 300", &paints, fixture::BOUNDS);
 }

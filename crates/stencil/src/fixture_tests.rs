@@ -1,7 +1,7 @@
 //! Every stage on the synthetic traced-style fixture.
 
 use figcraft_doc::BoolOp;
-use figcraft_geom::kurbo::{BezPath, Rect, Shape};
+use figcraft_geom::kurbo::{Rect, Shape};
 use figcraft_geom::split_subpaths;
 use figcraft_modifiers::Stencil;
 
@@ -103,5 +103,4 @@ fn the_cleanup_steps_each_remove_what_they_should() {
     assert!(open.cut_pieces < base.cut_pieces, "specks and thin glyphs open away: {base:?} → {open:?}");
     let close = pieces(&Stencil { min_bridge_mm: 3.0, ..none.clone() });
     assert!(close.cut_pieces < base.cut_pieces, "nearby cuts join: {base:?} → {close:?}");
-    let _ = BezPath::new();
 }

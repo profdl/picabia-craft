@@ -8,6 +8,7 @@
 //! the same area is filled (it would fall out anyway). Anything nested in a dropped contour is
 //! smaller still, so it goes too and the even-odd nesting of the rest holds.
 
+use figcraft_doc::StrokeJoin;
 use figcraft_geom::kurbo::{BezPath, Shape};
 use figcraft_geom::split_subpaths;
 
@@ -55,31 +56,55 @@ pub(crate) fn drop_small(path: &BezPath, min_area: f64) -> (BezPath, usize, usiz
 /// Every contour of the polygonal region `path` simplified to `tolerance` and the result
 /// normalised again (simplifying can make a contour cross itself). `None` if that sweep fails.
 fn simplify_to(path: &BezPath, tolerance: f64) -> Option<BezPath> {
-    let rs = rings::rings(path, tolerance * 0.1, usize::MAX)?;
-    let rs: Vec<_> = rs.iter().map(|r| rings::simplify_ring(r, tolerance)).filter(|r| r.len() >= 3).collect();
-    figcraft_pathops::simplify(&rings::to_path(&rs)).ok()
+    figcraft_pathops::simplify(&thin(path, tolerance)).ok()
 }
 
-/// `figcraft_pathops::open` or `close`.
-type Morph = fn(&BezPath, f64) -> Result<BezPath, figcraft_pathops::PathOpsError>;
+/// The polygonal region `path` with every contour simplified to `tolerance`, no sweep (the
+/// offsets normalise their input).
+fn thin(path: &BezPath, tolerance: f64) -> BezPath {
+    if tolerance <= 0.0 {
+        return path.clone();
+    }
+    match rings::rings(path, tolerance * 0.1, usize::MAX) {
+        Some(rs) => rings::to_path(&rs.iter().map(|r| rings::simplify_ring(r, tolerance)).filter(|r| r.len() >= 3).collect::<Vec<_>>()),
+        None => path.clone(),
+    }
+}
 
-/// Run the clean-up on `cut` (plain contours). A morphology step that fails is skipped with a
-/// warning; the rest still runs.
+/// Opening by `open` then closing by `close` (round joins), as offsets: shrink `open`, grow
+/// `open`, grow `close`, shrink `close`. The two grows compose exactly (growing by a disc of
+/// radius `a` then `b` is growing by one of `a + b`), so it is three offsets, not four. Between
+/// offsets the region is thinned to `tolerance` (the round joins' fans are much finer than that).
+pub(crate) fn open_close(cut: &BezPath, open: f64, close: f64, tolerance: f64) -> Result<BezPath, figcraft_pathops::PathOpsError> {
+    let steps: Vec<f64> = match (open > 0.0, close > 0.0) {
+        (true, true) => vec![-open, open + close, -close],
+        (true, false) => vec![-open, open],
+        (false, true) => vec![close, -close],
+        (false, false) => Vec::new(),
+    };
+    let mut cur = cut.clone();
+    let last = steps.len().saturating_sub(1);
+    for (i, d) in steps.into_iter().enumerate() {
+        cur = figcraft_pathops::offset(&cur, d, StrokeJoin::Round)?;
+        if i < last {
+            cur = thin(&cur, tolerance);
+        }
+    }
+    Ok(cur)
+}
+
+/// Run the clean-up on `cut` (plain contours). If the opening and closing fail they are skipped
+/// with a warning; the rest still runs.
 pub(crate) fn clean(cut: BezPath, l: Limits) -> Cleaned {
     let mut c = Cleaned::default();
     // Area first: specks dropped before the offsets cost nothing to offset.
     let (mut cut, s, h) = drop_small(&cut, l.min_area);
     c.dropped_specks += s;
     c.filled_holes += h;
-    let steps: [(f64, Morph, &str); 2] =
-        [(l.open_radius, figcraft_pathops::open, "minimum cut width"), (l.close_radius, figcraft_pathops::close, "minimum bridge")];
-    for (r, op, name) in steps {
-        if r <= 0.0 || cut.elements().is_empty() {
-            continue;
-        }
-        match op(&cut, r) {
+    if !cut.elements().is_empty() && (l.open_radius > 0.0 || l.close_radius > 0.0) {
+        match open_close(&cut, l.open_radius, l.close_radius, l.tolerance) {
             Ok(next) => cut = next,
-            Err(_) => c.warnings.push(format!("couldn't apply the {name}; the cut is left as it was before that step")),
+            Err(_) => c.warnings.push("couldn't apply the minimum cut width and bridge; the cut is left without them".into()),
         }
     }
     let (next, s, h) = drop_small(&cut, l.min_area);

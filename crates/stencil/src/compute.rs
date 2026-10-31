@@ -70,8 +70,8 @@ impl std::error::Error for StencilError {}
 ///
 /// Steps: [`visible_regions`] (curves flattened at `toleranceMm / 4`, every ring simplified to
 /// `toleranceMm / 2`), the cut colours ([`Selector`]) merged into one region, clean-up (area
-/// filter, opening by `minCutWidthMm / 2`, closing by `minBridgeMm / 2`, area filter again,
-/// simplify to `toleranceMm / 2`), the cut clipped to the sheet, `paper = sheet − cut`.
+/// filter, opening by `minCutWidthMm / 2` then closing by `minBridgeMm / 2` as three offsets,
+/// area filter again, simplify to `toleranceMm / 2`), the cut clipped to the sheet, `paper = sheet − cut`.
 ///
 /// More than [`MAX_PAINTS`] paints: an uncut sheet and a warning.
 pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result<StencilOut, StencilError> {
