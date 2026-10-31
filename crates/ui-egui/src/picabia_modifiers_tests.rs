@@ -5,7 +5,9 @@
 //! menus, and the field table covering every kind's parameters; the copy-to-shape target picker
 //! (the layers every selected layer can copy onto, a refused target flagged with its reason) and
 //! Duplicate carrying variable bindings; the stencil's grouped settings (colour mode, swatch list
-//! with cut toggles, size, clean-up, preview colours with FigCraft's swatch and picker).
+//! with cut toggles, size, clean-up, ties, preview colours with FigCraft's swatch and picker): the
+//! Ties group's modes (ties, a tie pattern with fallback ties, gauze), its optional direction, and
+//! the stats line and warning for islands.
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Modifiers, PointerButton, Pos2, pos2};
@@ -683,7 +685,10 @@ fn stencil_settings_are_grouped_under_small_labels() {
     open_settings(&mut u, 0);
     let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
     let at = |label: &str| drawn.iter().position(|t| t == label).unwrap_or_else(|| panic!("{label:?} is drawn"));
-    assert!(at("Colours") < at("Size") && at("Size") < at("Clean-up") && at("Clean-up") < at("Preview"), "in order: {drawn:?}");
+    assert!(
+        at("Colours") < at("Size") && at("Size") < at("Clean-up") && at("Clean-up") < at("Ties") && at("Ties") < at("Preview"),
+        "in order: {drawn:?}"
+    );
     assert!(at("Preview") < at("Paper"), "the paper colour is named under Preview");
 }
 
@@ -720,7 +725,7 @@ fn info(colours: &[(&str, bool, f64)]) -> StencilInfo {
     StencilInfo {
         colours: colours.iter().map(|(hex, cut, area)| StencilColour { hex: hex.to_string(), cut: *cut, area: *area }).collect(),
         warnings: vec!["Image fills are skipped".into()],
-        stats: Some(super::StencilStats { cut_pieces: 4, dropped_specks: 2, cut_length_mm: 812.5 }),
+        stats: Some(stats(0, 0, 0, 0)),
         sheet: Some((330.0, 245.5)),
     }
 }
@@ -794,4 +799,142 @@ fn the_preview_shows_its_colours_and_the_picker_edits_them() {
     assert!(labelled(&mut u, "Paper").is_empty());
     assert_eq!(labelled(&mut u, "Paste").len(), 2, "swatch and hex");
     assert_eq!(labelled(&mut u, "Cloth").len(), 2, "swatch and hex");
+}
+
+/// A stencil's stats: 4 pieces, 2 specks, 812.5 mm cut, and these islands.
+fn stats(islands: usize, ties: usize, untied: usize, pattern_held: usize) -> super::StencilStats {
+    super::StencilStats { cut_pieces: 4, dropped_specks: 2, cut_length_mm: 812.5, islands, ties, untied, pattern_held }
+}
+
+#[test]
+fn tie_numbers_set_their_params() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    for (param, typed, want) in [("tieWidthMm", "1.5", json!(1.5)), ("tiesPerIsland", "3", json!(3)), ("tieSeed", "7", json!(7))] {
+        let steps = undo_steps(&u);
+        type_into(&mut u, param, typed);
+        assert_eq!(stack(&mut u, r)[0][param], want, "{param}");
+        assert_eq!(undo_steps(&u), steps + 1, "{param}: one undo step");
+    }
+    // The model's limits: 1-8 ties, 0.05-50 mm wide.
+    type_into(&mut u, "tiesPerIsland", "20");
+    assert_eq!(stack(&mut u, r)[0]["tiesPerIsland"], json!(8));
+    type_into(&mut u, "tieWidthMm", "0");
+    assert_eq!(stack(&mut u, r)[0]["tieWidthMm"], json!(figcraft_modifiers::MIN_TIE_WIDTH_MM));
+    // Spread is a checkbox, on by default.
+    assert_eq!(stack(&mut u, r)[0]["tieSpread"], json!(true));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    click(&mut u, text_center(&shapes, "Spread the ties around each island"));
+    assert_eq!(stack(&mut u, r)[0]["tieSpread"], json!(false));
+}
+
+#[test]
+fn the_tie_direction_is_any_until_typed_and_the_minus_unsets_it() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    assert_eq!(stack(&mut u, r)[0]["tieAngle"], Value::Null);
+    assert_eq!(shown(&mut u, "tieAngle", 0), "Any");
+    assert!(labelled(&mut u, "Any direction").is_empty(), "nothing to unset");
+    type_into(&mut u, "tieAngle", "45");
+    assert_eq!(stack(&mut u, r)[0]["tieAngle"], json!(45.0));
+    assert_eq!(shown(&mut u, "tieAngle", 0), "45°");
+    // Angles wrap like the model's.
+    type_into(&mut u, "tieAngle", "370");
+    assert_eq!(stack(&mut u, r)[0]["tieAngle"], json!(10.0));
+    let steps = undo_steps(&u);
+    let minus = labelled(&mut u, "Any direction");
+    assert_eq!(minus.len(), 1);
+    click(&mut u, minus[0]);
+    assert_eq!(stack(&mut u, r)[0]["tieAngle"], Value::Null);
+    assert_eq!(undo_steps(&u), steps + 1);
+    assert_eq!(shown(&mut u, "tieAngle", 0), "Any");
+}
+
+#[test]
+fn the_tie_mode_shows_the_ties_the_pattern_or_neither() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    let ties = ["tieWidthMm", "tiesPerIsland", "tieAngle", "tieSeed"];
+    let pattern = ["patternWidthMm", "patternSpacingMm", "patternAngle"];
+    let drawn = |u: &mut Ui| texts(&flat(&u.frame_output(vec![]).shapes));
+    for p in ties {
+        assert!(has_field(&mut u, p, 0), "ties mode shows {p}");
+    }
+    for p in pattern {
+        assert!(!has_field(&mut u, p, 0), "ties mode hides {p}");
+    }
+    assert!(!drawn(&mut u).iter().any(|t| t == "Fallback ties"));
+    // A tie pattern: its lattice's settings, then the ties for the islands it misses.
+    centred(&mut u, Id::unique(("mod", "tieWidthMm", 0)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Tie the islands"));
+    click(&mut u, text_center(&menu, "Tie with a pattern"));
+    assert_eq!(stack(&mut u, r)[0]["tieMode"], json!("pattern"));
+    for p in pattern.iter().chain(&ties) {
+        assert!(has_field(&mut u, p, 0), "pattern mode shows {p}");
+    }
+    for (param, typed, want) in [("patternWidthMm", "0.8", json!(0.8)), ("patternSpacingMm", "12", json!(12.0)), ("patternAngle", "30", json!(30.0))]
+    {
+        type_into(&mut u, param, typed);
+        assert_eq!(stack(&mut u, r)[0][param], want, "{param}");
+    }
+    centred(&mut u, Id::unique(("mod", "patternWidthMm", 0)).with("lead"));
+    let t = drawn(&mut u);
+    let at = |label: &str| t.iter().position(|x| x == label).unwrap_or_else(|| panic!("{label:?} is drawn: {t:?}"));
+    assert!(at("Grid") < at("Everywhere") && at("Everywhere") < at("Fallback ties"), "{t:?}");
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Grid"));
+    click(&mut u, text_center(&menu, "Vertical lines"));
+    assert_eq!(stack(&mut u, r)[0]["patternType"], json!("vertical"));
+    centred(&mut u, Id::unique(("mod", "patternWidthMm", 0)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Everywhere"));
+    click(&mut u, text_center(&menu, "Only around islands"));
+    assert_eq!(stack(&mut u, r)[0]["patternWhere"], json!("islands"));
+    // Gauze holds the islands: no ties, no lattice.
+    centred(&mut u, Id::unique(("mod", "patternWidthMm", 0)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "Tie with a pattern"));
+    click(&mut u, text_center(&menu, "Hold the islands with gauze"));
+    assert_eq!(stack(&mut u, r)[0]["tieMode"], json!("gauze"));
+    for p in pattern.iter().chain(&ties) {
+        assert!(!has_field(&mut u, p, 0), "gauze hides {p}");
+    }
+}
+
+#[test]
+fn the_stats_line_counts_islands_and_how_they_are_held() {
+    use super::{stats_line, untied_warning};
+    let line = |s, gauze| stats_line(&s, gauze);
+    assert_eq!(line(stats(0, 0, 0, 0), false), "4 pieces, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(line(stats(2, 4, 0, 0), false), "4 pieces, 2 islands tied with 4 ties, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(line(stats(1, 1, 0, 0), false), "4 pieces, 1 island tied with 1 tie, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(line(stats(3, 0, 3, 0), true), "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(line(stats(3, 0, 0, 3), false), "4 pieces, 3 islands held by the pattern, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(line(stats(4, 2, 1, 2), false), "4 pieces, 2 islands held by the pattern, 1 island tied with 2 ties, 2 specks dropped, 812.5 mm cut");
+    assert_eq!(untied_warning(&stats(3, 2, 1, 0), false).as_deref(), Some("1 island has no tie and would fall out"));
+    assert_eq!(untied_warning(&stats(3, 0, 3, 0), true), None, "gauze holds them");
+    assert_eq!(untied_warning(&stats(3, 6, 0, 0), false), None);
+}
+
+#[test]
+fn untied_islands_are_warned_of_under_the_row() {
+    let (mut u, r) = setup(&["stencil"]);
+    let mut i = info(&[("#1f3a8a", true, 1200.0)]);
+    i.stats = Some(stats(3, 4, 1, 0));
+    cache_stencil_info(&u.ctx, &u.app.session, r, i.clone());
+    open_settings(&mut u, 0);
+    to_bottom(&mut u);
+    let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
+    for t in ["4 pieces, 2 islands tied with 4 ties, 2 specks dropped, 812.5 mm cut", "1 island has no tie and would fall out"] {
+        assert!(drawn.iter().any(|d| d == t), "{t:?} is drawn: {drawn:?}");
+    }
+    // With gauze nothing falls out.
+    u.app.run("modifier.set", json!({"ids": [r], "index": 0, "props": {"tieMode": "gauze"}}));
+    i.stats = Some(stats(3, 0, 3, 0));
+    cache_stencil_info(&u.ctx, &u.app.session, r, i);
+    to_bottom(&mut u);
+    let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
+    assert!(drawn.iter().any(|d| d == "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut"), "{drawn:?}");
+    assert!(!drawn.iter().any(|d| d.contains("would fall out")), "{drawn:?}");
 }

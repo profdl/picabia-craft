@@ -122,7 +122,9 @@ name = "English"
 "Annotations" = "Annotations"
 "Annotations shown on the canvas" = "Annotations shown on the canvas"
 "Another server, or one that needs its key. The usual server is set in Preferences." = "Another server, or one that needs its key. The usual server is set in Preferences."
+"Any direction" = "Any direction"
 "Any status" = "Any status"
+"Any" = "Any"
 "Anyone on your network with this code can edit the file, while this app stays open." = "Anyone on your network with this code can edit the file, while this app stays open."
 "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them." = "Anyone with the edit link can change the file; the view link only lets people look. The links carry their secrets: share them like passwords. `figcraft-server links` makes more and revokes them."
 "Anyone with this code can edit the file." = "Anyone with this code can edit the file."
@@ -521,6 +523,7 @@ name = "English"
 "Essential" = "Essential"
 "Every conflict has a choice." = "Every conflict has a choice."
 "Every top-level frame already starts a flow" = "Every top-level frame already starts a flow"
+"Everywhere" = "Everywhere"
 "Exact only" = "Exact only"
 "Exact opacity (4 then 5: 45%)" = "Exact opacity (4 then 5: 45%)"
 "Exclude" = "Exclude"
@@ -554,6 +557,7 @@ name = "English"
 "Eye" = "Eye"
 "F" = "F"
 "Fade" = "Fade"
+"Fallback ties" = "Fallback ties"
 "False" = "False"
 "Feb" = "Feb"
 "Fetching from the server…" = "Fetching from the server…"
@@ -669,10 +673,12 @@ name = "English"
 "Hold Alt+Z" = "Hold Alt+Z"
 "Hold Ctrl" = "Hold Ctrl"
 "Hold Z" = "Hold Z"
+"Hold the islands with gauze" = "Hold the islands with gauze"
 "Hold ⌃ or ⌘" = "Hold ⌃ or ⌘"
 "Hold ⌥" = "Hold ⌥"
 "Hold ⌥Z" = "Hold ⌥Z"
 "Home" = "Home"
+"Horizontal lines" = "Horizontal lines"
 "Horizontal" = "Horizontal"
 "Horizontal align" = "Horizontal align"
 "Horizontal axis" = "Horizontal axis"
@@ -743,6 +749,7 @@ name = "English"
 "Modifiers run from the top row down: each one repeats or changes what the rows above it made" = "Modifiers run from the top row down: each one repeats or changes what the rows above it made"
 "No layer to copy onto" = "No layer to copy onto"
 "On each point" = "On each point"
+"Only around islands" = "Only around islands"
 "Paper preview" = "Paper preview"
 "Paste" = "Paste"
 "Paste modifier" = "Paste modifier"
@@ -1434,6 +1441,7 @@ name = "English"
 "Speech bubble" = "Speech bubble"
 "Splay" = "Splay"
 "Spotlight me" = "Spotlight me"
+"Spread the ties around each island" = "Spread the ties around each island"
 "Spread" = "Spread"
 "Square" = "Square"
 "Stamp" = "Stamp"
@@ -1564,6 +1572,12 @@ name = "English"
 "This version can't be read." = "This version can't be read."
 "This version doesn't have it: all of it is new." = "This version doesn't have it: all of it is new."
 "Tidy up" = "Tidy up"
+"Tie size" = "Tie size"
+"Tie the islands" = "Tie the islands"
+"Tie width" = "Tie width"
+"Tie with a pattern" = "Tie with a pattern"
+"Ties per island" = "Ties per island"
+"Ties" = "Ties"
 "Tile" = "Tile"
 "Tile type" = "Tile type"
 "Timer" = "Timer"
@@ -1651,6 +1665,7 @@ name = "English"
 "Version history" = "Version history"
 "Version {version}" = "Version {version}"
 "Version {v} · {components} · {styles} · {variables}" = "Version {v} · {components} · {styles} · {variables}"
+"Vertical lines" = "Vertical lines"
 "Vertical" = "Vertical"
 "Vertical align" = "Vertical align"
 "Vertical axis" = "Vertical axis"
@@ -1902,6 +1917,10 @@ name = "English"
 "{n} files" = { one = "{n} file", other = "{n} files" }
 "{n} hours ago" = { one = "{n} hour ago", other = "{n} hours ago" }
 "{n} instances" = { one = "{n} instance", other = "{n} instances" }
+"{n} islands have no tie and would fall out" = { one = "{n} island has no tie and would fall out", other = "{n} islands have no tie and would fall out" }
+"{n} islands held by the gauze" = { one = "{n} island held by the gauze", other = "{n} islands held by the gauze" }
+"{n} islands held by the pattern" = { one = "{n} island held by the pattern", other = "{n} islands held by the pattern" }
+"{n} islands tied with {ties}" = { one = "{n} island tied with {ties}", other = "{n} islands tied with {ties}" }
 "{n} layers" = { one = "{n} layer", other = "{n} layers" }
 "{n} layers as one file" = { one = "{n} layer as one file", other = "{n} layers as one file" }
 "{n} layers selected" = { one = "{n} layer selected", other = "{n} layers selected" }
@@ -1913,14 +1932,16 @@ name = "English"
 "{n} more notes omitted from this report" = { one = "{n} more note omitted from this report", other = "{n} more notes omitted from this report" }
 "{n} of {total}" = "{n} of {total}"
 "{n} people joined" = { one = "{n} person joined", other = "{n} people joined" }
-"{n} pieces, {specks} specks dropped, {length} mm cut" = { one = "{n} piece, {specks} specks dropped, {length} mm cut", other = "{n} pieces, {specks} specks dropped, {length} mm cut" }
+"{n} pieces" = { one = "{n} piece", other = "{n} pieces" }
 "{n} preferred components" = { one = "{n} preferred component", other = "{n} preferred components" }
 "{n} ready" = { one = "{n} ready", other = "{n} ready" }
 "{n} removed" = { one = "{n} removed", other = "{n} removed" }
 "{n} replies" = { one = "{n} reply", other = "{n} replies" }
 "{n} rows" = { one = "{n} row", other = "{n} rows" }
+"{n} specks dropped" = { one = "{n} speck dropped", other = "{n} specks dropped" }
 "{n} styles" = { one = "{n} style", other = "{n} styles" }
 "{n} text layers" = { one = "{n} text layer", other = "{n} text layers" }
+"{n} ties" = { one = "{n} tie", other = "{n} ties" }
 "{n} variables" = { one = "{n} variable", other = "{n} variables" }
 "{n} votes" = { one = "{n} vote", other = "{n} votes" }
 "{n} votes left" = { one = "{n} vote left", other = "{n} votes left" }
@@ -1931,7 +1952,10 @@ name = "English"
 "{n}m" = "{n}m"
 "{n}w" = "{n}w"
 "{page}, nothing selected" = "{page}, nothing selected"
+"{pattern}, {tied}" = "{pattern}, {tied}"
 "{percent}%" = "{percent}%"
+"{pieces}, {islands}, {specks}, {length} mm cut" = "{pieces}, {islands}, {specks}, {length} mm cut"
+"{pieces}, {specks}, {length} mm cut" = "{pieces}, {specks}, {length} mm cut"
 "{profile} (current)" = "{profile} (current)"
 "{property} is its value; {property ? \"a\" : \"b\"} picks a string. Other {…} stays as written." = "{property} is its value; {property ? \"a\" : \"b\"} picks a string. Other {…} stays as written."
 "{server} can't say what became of your files (it is older than this app)." = "{server} can't say what became of your files (it is older than this app)."

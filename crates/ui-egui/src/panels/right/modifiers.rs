@@ -74,6 +74,9 @@ pub(crate) enum Field {
     /// A stencil's `cutColours`: the design's colours (`modifier.stencilInfo`), one row each with
     /// its swatch, hex and area and a toggle that cuts it out.
     CutColours { param: &'static str },
+    /// An optional angle in degrees (`null`: no preferred direction): a number field that shows
+    /// "Any" while unset, with a minus that unsets it (the stencil's `tieAngle`).
+    AnyAngle { param: &'static str, lead: FieldLead },
 }
 
 impl Field {
@@ -84,7 +87,8 @@ impl Field {
             | Field::Choice { param, .. }
             | Field::Target { param }
             | Field::Colour { param, .. }
-            | Field::CutColours { param } => param,
+            | Field::CutColours { param }
+            | Field::AnyAngle { param, .. } => param,
         }
     }
 }
@@ -112,6 +116,11 @@ const fn int(param: &'static str, lead: FieldLead, min: f64, max: f64) -> Field 
 /// A physical length in millimetres (stencil sizes and limits).
 const fn mm(param: &'static str, lead: FieldLead, unit: &'static str, max: f64) -> Field {
     Field::Num { param, lead, unit, min: 0.0, max, step: 0.1, scale: 1.0, int: false }
+}
+
+/// A physical length in millimetres within `min`–`max`.
+const fn mm_in(param: &'static str, lead: FieldLead, min: f64, max: f64) -> Field {
+    Field::Num { param, lead, unit: "mm", min, max, step: 0.1, scale: 1.0, int: false }
 }
 
 const X: FieldLead = FieldLead::Raw("X");
@@ -155,12 +164,24 @@ const STENCIL_MODES: &[(&str, &str)] = &[("threshold", tr_noop("Cut the lighter 
 /// Stencil previews: (value written in `preview`, label).
 const STENCIL_PREVIEWS: &[(&str, &str)] = &[("paper", tr_noop("Paper preview")), ("cloth", tr_noop("Dyed cloth preview"))];
 
+/// Stencil island holding: (value written in `tieMode`, label).
+const TIE_MODES: &[(&str, &str)] =
+    &[("ties", tr_noop("Tie the islands")), ("pattern", tr_noop("Tie with a pattern")), ("gauze", tr_noop("Hold the islands with gauze"))];
+
+/// Stencil tie lattices: (value written in `patternType`, label).
+const PATTERN_TYPES: &[(&str, &str)] =
+    &[("grid", tr_noop("Grid")), ("horizontal", tr_noop("Horizontal lines")), ("vertical", tr_noop("Vertical lines"))];
+
+/// Where a stencil's tie lattice goes: (value written in `patternWhere`, label).
+const PATTERN_WHERE: &[(&str, &str)] = &[("everywhere", tr_noop("Everywhere")), ("islands", tr_noop("Only around islands"))];
+
 /// Small grey labels that group a kind's settings (`widgets::sublabels`, as the Design panel labels
 /// "Position" and "Rotation"): (kind, the first parameter of the row they go over, label).
 const HEADINGS: &[(&str, &str, &str)] = &[
     ("stencil", "colourMode", tr_noop("Colours")),
     ("stencil", "widthMm", tr_noop("Size")),
     ("stencil", "minCutAreaMm2", tr_noop("Clean-up")),
+    ("stencil", "tieMode", tr_noop("Ties")),
     ("stencil", "preview", tr_noop("Preview")),
 ];
 
@@ -257,6 +278,17 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[mm("minCutWidthMm", text(tr_noop("Thinnest cut")), "mm", 100.0)],
             &[mm("minBridgeMm", text(tr_noop("Thinnest paper")), "mm", 100.0)],
             &[mm("toleranceMm", text(tr_noop("Smoothing")), "mm", 10.0)],
+            &[Field::Choice { param: "tieMode", options: TIE_MODES, translate: true }],
+            &[Field::Choice { param: "patternType", options: PATTERN_TYPES, translate: true }],
+            &[mm_in("patternWidthMm", text(tr_noop("Tie size")), figcraft_modifiers::MIN_TIE_WIDTH_MM, figcraft_modifiers::MAX_TIE_WIDTH_MM)],
+            &[mm_in("patternSpacingMm", text(tr_noop("Spacing")), 0.5, 500.0)],
+            &[deg("patternAngle", text(tr_noop("Angle")), 0.0, 360.0)],
+            &[Field::Choice { param: "patternWhere", options: PATTERN_WHERE, translate: true }],
+            &[mm_in("tieWidthMm", text(tr_noop("Tie width")), figcraft_modifiers::MIN_TIE_WIDTH_MM, figcraft_modifiers::MAX_TIE_WIDTH_MM)],
+            &[int("tiesPerIsland", text(tr_noop("Ties per island")), 1.0, figcraft_modifiers::MAX_TIES_PER_ISLAND as f64)],
+            &[Field::AnyAngle { param: "tieAngle", lead: text(tr_noop("Direction")) }],
+            &[int("tieSeed", text(tr_noop("Seed")), 0.0, SEED_MAX)],
+            &[Field::Check { param: "tieSpread", label: tr_noop("Spread the ties around each island") }],
             &[Field::Choice { param: "preview", options: STENCIL_PREVIEWS, translate: true }],
             &[Field::Colour { param: "paperColour", label: tr_noop("Paper") }],
             &[Field::Colour { param: "pasteColour", label: tr_noop("Paste") }, Field::Colour { param: "clothColour", label: tr_noop("Cloth") }],
@@ -468,6 +500,10 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         for w in r.stencil.iter().flat_map(|s| s.warnings.iter()).filter(|w| !own.contains(&w.as_str())) {
             widgets::note(ui, w, t.warning);
         }
+        // Islands no tie holds would fall out of the cut sheet.
+        if let Some(w) = r.stencil.as_ref().and_then(|s| s.stats).and_then(|s| untied_warning(&s, gauze(r))) {
+            widgets::note(ui, &w, t.warning);
+        }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
     }
     for w in warnings.iter().filter(|w| w.modifier.as_deref().is_none_or(|m| !rows.iter().any(|r| r.id == m))) {
@@ -578,6 +614,10 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
         if let Some(h) = fields.first().and_then(|f| heading(&r.kind, f.param())) {
             widgets::sublabels(ui, tr(h), None);
         }
+        // Under a tie pattern, the automatic ties only hold the islands the lattice misses.
+        if r.kind == "stencil" && fields.first().is_some_and(|f| f.param() == "tieWidthMm") && tie_mode(r) == Some("pattern") {
+            widgets::sublabels(ui, tr("Fallback ties"), None);
+        }
         let fields = &shown[..];
         // Colours are named by small labels over their columns, like the Layout grid's fields.
         if let [Field::Colour { label: a, .. }, rest @ ..] = fields {
@@ -603,6 +643,7 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
         };
         let width = match fields {
             [f @ Field::Num { .. }] if shows_chip(app, ids, r, f.param()) || long_lead(f) => half * 2.0 + widgets::GUTTER,
+            [Field::AnyAngle { .. }] => half * 2.0 + widgets::GUTTER,
             _ => half,
         };
         row(ui, 32.0, |ui| {
@@ -626,15 +667,53 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             }
         }
     }
-    // What the stencil came to: its pieces, the specks clean-up dropped and the length to cut.
+    // What the stencil came to: its pieces, its islands and how they're held, the specks
+    // clean-up dropped and the length to cut.
     if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
-        let line = trn(
-            "{n} pieces, {specks} specks dropped, {length} mm cut",
-            stats.cut_pieces,
-            &[("specks", &stats.dropped_specks.to_string()), ("length", &mm_text(stats.cut_length_mm))],
-        );
-        widgets::note(ui, &line, t.text_secondary);
+        widgets::note(ui, &stats_line(&stats, gauze(r)), t.text_secondary);
     }
+}
+
+/// How row `r` holds its islands, when it's the same on every layer: `ties`, `pattern`, `gauze`.
+fn tie_mode(r: &RowView) -> Option<&str> {
+    common_str(&r.params, "tieMode")
+}
+
+/// Whether row `r` holds its islands with gauze on every layer (no ties).
+fn gauze(r: &RowView) -> bool {
+    tie_mode(r) == Some("gauze")
+}
+
+/// A stencil's stats line: "3 pieces, 2 islands tied with 4 ties, 1 speck dropped, 812.5 mm cut"
+/// (islands named only when there are some; held by gauze when `gauze`; those a tie pattern holds
+/// counted apart).
+pub(crate) fn stats_line(stats: &StencilStats, gauze: bool) -> String {
+    let pieces = trn("{n} pieces", stats.cut_pieces, &[]);
+    let specks = trn("{n} specks dropped", stats.dropped_specks, &[]);
+    let length = mm_text(stats.cut_length_mm);
+    if stats.islands == 0 {
+        return trf("{pieces}, {specks}, {length} mm cut", &[("pieces", &pieces), ("specks", &specks), ("length", &length)]);
+    }
+    let islands = if gauze {
+        trn("{n} islands held by the gauze", stats.islands, &[])
+    } else {
+        // The lattice holds some; tie bars the others (any left over are warned of).
+        let ties = trn("{n} ties", stats.ties, &[]);
+        let tied = stats.islands.saturating_sub(stats.pattern_held).saturating_sub(stats.untied);
+        let by_ties = trn("{n} islands tied with {ties}", tied, &[("ties", &ties)]);
+        match stats.pattern_held {
+            0 => by_ties,
+            held if tied == 0 => trn("{n} islands held by the pattern", held, &[]),
+            held => trf("{pattern}, {tied}", &[("pattern", &trn("{n} islands held by the pattern", held, &[])), ("tied", &by_ties)]),
+        }
+    };
+    trf("{pieces}, {islands}, {specks}, {length} mm cut", &[("pieces", &pieces), ("islands", &islands), ("specks", &specks), ("length", &length)])
+}
+
+/// The warning for a stencil's islands no tie holds (they'd fall out of the cut sheet); `None`
+/// with gauze or when every island is tied.
+pub(crate) fn untied_warning(stats: &StencilStats, gauze: bool) -> Option<String> {
+    (!gauze && stats.untied > 0).then(|| trn("{n} islands have no tie and would fall out", stats.untied, &[]))
 }
 
 /// Whether field `f` of row `r` does anything for the row's current choices (wallpaper and
@@ -656,13 +735,17 @@ fn common_str<'a>(params: &'a [(NodeId, Map<String, Value>)], param: &str) -> Op
 
 /// A stencil's conditional fields: the threshold only when it cuts by lightness, the swatch list
 /// only when it cuts the colours picked, the paper colour for the paper preview and the paste and
-/// cloth colours for the cloth one. Layers that differ show both.
+/// cloth colours for the cloth one, the tie settings unless the islands are held by gauze, the
+/// lattice's settings with a tie pattern.
+/// Layers that differ show both.
 fn stencil_applies(r: &RowView, f: &Field) -> bool {
     let mode = common_str(&r.params, "colourMode");
     let preview = common_str(&r.params, "preview");
     match f.param() {
         "threshold" => mode != Some("pick"),
         "cutColours" => mode.is_none_or(|m| m == "pick"),
+        "tieWidthMm" | "tiesPerIsland" | "tieAngle" | "tieSeed" | "tieSpread" => !gauze(r),
+        "patternType" | "patternWidthMm" | "patternSpacingMm" | "patternAngle" | "patternWhere" => tie_mode(r).is_none_or(|m| m == "pattern"),
         "paperColour" => preview != Some("cloth"),
         "pasteColour" | "clothColour" => preview != Some("paper"),
         _ => true,
@@ -758,6 +841,7 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
         }
         Field::Colour { label, .. } => colour_field(app, ui, ids, i, r, param, tr(label), half),
         Field::CutColours { .. } => cut_colours(app, ui, i, r, param),
+        Field::AnyAngle { lead, .. } => any_angle(app, ui, ids, i, r, param, *lead, half),
         // Dropdowns span both field columns, ending where the number fields do.
         Field::Target { .. } => target_field(app, ui, ids, i, r, param, half * 2.0 + widgets::GUTTER),
         Field::Check { label, .. } => {
@@ -806,6 +890,46 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 _ => control(app, ui),
             }
         }
+    }
+}
+
+/// Optional angle `param` of row `i`, `width` wide: "Any" while unset on every layer ("Mixed"
+/// while they differ); a typed or scrubbed angle (wrapped to 0–360°) sets it on every layer; the
+/// minus beside it (while one is set) unsets it again.
+#[allow(clippy::too_many_arguments)]
+fn any_angle(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, param: &'static str, lead: FieldLead, width: f32) {
+    let lead = match lead {
+        FieldLead::Raw(s) => Lead::Text(s),
+        FieldLead::Text(k) => Lead::Text(tr(k)),
+        FieldLead::Icon(icon, k) => Lead::Icon(icon, tr(k)),
+    };
+    let unset = r.params.iter().all(|(_, p)| p.get(param).is_none_or(Value::is_null));
+    let shown = common_num(&r.params, param);
+    let empty = if unset { tr("Any") } else { tr("Mixed") };
+    let wrap = |v: f64| v.is_finite().then(|| json!(v.rem_euclid(360.0) + 0.0));
+    let w = if unset { width } else { (width - 24.0 - widgets::GUTTER).max(40.0) };
+    let id = Id::unique(("mod", param, i));
+    match widgets::number_field_bindable(ui, id, lead, shown, "°", w, 1.0, None, Empty::Text(empty)).0 {
+        Some(Edit::All(fe)) => app.field_run(Some(fe), "modifier.set", |v| match wrap(v) {
+            Some(a) => json!({"ids": ids, "index": i, "props": {param: a}}),
+            None => json!({}),
+        }),
+        // Layers without an angle step from 0.
+        Some(Edit::Each(rel)) => {
+            let steps = r
+                .params
+                .iter()
+                .filter_map(|(id, p)| {
+                    let a = wrap(rel.apply(p.get(param).and_then(Value::as_f64).unwrap_or(0.0))?)?;
+                    Some(("modifier.set", json!({"ids": [id], "index": i, "props": {param: a}})))
+                })
+                .collect();
+            one_step(app, "Edit", steps);
+        }
+        None => {}
+    }
+    if !unset && icons::button(ui, Icon::Minus, 24.0, false, tr("Any direction")).clicked() {
+        app.run("modifier.set", json!({"ids": ids, "index": i, "props": {param: Value::Null}}));
     }
 }
 
@@ -957,6 +1081,12 @@ pub(crate) struct StencilStats {
     pub(crate) cut_pieces: usize,
     pub(crate) dropped_specks: usize,
     pub(crate) cut_length_mm: f64,
+    /// Paper islands found (nested ones included), tie bars added, islands left without a tie,
+    /// islands a tie pattern holds.
+    pub(crate) islands: usize,
+    pub(crate) ties: usize,
+    pub(crate) untied: usize,
+    pub(crate) pattern_held: usize,
 }
 
 impl StencilInfo {
@@ -975,6 +1105,10 @@ impl StencilInfo {
                 cut_pieces: i.stats.cut_pieces,
                 dropped_specks: i.stats.dropped_specks,
                 cut_length_mm: finite(i.stats.cut_length_mm),
+                islands: i.stats.islands,
+                ties: i.stats.ties,
+                untied: i.stats.untied,
+                pattern_held: i.stats.pattern_held,
             }),
             sheet: Some((finite(i.sheet_mm.0), finite(i.sheet_mm.1))),
         }
