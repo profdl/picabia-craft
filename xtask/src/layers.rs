@@ -18,6 +18,8 @@ const TABLE: &[(&str, u8)] = &[
     ("modifiers", 2),
     ("render", 3),
     ("format", 3),
+    // PICABIA: stencil geometry (visible regions, clean-up, sheet) on pathops + modifiers.
+    ("stencil", 3),
     ("svg", 4),
     ("pdf", 4),
     ("vectordrawable", 4),

@@ -1953,6 +1953,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "figcraft-stencil"
+version = "0.12.1"
+dependencies = [
+ "figcraft-doc",
+ "figcraft-geom",
+ "figcraft-modifiers",
+ "figcraft-pathops",
+]
+
+[[package]]
 name = "figcraft-svg"
 version = "0.12.1"
 dependencies = [

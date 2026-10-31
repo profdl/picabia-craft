@@ -1,0 +1,15 @@
+[package]
+name = "figcraft-stencil"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Picabia stencil geometry: a layer's painted outlines to a laser-cut katagami sheet (visible regions by paint order, colour selection, clean-up at physical size, the sheet)"
+
+[lints]
+workspace = true
+
+[dependencies]
+figcraft-geom = { workspace = true }
+figcraft-doc = { workspace = true }
+figcraft-pathops = { workspace = true }
+figcraft-modifiers = { workspace = true }
