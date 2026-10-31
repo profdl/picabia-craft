@@ -43,8 +43,15 @@ pub struct Paint {
 }
 
 #[cfg(test)]
+extern crate self as figcraft_stencil;
+#[cfg(test)]
 mod colour_tests;
 #[cfg(test)]
 mod compute_tests;
+#[cfg(test)]
+#[path = "../tests/support/fixture.rs"]
+mod fixture;
+#[cfg(test)]
+mod fixture_tests;
 #[cfg(test)]
 mod visible_tests;
