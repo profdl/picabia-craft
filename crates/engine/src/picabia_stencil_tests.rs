@@ -431,3 +431,34 @@ fn stencil_info_lists_islands_and_their_stats() {
     assert_eq!(w["islands"], json!([]));
     assert_eq!(w["stats"]["islands"], 0);
 }
+
+#[test]
+fn a_ring_around_an_island_reports_it_tied_through_stencil_info() {
+    // A black square with a white ring cut out of it and a black island in the ring.
+    let mut s = Session::new();
+    let ids: Vec<NodeId> = [(0.0, 0.0, 100.0, BLACK), (20.0, 20.0, 60.0, WHITE), (40.0, 40.0, 20.0, BLACK)]
+        .into_iter()
+        .map(|(x, y, w, hex)| {
+            let id = id_of(&ex(&mut s, "shape.rectangle", json!({"x": x, "y": y, "width": w, "height": w}))["id"]).unwrap();
+            ex(&mut s, "node.set", json!({"ids": [id], "props": {"fills": [{"type": "solid", "color": format!("#{hex}")}]}}));
+            id
+        })
+        .collect();
+    let g = id_of(&ex(&mut s, "modifier.stencilFromSelection", json!({"ids": ids}))["id"]).unwrap();
+    let i = ex(&mut s, "modifier.stencilInfo", json!({"id": g}));
+    let islands = i["islands"].as_array().unwrap();
+    assert_eq!(islands.len(), 1, "{i}");
+    let isl = &islands[0];
+    for (k, want) in [("x", 40.0), ("y", 40.0), ("w", 20.0), ("h", 20.0)] {
+        assert!((isl[k].as_f64().unwrap() - want).abs() < 1.0, "{k}, layer space: {isl}");
+    }
+    assert_eq!(isl["depth"], 0);
+    assert_eq!(isl["tied"], 2, "two ties by default: {isl}");
+    assert_eq!(i["stats"]["islands"], 1);
+    assert_eq!(i["stats"]["ties"], 2);
+    assert_eq!(i["stats"]["untied"], 0);
+    // The tie bars are kept for the canvas markers.
+    let doc = s.doc().unwrap();
+    let (info, _) = info(doc, doc.node(g).unwrap()).unwrap();
+    assert!(area(&info.ties) > 0.0);
+}
