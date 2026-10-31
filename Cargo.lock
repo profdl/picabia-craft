@@ -1795,6 +1795,7 @@ dependencies = [
  "figcraft-pdf",
  "figcraft-plugin",
  "figcraft-render",
+ "figcraft-stencil",
  "figcraft-svg",
  "figcraft-text",
  "figcraft-vectordrawable",

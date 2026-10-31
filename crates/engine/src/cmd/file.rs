@@ -347,6 +347,7 @@ pub fn export_file(doc: &Document, ids: &[NodeId], setting: &ExportSetting, scal
     if ids.is_empty() {
         return Err(nothing());
     }
+    crate::picabia_stencil::ensure(doc); // PICABIA: stencil sheets are computed before they're exported
     let drawn = drawn_layers(doc, ids, setting);
     if setting.format.is_vector() {
         figcraft_render::check_export_depth(doc, &drawn).map_err(|e| EngineError::Other(e.to_string()))?;

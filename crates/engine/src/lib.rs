@@ -103,6 +103,7 @@ mod doc_state;
 mod error;
 mod picabia_bake; // PICABIA: .fig/Penpot exports bake modifier copies.
 mod picabia_bind; // PICABIA: variable bindings on modifier params.
+pub mod picabia_stencil; // PICABIA: stencil layers (gather, compute, cache, refresh).
 mod prefs;
 mod session;
 mod view_state;
@@ -409,6 +410,8 @@ mod picabia_binding_tests; // PICABIA: modifier binding and expression tests.
 mod picabia_canvas_tests; // PICABIA: modifier copies on the canvas and in exports.
 #[cfg(test)]
 mod picabia_modifier_tests; // PICABIA: modifier command tests.
+#[cfg(test)]
+mod picabia_stencil_tests; // PICABIA: stencil gather, cache and commands.
 #[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]

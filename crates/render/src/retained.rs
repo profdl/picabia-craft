@@ -147,7 +147,7 @@ impl Retained {
             self.last = None;
             return None;
         };
-        let fonts = figcraft_text::layout_generation();
+        let fonts = crate::picabia::frame_generation(); // PICABIA: a stencil result arriving repaints, like fonts
         let mut work = Work::Full;
         let mut sens = None;
         if let Some(last) = self.last.take()

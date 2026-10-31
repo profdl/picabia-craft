@@ -86,6 +86,20 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             apply::apply
         ),
+        spec!(
+            "modifier.stencilInfo",
+            "Stencil info",
+            "{id?} (computes the stencil when it is out of date) → {stencil (the stencil row's id; null when the layer's stack doesn't end in one), colours: [{hex, cut, area (mm², visible)}], warnings: [..], stats: {cutPieces, droppedSpecks, filledHoles, cutLengthMm, areaCutMm2}, sheetMm: {w, h}, shapes (outlines gathered)}",
+            false,
+            stencil_info
+        ),
+        spec!(
+            "modifier.stencilFromSelection",
+            "Make stencil",
+            "{ids?, props? (the stencil's params, as modifier.add)} (several layers are grouped first, as object.group; one group, frame or layer takes the row itself) → {id (the stencil layer, selected), modifier}",
+            true,
+            stencil_from_selection
+        ),
     ]
 }
 
@@ -353,4 +367,51 @@ fn remove_all(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     ok()
+}
+
+fn stencil_info(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "modifier.stencilInfo";
+    let id = targets(s, p).first().copied().ok_or_else(|| bad(CMD, "select a layer or pass `id`"))?;
+    let doc = s.doc()?;
+    let n = doc.get(id)?;
+    if !figcraft_render::picabia::stencil::is_stencil(n) {
+        return Ok(json!({"id": id, "stencil": null}));
+    }
+    let info = match crate::picabia_stencil::info(doc, n) {
+        Some((i, true)) => Some(i),
+        _ => crate::picabia_stencil::compute_now(doc, id),
+    };
+    let mut out = info.map_or_else(|| json!({"stencil": null}), |i| crate::picabia_stencil::info_json(&i));
+    out["id"] = json!(id);
+    Ok(out)
+}
+
+fn stencil_from_selection(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "modifier.stencilFromSelection";
+    let mut template = Modifier::new("", "stencil").ok_or_else(|| bad(CMD, "no stencil kind"))?;
+    if let Some(props) = props_of(CMD, p, false)? {
+        template.set_props(props).map_err(|e| bad(CMD, e.to_string()))?;
+    }
+    let ids = layers(CMD, s, p)?;
+    let id = match ids.as_slice() {
+        [] => return Err(bad(CMD, "select the layers to make a stencil of")),
+        [one] => *one,
+        many => {
+            let group = super::find_command("object.group").ok_or_else(|| bad(CMD, "grouping isn't available"))?;
+            let r = (group.run)(s, &json!({"ids": many, "name": "Stencil"}))?;
+            crate::params::id_of(&r["id"]).ok_or_else(|| bad(CMD, "grouping the selection failed"))?
+        }
+    };
+    let stack = read(CMD, s.doc()?, id)?;
+    if stack.stencil().is_some() {
+        return Err(EngineError::Disabled(CMD.into(), format!("layer {id} is a stencil already")));
+    }
+    let mut added = None;
+    edit(CMD, s, &json!({"ids": [id]}), |stack, id| {
+        let m = stack.insert(usize::MAX, template.clone()).map_err(|e| bad(CMD, format!("layer {id}: {e}")))?;
+        added = Some(m.id.clone());
+        Ok(())
+    })?;
+    s.set_selection(vec![id]);
+    Ok(json!({"id": id, "modifier": added}))
 }

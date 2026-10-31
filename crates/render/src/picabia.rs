@@ -19,6 +19,15 @@ use figcraft_geom::{Affine, Point, Rect};
 
 pub use figcraft_modifiers::PLUGIN_KEY;
 
+pub mod stencil;
+
+/// What retained renders and canvas jobs compare to know text or stencils changed under them:
+/// the text layout generation (fonts arriving) mixed with [`stencil::generation`] (a stencil
+/// result arriving), so either repaints.
+pub fn frame_generation() -> u64 {
+    figcraft_text::layout_generation().wrapping_add(stencil::generation().wrapping_mul(0x9E37_79B9_7F4A_7C15))
+}
+
 /// The most layer draws one top-level draw makes through nested stacks (a stacked group holding
 /// stacked layers multiplies). Past it, inner stacks draw fewer copies.
 pub const MAX_NESTED_COPIES: usize = 100_000;
@@ -68,10 +77,12 @@ pub fn each_copy(doc: &Document, n: &Node, mut f: impl FnMut(Affine)) -> bool {
 /// `transform_rect_bbox(n.transform, r)` for a layer without a stack.
 pub fn parent_bbox(doc: &Document, n: &Node, r: Rect) -> Rect {
     let one = figcraft_geom::transform_rect_bbox(n.transform, r);
-    match instance_transforms(doc, n) {
+    let copies = match instance_transforms(doc, n) {
         Some(ts) => ts.iter().map(|t| figcraft_geom::transform_rect_bbox(*t * n.transform, r)).fold(one, |a, b| a.union(b)),
         None => one,
-    }
+    };
+    // A stencil layer draws its sheet.
+    stencil::parent_sheet(doc, n).map_or(copies, |s| copies.union(s))
 }
 
 /// Whether `id` or one of its ancestors has modifier data.
@@ -183,16 +194,26 @@ fn copies_render_bounds(doc: &Document, id: NodeId, own: bool, depth: usize) -> 
     if !own {
         return extra;
     }
+    // A stencil layer draws its sheet (copies of it included: they're in the sheet).
+    let sheet = stencil::world_sheet(doc, id);
     let copies = page_copies(doc, id);
     if copies.is_empty() {
-        return extra;
+        return union_some(extra, sheet);
     }
     let mut b = doc.world_render_bounds(id)?;
     if let Some(e) = extra {
         b = b.union(e);
     }
     let start = draws_original(doc, id).then_some(b);
-    copies.iter().map(|c| figcraft_geom::transform_rect_bbox(*c, b)).fold(start, |a, c| Some(a.map_or(c, |a| a.union(c))))
+    let all = copies.iter().map(|c| figcraft_geom::transform_rect_bbox(*c, b)).fold(start, |a, c| Some(a.map_or(c, |a| a.union(c))));
+    union_some(all, sheet)
+}
+
+fn union_some(a: Option<Rect>, b: Option<Rect>) -> Option<Rect> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some(a.union(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// Whether layer `id` draws where it is: no active stack, or one with an identity copy.
@@ -254,7 +275,27 @@ pub fn paints_over(doc: &Document, a: NodeId, b: NodeId) -> bool {
 /// layer is hit as the layer itself (the leaf the original would give at the same spot of the
 /// copy). `normal` is what hit testing without copies found; the front-most of the two wins.
 pub fn hit_with_copies(doc: &Document, root: NodeId, p: Point, tol: f64, result: BoolResult, normal: Option<NodeId>) -> Option<NodeId> {
-    copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_in(doc, id, q, tol, result))
+    let hit = copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_in(doc, id, q, tol, result));
+    stencil_hit(doc, root, p, hit)
+}
+
+/// The front-most of `normal` and the stencil layers within `root` whose sheet holds page point
+/// `p` (the sheet hides the design: a click anywhere on it hits the layer).
+fn stencil_hit(doc: &Document, root: NodeId, p: Point, normal: Option<NodeId>) -> Option<NodeId> {
+    let mut best = normal;
+    walk(doc, root, &mut |id, n| {
+        if id == root || !stencil::is_stencil(n) || !clips_allow(doc, root, id, p) || !stencil::sheet_contains(doc, id, p) {
+            return;
+        }
+        best = match best {
+            None => Some(id),
+            // Something inside it was hit: that layer, as without the stencil.
+            Some(b) if b == id || doc.is_ancestor(id, b) => Some(b),
+            Some(b) if paints_over(doc, id, b) => Some(id),
+            keep => keep,
+        };
+    });
+    best
 }
 
 /// [`hit_with_copies`] in outline mode: copies are hit on their outlines too
@@ -268,7 +309,8 @@ pub fn hit_outlines_with_copies(
     also: figcraft_doc::geometry::OutlineHits,
     normal: Option<NodeId>,
 ) -> Option<NodeId> {
-    copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_outlines(doc, id, q, tol, result, also))
+    let hit = copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_outlines(doc, id, q, tol, result, also));
+    stencil_hit(doc, root, p, hit)
 }
 
 /// The front-most of `normal` and the leaf `leaf_at(layer, point in the original's place)` finds
@@ -299,7 +341,10 @@ fn copies_hit(doc: &Document, root: NodeId, p: Point, normal: Option<NodeId>, le
 /// Page-space bounds of every copy of `id` (its box), without the original.
 pub fn copy_boxes(doc: &Document, id: NodeId) -> Vec<Rect> {
     let Some(w) = doc.world_bounds(id) else { return Vec::new() };
-    page_copies(doc, id).into_iter().map(|c| figcraft_geom::transform_rect_bbox(c, w)).collect()
+    let mut out: Vec<Rect> = page_copies(doc, id).into_iter().map(|c| figcraft_geom::transform_rect_bbox(c, w)).collect();
+    // A stencil layer's sheet counts as one of its copies.
+    out.extend(stencil::world_sheet(doc, id));
+    out
 }
 
 fn touches(b: Rect, r: Rect) -> bool {
