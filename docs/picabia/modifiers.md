@@ -203,10 +203,24 @@ copies (the copies above it stand), and enabled rows below it are ignored with o
 the first enabled stencil counts). Apply bakes only the rows above it; the stencil row moves onto
 the new group, live.
 
-**Status: P8.** The row saves, loads, round-trips and is clamped, and the layer draws unchanged
-(the copies above it, as without the row). Computing the sheet (visible regions by paint order,
-colour selection, clean-up, margin) and drawing it on the canvas come in **P9**; ties for floating
-paper islands in P10; laser export (kerf, cut order, bed size) and `separate` in P12.
+**Status: P10.** The sheet is computed (visible regions by paint order, colour selection,
+clean-up, margin) and drawn on the canvas and in exports. **Islands** (paper pieces the cut
+separates from the sheet, such as a crescent inside a cut swoosh) are found and held: by tie bars
+(`tieMode: ties`), by a lattice of thin bars across the cut (`pattern`, ties for the islands it
+misses), or kept and flagged (`gauze`). Laser export (kerf, cut order, bed size) and `separate`
+come in P12; the ties layer (hand-drawn ties, no-tie zones) later.
+
+**Islands and ties.** An island is a hole in the cut: the cut's contours nest (an outline, its
+holes, cut-outs in those holes...), and every hole is the outline of a piece of paper. Its depth
+counts the islands around it. In `ties` mode each island gets up to `tiesPerIsland` straight bars
+`tieWidthMm` wide across the cut to paper already held: the outline of the cut-out it sits in, or
+an island of the same cut-out tied before it (so a cluster of islands is tied outside in, each to
+its neighbour). Bars go along the shortest gaps, run half a width into the paper on both sides, and
+never touch another island, another cut-out or the sheet's edge. `tieSpread` keeps an island's
+bars apart around it; `tieAngle` prefers gaps along that direction (or the opposite one), and
+`tieSeed` decides between equally short gaps. After tying the islands are looked for again: any
+still floating is counted in the stats (`untied`) with a warning. The bars (and the lattice that
+became paper) are in the result for the preview overlay.
 
 Lengths here are **millimetres** at the stencil's physical size, unlike the point-based steps:
 `mm per point = widthMm / layer width` (the height follows the aspect ratio), and every `...Mm`

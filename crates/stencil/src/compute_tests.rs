@@ -1,6 +1,6 @@
 use figcraft_geom::kurbo::{BezPath, Rect, Shape};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::{Stencil, StencilColourMode};
+use figcraft_modifiers::{Stencil, StencilColourMode, StencilTieMode};
 
 use crate::{MAX_PAINTS, Paint, StencilError, StencilOut, compute};
 
@@ -20,8 +20,9 @@ fn on_black(white: &[Rect]) -> Vec<Paint> {
     v
 }
 
+/// Gauze: these tests look at the cut before ties change it (`hold_tests` has the ties).
 fn params() -> Stencil {
-    Stencil { width_mm: 100.0, margin_mm: 10.0, ..Stencil::default() }
+    Stencil { width_mm: 100.0, margin_mm: 10.0, tie_mode: StencilTieMode::Gauze, ..Stencil::default() }
 }
 
 /// No clean-up, no simplification.

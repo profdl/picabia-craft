@@ -101,7 +101,8 @@ impl std::error::Error for StencilError {}
 /// Steps: [`visible_regions`] (curves flattened at `toleranceMm / 4`, every ring simplified to
 /// `toleranceMm / 2`), the cut colours ([`Selector`]) merged into one region, clean-up (area
 /// filter, opening by `minCutWidthMm / 2` then closing by `minBridgeMm / 2` as three offsets,
-/// area filter again, simplify to `toleranceMm / 2`), the cut clipped to the sheet, `paper = sheet − cut`.
+/// area filter again, simplify to `toleranceMm / 2`), the cut clipped to the sheet, the islands
+/// found and held (ties, the pattern lattice, or none in gauze mode), `paper = sheet − cut`.
 ///
 /// More than [`MAX_PAINTS`] paints: an uncut sheet and a warning.
 pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result<StencilOut, StencilError> {
@@ -157,10 +158,17 @@ pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result
     if cut.elements().is_empty() {
         warnings.push("nothing is left to cut after clean-up".into());
     }
+    let held = crate::hold::hold(cut, sheet, &p, mpu);
+    warnings.extend(held.warnings);
+    let cut = held.cut;
     let mut stats = measure(&cut, mpu);
     stats.dropped_specks = cleaned.dropped_specks;
     stats.filled_holes = cleaned.filled_holes;
-    Ok(StencilOut { paper: paper(sheet, &cut), cut, sheet, mm_per_unit: mpu, warnings, stats, colours, ..StencilOut::default() })
+    stats.islands = held.islands.len();
+    stats.ties = held.ties_placed;
+    stats.pattern_held = held.pattern_held;
+    stats.untied = held.untied;
+    Ok(StencilOut { paper: paper(sheet, &cut), cut, sheet, mm_per_unit: mpu, warnings, stats, colours, ties: held.ties, islands: held.islands })
 }
 
 fn contains(outer: Rect, inner: Rect) -> bool {

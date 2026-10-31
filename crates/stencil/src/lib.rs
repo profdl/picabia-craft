@@ -11,6 +11,9 @@
 //!    `minCutWidthMm / 2` (thin cuts), a closing by `minBridgeMm / 2` (thin paper bridges),
 //!    simplification to the tolerance. The limits are widths; the radii are half of them.
 //! 4. The sheet (layer bounds plus `marginMm`) and `paper = sheet − cut`.
+//! 5. Islands (paper pieces the cut separates from the sheet: the holes in the cut, by contour
+//!    nesting) held by tie bars to the paper around them, by a lattice of bars (`pattern`, ties for
+//!    what it misses), or flagged (`gauze`); [`StencilOut::islands`], [`StencilOut::ties`].
 //!
 //! [`compute`] runs them all and returns a [`StencilOut`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -18,7 +21,12 @@
 mod clean;
 mod colour;
 mod compute;
+mod hold;
+mod index;
+mod islands;
+mod pattern;
 mod rings;
+mod ties;
 mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
@@ -55,5 +63,7 @@ mod compute_tests;
 mod fixture;
 #[cfg(test)]
 mod fixture_tests;
+#[cfg(test)]
+mod hold_tests;
 #[cfg(test)]
 mod visible_tests;

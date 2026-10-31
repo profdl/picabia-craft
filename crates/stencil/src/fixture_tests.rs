@@ -3,7 +3,7 @@
 use figcraft_doc::BoolOp;
 use figcraft_geom::kurbo::{Rect, Shape};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::Stencil;
+use figcraft_modifiers::{Stencil, StencilTieMode};
 
 use crate::fixture::{self, BOUNDS};
 use crate::{Selector, StencilOut, compute, mm_per_unit, rgb8, visible_regions};
@@ -48,9 +48,11 @@ fn colours_split_by_luminance() {
 #[test]
 fn the_stencil_of_the_fixture_is_clean() {
     let (paints, c) = fixture::design(120, 3);
-    let p = Stencil::default();
+    // Gauze: the cut before ties change it (the nest's disc stays an island).
+    let p = Stencil { tie_mode: StencilTieMode::Gauze, ..Stencil::default() };
     let out = compute(&paints, &p, BOUNDS).unwrap();
-    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(out.warnings.iter().all(|w| w.contains("gauze")), "{:?}", out.warnings);
+    assert!(out.stats.islands >= 1 && out.stats.untied == out.stats.islands, "{:?}", out.stats);
     let mpu = mm_per_unit(p.width_mm, BOUNDS).unwrap();
     assert_eq!(out.mm_per_unit, mpu);
     assert!((out.sheet.width() * mpu - (300.0 + 30.0)).abs() < 1e-9, "300 mm wide plus 15 mm a side");
@@ -82,7 +84,7 @@ fn the_stencil_of_the_fixture_is_clean() {
 #[test]
 fn inverting_cuts_the_rest() {
     let (paints, _) = fixture::design(90, 5);
-    let raw = Stencil { min_cut_area_mm2: 0.0, min_cut_width_mm: 0.0, min_bridge_mm: 0.0, ..Stencil::default() };
+    let raw = Stencil { min_cut_area_mm2: 0.0, min_cut_width_mm: 0.0, min_bridge_mm: 0.0, tie_mode: StencilTieMode::Gauze, ..Stencil::default() };
     let a = compute(&paints, &raw, BOUNDS).unwrap();
     let b = compute(&paints, &Stencil { invert: true, ..raw }, BOUNDS).unwrap();
     let total = a.cut.area() + b.cut.area();
@@ -103,4 +105,17 @@ fn the_cleanup_steps_each_remove_what_they_should() {
     assert!(open.cut_pieces < base.cut_pieces, "specks and thin glyphs open away: {base:?} → {open:?}");
     let close = pieces(&Stencil { min_bridge_mm: 3.0, ..none.clone() });
     assert!(close.cut_pieces < base.cut_pieces, "nearby cuts join: {base:?} → {close:?}");
+}
+
+#[test]
+fn the_fixture_ties_every_island() {
+    for seed in [3, 8, 21] {
+        let (paints, _) = fixture::design(120, seed);
+        for mode in [StencilTieMode::Ties, StencilTieMode::Pattern] {
+            let out = compute(&paints, &Stencil { tie_mode: mode, ..Stencil::default() }, BOUNDS).unwrap();
+            assert_eq!(out.stats.untied, 0, "seed {seed} {mode:?}: {:?} {:?}", out.stats, out.warnings);
+            assert!(out.islands.iter().all(|i| i.tied > 0 || i.pattern_held), "seed {seed} {mode:?}");
+            assert_eq!(crate::islands::Tree::new(&out.cut).unwrap().islands().len(), 0);
+        }
+    }
 }

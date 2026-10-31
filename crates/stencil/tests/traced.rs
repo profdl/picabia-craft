@@ -13,9 +13,9 @@ mod fixture;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use figcraft_geom::kurbo::{Affine, BezPath, Circle, Rect, Shape};
+use figcraft_geom::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::Stencil;
+use figcraft_modifiers::{Stencil, StencilTieMode};
 use figcraft_stencil::{Paint, compute, mm_per_unit, visible_regions};
 
 const SVG: &str = include_str!("fixtures/traced.svg");
@@ -123,6 +123,57 @@ fn the_traced_design_makes_a_sane_stencil() {
     assert!(inv.cut.area() > cut && inv.stats.cut_pieces > 0);
 }
 
+/// Islands still floating in a cut: holes in it (contours nested at odd depth), counted by
+/// brute-force containment, independent of the crate's own tree.
+fn floating(cut: &BezPath) -> usize {
+    let subs: Vec<BezPath> = split_subpaths(cut);
+    let probe = |s: &BezPath| {
+        let mut best = (0.0, Point::ZERO);
+        let mut last: Option<Point> = None;
+        for el in s.elements() {
+            let p = match el {
+                figcraft_geom::kurbo::PathEl::MoveTo(p) | figcraft_geom::kurbo::PathEl::LineTo(p) => *p,
+                _ => continue,
+            };
+            if let Some(l) = last {
+                let d: f64 = (p - l).hypot();
+                if d > best.0 {
+                    best = (d, l.midpoint(p));
+                }
+            }
+            last = Some(p);
+        }
+        best.1
+    };
+    let areas: Vec<f64> = subs.iter().map(|s| s.area().abs()).collect();
+    (0..subs.len())
+        .filter(|&i| {
+            let p = probe(&subs[i]);
+            let depth = (0..subs.len()).filter(|&j| j != i && areas[j] > areas[i] && subs[j].winding(p) != 0).count();
+            depth % 2 == 1
+        })
+        .count()
+}
+
+#[test]
+fn the_traced_design_has_no_floating_islands() {
+    let paints = traced();
+    let gauze = compute(&paints, &Stencil { tie_mode: StencilTieMode::Gauze, ..Stencil::default() }, BOUNDS).unwrap();
+    let found = gauze.stats.islands;
+    assert!(found > 0, "the traced art has paper islands (the crescent in the swoosh): {:?}", gauze.stats);
+    assert_eq!((gauze.stats.untied, floating(&gauze.cut)), (found, found), "gauze leaves them");
+    for mode in [StencilTieMode::Ties, StencilTieMode::Pattern] {
+        let out = compute(&paints, &Stencil { tie_mode: mode, ..Stencil::default() }, BOUNDS).unwrap();
+        assert_eq!(out.stats.islands, found, "{mode:?}");
+        assert_eq!(out.stats.untied, 0, "{mode:?}: {:?} {:?}", out.stats, out.warnings);
+        assert_eq!(floating(&out.cut), 0, "{mode:?}: nothing floats");
+        assert!(out.islands.iter().all(|i| i.tied > 0 || i.pattern_held), "{mode:?}: {:?}", out.islands);
+        let sheet = out.sheet.area();
+        assert!((out.paper.area() - (sheet - out.cut.area())).abs() < sheet * 1e-9);
+        eprintln!("{mode:?}: {:?}", out.stats);
+    }
+}
+
 fn time<T>(label: &str, runs: u32, mut f: impl FnMut() -> T) -> T {
     let mut out = f();
     let t = Instant::now();
@@ -142,7 +193,11 @@ fn report(name: &str, paints: &[Paint], bounds: Rect) {
     time(&format!("  {name} visible regions"), 5, || visible_regions(paints, tol / 4.0, tol / 2.0));
     let raw = Stencil { min_cut_width_mm: 0.0, min_bridge_mm: 0.0, ..p.clone() };
     time(&format!("  {name} compute, no opening/closing"), 5, || compute(paints, &raw, bounds).unwrap());
-    let out = time(&format!("  {name} compute, defaults"), 5, || compute(paints, &p, bounds).unwrap());
+    let gauze = Stencil { tie_mode: StencilTieMode::Gauze, ..p.clone() };
+    time(&format!("  {name} compute, gauze (islands found, no ties)"), 5, || compute(paints, &gauze, bounds).unwrap());
+    let pattern = Stencil { tie_mode: StencilTieMode::Pattern, ..p.clone() };
+    time(&format!("  {name} compute, pattern"), 5, || compute(paints, &pattern, bounds).unwrap());
+    let out = time(&format!("  {name} compute, defaults (ties)"), 5, || compute(paints, &p, bounds).unwrap());
     eprintln!("  {name} out: {} cut elements, {:?}", out.cut.elements().len(), out.stats);
 }
 
