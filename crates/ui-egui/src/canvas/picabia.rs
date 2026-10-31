@@ -1,5 +1,6 @@
 //! Picabia: canvas outlines on a layer's modifier copies (the hover outline shows on every copy;
-//! a selected layer's copies get the faint outline boolean operands get).
+//! a selected layer's copies get the faint outline boolean operands get); a selected stencil
+//! layer's tie bars and the islands no tie holds.
 
 use egui::{Pos2, Shape, Stroke};
 use figcraft_doc::{Document, NodeId, NodeKind};
@@ -99,6 +100,7 @@ pub(super) fn modifier_overlay(app: &FigApp, painter: &egui::Painter, col: egui:
             }
         }
     }
+    stencil_markers(app, painter, col);
     let ov = &app.session.tool.overlay;
     if let Some(hs) = app.session.modifier_handles() {
         for (h, at) in &hs.handles {
@@ -124,5 +126,74 @@ pub(super) fn stencil_tick(app: &FigApp, ctx: &egui::Context) {
     figcraft_engine::picabia_stencil::refresh(&ds.doc);
     if figcraft_engine::picabia_stencil::busy() {
         ctx.request_repaint_after(std::time::Duration::from_millis(40));
+    }
+}
+
+/// The most outline segments the stencil markers draw (a fine lattice over a big sheet has many).
+const MAX_MARKER_SEGMENTS: usize = 50_000;
+
+/// Over each selected stencil layer with a result: its tie bars (and lattice bars) outlined
+/// thinly in the selection colour `col`, and every island no tie holds outlined (its bounds,
+/// dashed) in the warning colour, as the panel warns of them. Islands are expected to be loose
+/// with gauze, so nothing is flagged then.
+fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
+    use figcraft_render::picabia::stencil as store;
+    let Ok(ds) = app.session.ds() else { return };
+    let doc = &ds.doc;
+    let zoom = ds.view.zoom.max(1e-6);
+    let warn = crate::theme::Tokens::get(painter.ctx()).warning;
+    let mut budget = MAX_MARKER_SEGMENTS;
+    for id in &ds.selection {
+        let Some(n) = doc.node(*id).filter(|n| n.visible && store::is_stencil(n)) else { continue };
+        let Some((info, _)) = figcraft_engine::picabia_stencil::info(doc, n) else { continue };
+        let w = doc.world_transform(*id);
+        if !w.is_finite() {
+            continue;
+        }
+        let screen = |p: Point| {
+            let q = w * p;
+            app.to_screen(q.x, q.y)
+        };
+        let ties = stroke(col.gamma_multiply(0.85), 1.0);
+        let mut cur: Vec<Pos2> = Vec::new();
+        let flush = |cur: &mut Vec<Pos2>, budget: &mut usize| {
+            if cur.len() > 1 && *budget >= cur.len() {
+                *budget -= cur.len();
+                painter.add(Shape::line(std::mem::take(cur), ties));
+            }
+            cur.clear();
+        };
+        figcraft_geom::kurbo::flatten(info.ties.iter(), 0.5 / zoom, |el| {
+            use figcraft_geom::kurbo::PathEl::*;
+            match el {
+                MoveTo(q) => {
+                    flush(&mut cur, &mut budget);
+                    cur.push(screen(q));
+                }
+                LineTo(q) => cur.push(screen(q)),
+                ClosePath => {
+                    if let Some(f) = cur.first().copied() {
+                        cur.push(f);
+                    }
+                    flush(&mut cur, &mut budget);
+                }
+                _ => {}
+            }
+        });
+        flush(&mut cur, &mut budget);
+        let gauze = store::frame(doc, n).is_some_and(|f| f.params.tie_mode == figcraft_modifiers::StencilTieMode::Gauze);
+        if gauze {
+            continue;
+        }
+        let loose = stroke(warn, 1.5);
+        for island in info.islands.iter().filter(|i| i.tied == 0 && !i.pattern_held) {
+            let b = island.bounds;
+            if budget < 4 || ![b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) {
+                continue;
+            }
+            budget -= 4;
+            let c = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1), Point::new(b.x0, b.y0)];
+            painter.add(Shape::dashed_line(&c.map(screen), loose, 4.0, 3.0));
+        }
     }
 }

@@ -1,5 +1,6 @@
 //! PICABIA: the Modifiers submenu (Object menu and context menu), the Actions palette listing the
-//! modifier commands, no default shortcuts, the layers badge's state, and the Inspect/a11y lines.
+//! modifier commands, no default shortcuts, the layers badge's state, and the Inspect/a11y lines;
+//! a selected stencil's canvas markers (tie bars, islands no tie holds).
 
 use egui::Pos2;
 use figcraft_engine::Session;
@@ -126,4 +127,70 @@ fn the_object_menu_has_a_modifiers_submenu() {
     u.button(at, true);
     u.button(at, false);
     assert!(!u.app.session.doc().unwrap().node(r).unwrap().plugin_data.contains_key(figcraft_modifiers::PLUGIN_KEY));
+}
+
+/// A selected 100 × 100 stencil rectangle at (100, 100) whose result (put in the store as the
+/// engine would) has a tie bar at (10, 45)-(40, 50) and an untied island at (40, 40)-(60, 60)
+/// beside a tied one, in the layer's space.
+fn stencil_with_islands(mode: &str) -> (Ui, figcraft_doc::NodeId) {
+    use figcraft_render::picabia::stencil as store;
+    let mut s = Session::new();
+    let r = id(&s.execute("shape.rectangle", &json!({"x": 100, "y": 100, "width": 100, "height": 100})).unwrap());
+    s.execute("modifier.add", &json!({"ids": [r], "kind": "stencil", "props": {"tieMode": mode}})).unwrap();
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let doc = s.doc().unwrap();
+    let mut info = (*figcraft_engine::picabia_stencil::compute_now(doc, r).unwrap()).clone();
+    let island = |b, tied| figcraft_engine::picabia_stencil::Island { bounds: b, tied, pattern_held: false, nested_depth: 0 };
+    info.islands = vec![island(figcraft_geom::Rect::new(40.0, 40.0, 60.0, 60.0), 0), island(figcraft_geom::Rect::new(70.0, 70.0, 80.0, 80.0), 2)];
+    info.ties = figcraft_geom::kurbo::Shape::to_path(&figcraft_geom::Rect::new(10.0, 45.0, 40.0, 50.0), 0.1);
+    let (shape, _) = store::lookup(doc, doc.node(r).unwrap()).unwrap();
+    let extra: std::sync::Arc<dyn std::any::Any + Send + Sync> = std::sync::Arc::new(info);
+    let shape = store::StencilShape { cut: shape.cut.clone(), paper: shape.paper.clone(), sheet: shape.sheet, extra: Some(extra) };
+    store::store(r, store::inputs(doc, r).unwrap(), shape);
+    let mut u = Ui::new(s);
+    u.frame(vec![]);
+    (u, r)
+}
+
+/// The line segments of `shapes` stroked in `colour` from near `a` to near `b` (or back).
+fn segments_in(shapes: &[egui::Shape], colour: egui::Color32, along: impl Fn(Pos2) -> bool) -> usize {
+    shapes
+        .iter()
+        .filter(|s| matches!(s, egui::Shape::LineSegment { points: [p, q], stroke } if stroke.color == colour && along(*p) && along(*q)))
+        .count()
+}
+
+#[test]
+fn a_selected_stencil_marks_its_ties_and_flags_untied_islands() {
+    let (mut u, _) = stencil_with_islands("ties");
+    let warn = crate::theme::Tokens::get(&u.ctx).warning;
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let at = |x: f64, y: f64| u.app.to_screen(x, y);
+    // The untied island's top edge, dashed in the warning colour; the tied one isn't flagged.
+    let (a, b) = (at(140.0, 140.0), at(160.0, 140.0));
+    let on = |p: Pos2, a: Pos2, b: Pos2| (p.y - a.y).abs() < 0.6 && p.x >= a.x - 0.6 && p.x <= b.x + 0.6;
+    assert!(segments_in(&shapes, warn, |p| on(p, a, b)) > 2, "the untied island is outlined, dashed");
+    let (c, d) = (at(170.0, 170.0), at(180.0, 170.0));
+    assert_eq!(segments_in(&shapes, warn, |p| on(p, c, d)), 0, "a tied island isn't flagged");
+    // The tie bar: a thin outline through its corners.
+    let corners = [at(110.0, 145.0), at(140.0, 145.0), at(140.0, 150.0), at(110.0, 150.0)];
+    let tie = shapes.iter().any(|s| match s {
+        egui::Shape::Path(p) => corners.iter().all(|c| p.points.iter().any(|q| q.distance(*c) < 0.6)),
+        _ => false,
+    });
+    assert!(tie, "the tie bar is outlined");
+    // Not selected: no markers.
+    u.app.run("select.set", json!({"ids": []}));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    assert_eq!(segments_in(&shapes, warn, |p| on(p, a, b)), 0, "only while selected");
+}
+
+#[test]
+fn islands_held_by_gauze_are_not_flagged() {
+    let (mut u, _) = stencil_with_islands("gauze");
+    let warn = crate::theme::Tokens::get(&u.ctx).warning;
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let (a, b) = (u.app.to_screen(140.0, 140.0), u.app.to_screen(160.0, 140.0));
+    let on = |p: Pos2| (p.y - a.y).abs() < 0.6 && p.x >= a.x - 0.6 && p.x <= b.x + 0.6;
+    assert_eq!(segments_in(&shapes, warn, on), 0);
 }

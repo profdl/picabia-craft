@@ -25,7 +25,8 @@ use figcraft_geom::Affine;
 use figcraft_geom::kurbo::BezPath;
 use figcraft_render::FillRule;
 use figcraft_render::picabia::stencil::{self as store, Frame, StencilShape};
-use figcraft_stencil::{ColourInfo, Island, Paint, Stats};
+pub use figcraft_stencil::Island;
+use figcraft_stencil::{ColourInfo, Paint, Stats};
 use serde_json::{Value, json};
 
 /// Deepest nesting gathered below the stencil layer.
