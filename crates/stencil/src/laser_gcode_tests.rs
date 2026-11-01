@@ -5,7 +5,10 @@ use std::time::Instant;
 use figcraft_geom::kurbo::{BezPath, Circle, Point, Rect, Shape};
 use serde_json::json;
 
-use crate::{Gcode, GcodeParams, LaserInput, LaserParams, LaserSheet, MAX_GCODE_LINES, OpSettings, estimate_sec, laser_gcode, laser_job};
+use figcraft_modifiers::StencilMaterial;
+
+use crate::fixture::Rng;
+use crate::{Gcode, GcodeParams, LaserInput, LaserParams, LaserSheet, MAX_GCODE_LINES, OpSettings, estimate_sec, laser_gcode, laser_job, test_card};
 
 fn pts(v: &[(f64, f64)]) -> Vec<Point> {
     v.iter().map(|&(x, y)| Point::new(x, y)).collect()
@@ -391,6 +394,80 @@ fn the_sample_stencil_spans_its_sheet() {
     let moved = laser_gcode(s, &GcodeParams { origin_mm: Point::new(30.0, 40.0), ..GcodeParams::default() });
     let mb = moved.bounds_mm;
     assert!((mb.x0 - 30.0).abs() < 1e-3 && (mb.y1 - 190.1).abs() < 1e-3, "{mb:?}");
+}
+
+/// The P12 test card's G-code: the labels engraved, then the cut; within its page.
+#[test]
+fn the_test_card_runs_as_gcode() {
+    let card = test_card(&StencilMaterial::Paper.limits().unwrap(), "Paper", 0.1);
+    let g = laser_gcode(&card, &GcodeParams::for_material("paper"));
+    assert_safe(&g);
+    assert!(g.warnings.is_empty(), "{:?}", g.warnings);
+    assert_eq!(s_values(&g), vec![200.0, 1000.0]);
+    let b = g.bounds_mm;
+    assert!(b.x0.abs() < 1e-3 && b.y0.abs() < 1e-3 && (b.x1 - 120.1).abs() < 1e-3 && (b.y1 - 80.1).abs() < 1e-3, "{b:?}");
+    assert!(g.text.contains("; sheet: test card"));
+    // Every cut contour is closed in the G-code: as many cut G0s as contours (2 passes in place).
+    let c = code(&g);
+    let cut_start = c.iter().rposition(|l| l.starts_with("M4")).unwrap();
+    let travels = c[cut_start..].iter().filter(|l| l.starts_with("G0")).count();
+    assert_eq!(travels, card.cut.len() + 1, "one travel per contour, plus the park");
+}
+
+/// Random sheets and junk params: the file is always either refused with a reason or safe.
+#[test]
+fn random_sheets_always_give_safe_gcode() {
+    let mut rng = Rng::new(0x6c61_7365);
+    let junk = [f64::NAN, f64::INFINITY, -1e300, 1e30, -0.0];
+    for round in 0..300 {
+        let w = rng.range(1.0, 800.0);
+        let h = rng.range(1.0, 800.0);
+        let point = |rng: &mut Rng| {
+            if rng.next().is_multiple_of(40) {
+                let j = junk[(rng.next() % junk.len() as u64) as usize];
+                if rng.next().is_multiple_of(2) { Point::new(j, rng.range(0.0, h)) } else { Point::new(rng.range(0.0, w), j) }
+            } else {
+                Point::new(rng.range(-5.0, w + 5.0), rng.range(-5.0, h + 5.0))
+            }
+        };
+        let paths =
+            |rng: &mut Rng, n: u64| -> Vec<Vec<Point>> { (0..rng.next() % n).map(|_| (0..rng.next() % 12).map(|_| point(rng)).collect()).collect() };
+        let mut s = sheet(w, h, paths(&mut rng, 8));
+        s.score = paths(&mut rng, 3);
+        s.engrave = paths(&mut rng, 5);
+        let any = |rng: &mut Rng, lo: f64, hi: f64| -> serde_json::Value {
+            match rng.next() % 6 {
+                0 => json!("junk"),
+                1 => json!(null),
+                2 => json!(-1e300),
+                3 => json!(1e300),
+                _ => json!(rng.range(lo, hi)),
+            }
+        };
+        let op = |rng: &mut Rng| json!({"enabled": !rng.next().is_multiple_of(4), "speedMmMin": any(rng, 0.0, 30_000.0), "powerPct": any(rng, -10.0, 120.0), "passes": any(rng, 0.0, 30.0)});
+        let v = json!({
+            "sMax": any(&mut rng, 0.0, 200_000.0),
+            "originXMm": any(&mut rng, -6000.0, 6000.0),
+            "originYMm": any(&mut rng, -6000.0, 6000.0),
+            "air": rng.next().is_multiple_of(2),
+            "cut": op(&mut rng),
+            "score": op(&mut rng),
+            "engrave": op(&mut rng),
+        });
+        let p = GcodeParams::from_json(&v);
+        let g = laser_gcode(&s, &p);
+        if g.text.is_empty() {
+            assert!(!g.warnings.is_empty() && g.lines == 0, "round {round}: refused without a reason");
+            continue;
+        }
+        assert_safe(&g);
+        assert!(g.burn_mm.is_finite() && g.travel_mm.is_finite() && g.burn_sec.is_finite(), "round {round}");
+        assert!(estimate_sec(&g, 3000.0).is_finite());
+        let b = g.bounds_mm;
+        let (ox, oy) = (p.origin_mm.x, p.origin_mm.y);
+        assert!(b.x0 >= ox - 5.01 && b.x1 <= ox + w + 5.01 && b.y0 >= oy - 5.01 && b.y1 <= oy + h + 5.01, "round {round}: {b:?}");
+        assert_eq!(g, laser_gcode(&s, &p), "round {round}: deterministic");
+    }
 }
 
 /// Timing (`cargo test --release -p figcraft-stencil -- --ignored --nocapture gcode_timing`): a
