@@ -27,7 +27,8 @@
 //!
 //! Laser export (millimetres): [`laser_job`] turns the drawn cut into kerf-compensated, cleaned,
 //! ordered sheets (split to the bed, labelled in a single-stroke font, [`text_polylines`]),
-//! [`laser_svg`] writes one as an SVG for laser software.
+//! [`laser_svg`] writes one as an SVG for laser software, [`test_card`] makes the card that
+//! measures a material's kerf and limits.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod clean;
@@ -39,6 +40,7 @@ mod index;
 mod islands;
 mod laser;
 mod laser_bed;
+mod laser_card;
 mod laser_font;
 mod laser_svg;
 mod pattern;
@@ -53,6 +55,7 @@ pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, Tile, com
 pub use laser::{
     Contour, LaserInput, LaserJob, LaserParams, LaserSheet, MAX_LABEL_LINES, MAX_SHEET_MM, MAX_SHEET_POINTS, MAX_SHEETS, Polyline, laser_job,
 };
+pub use laser_card::{BRIDGES_MM, CARD_H_MM, CARD_W_MM, CORNERS_DEG, GAUGE_MM, HOLES_MM, SLITS_MM, test_card};
 pub use laser_font::{MAX_TEXT_CHARS, font_has, text_polylines};
 pub use laser_svg::laser_svg;
 pub use problems::{MAX_PROBLEMS, Problem, ProblemCounts, ProblemKind};
@@ -92,6 +95,8 @@ mod fixture_tests;
 mod hold_tests;
 #[cfg(test)]
 mod hoshi_tests;
+#[cfg(test)]
+mod laser_card_tests;
 #[cfg(test)]
 mod laser_font_tests;
 #[cfg(test)]
