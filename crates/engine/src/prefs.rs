@@ -104,6 +104,10 @@ pub struct Prefs {
     /// `widget:<plugin>`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub recent_actions: Vec<String>,
+    /// PICABIA: the laser export settings used last (`modifier.stencilExport`,
+    /// `modifier.stencilTestCard`), as their camelCase params; null until the first export.
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub picabia_laser: Value,
 }
 
 /// Recently run actions kept for the Actions palette (newest first).
@@ -142,6 +146,7 @@ impl Default for Prefs {
             home_order: "desc".into(),
             view: BTreeMap::new(),
             recent_actions: Vec::new(),
+            picabia_laser: Value::Null, // PICABIA: laser export settings.
         }
     }
 }

@@ -108,6 +108,20 @@ pub fn specs() -> Vec<CommandSpec> {
             true,
             stencil_from_selection
         ),
+        spec!(
+            "modifier.stencilExport",
+            "Export for laser…",
+            "{id?, path? (the .svg to write; several sheets: \" 1\", \" 2\".. before the extension), data? (true: return the files as base64; neither path nor data: only asks the UI for its dialog, dialog.stencilExport {id, params}, and returns {dialog: true}), kerfMm? (0-2; default the stencil material's kerf, custom: the remembered one), bedWidthMm?, bedHeightMm? (10-5000 mm; 0 = no limit; a bigger sheet is split into overlapping sheets), overlapMm? (0-200), cutColour?, engraveColour?, scoreColour? (\"#rrggbb\"), label? (engrave the layer name, size, material, sheet number and THIS SIDE UP)} (settings not given: the ones used last; computes the stencil when it is out of date; exports the drawn cut, one tile with tile output; mm, kerf-compensated, inner cuts first) → {id, files: [{name (file name), path | data (base64 svg), sheet (\"1 of 2\"), wMm, hMm, contours, loosePieces}], sheets, warnings: [..], params {kerfMm, bedWidthMm, bedHeightMm, overlapMm, cutColour, engraveColour, scoreColour, label} (the settings used, remembered for next time)}",
+            false,
+            crate::picabia_laser::export
+        ),
+        spec!(
+            "modifier.stencilTestCard",
+            "Laser test card…",
+            "{id?, material? (paper|film|card|custom; default the selected stencil's material, else paper; custom: the selected stencil's limits), kerfMm? (0-2; default the material's kerf, custom: the remembered one), path? (the .svg to write), data? (true: return it as base64; neither path nor data: only asks the UI for its dialog, dialog.stencilTestCard {id, material, params}, and returns {dialog: true}), cutColour?, engraveColour?, scoreColour? (\"#rrggbb\")} (a 120 × 80 mm card: bridges, holes, slits, corners and a kerf gauge, marked at the material's limits) → {files: [{name, path | data, sheet (\"test card\"), wMm, hMm, contours, loosePieces}], sheets (1), warnings: [], material, params {kerfMm, bedWidthMm, bedHeightMm, overlapMm, cutColour, engraveColour, scoreColour, label} (the settings used, remembered)}",
+            false,
+            crate::picabia_laser::test_card
+        ),
     ]
 }
 
