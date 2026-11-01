@@ -27,6 +27,11 @@ commit pinned in vendor/vectorcraft/README.md.
 Rust crate dependencies keep their own licenses (MIT, Apache-2.0, BSD, ISC, Zlib, OFL for egui's
 default fonts, CDLA-Permissive-2.0 for the root certificate list webpki-roots compiles in, and
 similar permissive licenses); see each crate's metadata.
+PICABIA: the desktop app's laser link uses the serialport crate
+(https://github.com/serialport/serialport-rs) unmodified, under the Mozilla Public License 2.0
+(file-level copyleft: its source files stay under the MPL; nothing of it is copied into this
+repository); see its crate metadata. On Linux it pulls in unescaper, used under the MIT side of
+its MIT OR GPL-3.0-only dual licence.
 
 Linux Wayland window decorations
 -------------------------------

@@ -8,3 +8,8 @@ description = "Picabia laser link: the GRBL 1.1 serial protocol as a sans-IO con
 [lints]
 workspace = true
 
+# The serial port is native only: the browser build has no serial ports (WebSerial is a later
+# phase). serialport is MPL-2.0, used unmodified; without default features it needs no libudev, so
+# it builds on Linux and FreeBSD without system libraries.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+serialport = { version = "4.10.1", default-features = false }

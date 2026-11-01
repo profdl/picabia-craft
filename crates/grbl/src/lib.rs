@@ -13,7 +13,7 @@
 //!   bytes out from [`Controller::poll`], state out with [`Controller::snapshot`]. Time comes in
 //!   as `now_ms`, so it runs the same natively, in the browser build and in tests.
 //! - [`Transport`]: where the bytes go ([`pump`] moves them between a transport and a controller).
-//! - `serial` (native only, PIC17.6): the serial ports and a [`Transport`] over one.
+//! - `serial` (native only): the serial ports and a [`Transport`] over one.
 //! - [`sim`]: a simulated GRBL machine behind the same [`Transport`], laser mode modelled, so tests
 //!   can check that the beam is never on while travelling.
 //!
@@ -28,6 +28,8 @@ pub mod codes;
 mod controller;
 mod job;
 pub mod proto;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod serial;
 mod settings;
 pub mod sim;
 mod streamer;
