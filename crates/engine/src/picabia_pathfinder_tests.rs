@@ -100,7 +100,11 @@ fn every_operation_on_overlapping_squares() {
         assert_eq!((by_colour(&v, RED).len(), by_colour(&v, BLUE).len()), (red, blue), "{op}");
         assert!(v.iter().all(|i| matches!(i.paint, GenPaint::Fill { even_odd: false })), "{op}");
         let i = info(&mut s, g);
-        assert_eq!((i["stats"]["shapes"].clone(), i["stats"]["faces"].clone(), i["stats"]["colours"].clone()), (json!(2), json!(faces), json!(2)), "{op}");
+        assert_eq!(
+            (i["stats"]["shapes"].clone(), i["stats"]["faces"].clone(), i["stats"]["colours"].clone()),
+            (json!(2), json!(faces), json!(2)),
+            "{op}"
+        );
     }
 }
 

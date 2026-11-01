@@ -978,6 +978,8 @@ fn applies(r: &RowView, f: &Field) -> bool {
     match r.kind.as_str() {
         "wallpaper" => wallpaper_applies(r, f),
         "stencil" => stencil_applies(r, f),
+        // The outline's stroke width only matters for the outline operation.
+        "pathfinder" => f.param() != "outlineWidth" || common_str(&r.params, "op").is_none_or(|o| o == "outline"),
         _ => true,
     }
 }
@@ -1127,8 +1129,13 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
             };
             let control = |app: &mut FigApp, ui: &mut Ui| {
                 let resp = widgets::dropdown(ui, label, ui.available_width().min(half * 2.0 + widgets::GUTTER), None);
+                // The pathfinder's four boolean-group operations come after a divider.
+                let resp = if r.kind == "pathfinder" && param == "op" { resp.on_hover_text(tr(pathfinder::OP_TIP)) } else { resp };
                 menu_popup(&resp).show(|ui| {
                     for (value, l) in *options {
+                        if r.kind == "pathfinder" && *value == pathfinder::FIRST_BOOLEAN {
+                            ui.separator();
+                        }
                         if let Some(why) = unavailable(r, param, value) {
                             disabled_menu_item(ui, tl(l), tr(why));
                         } else if menu_item(ui, tl(l), "") {

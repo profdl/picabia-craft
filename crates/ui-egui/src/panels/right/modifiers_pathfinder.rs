@@ -4,9 +4,17 @@
 use egui::Ui;
 use figcraft_doc::NodeId;
 
-use super::{Field, RowView, field_rows, generator_status, text};
+use super::{Field, RowView, field_rows, text};
 use crate::FigApp;
-use crate::i18n::tr_noop;
+use crate::i18n::{tr, tr_noop, trf};
+use crate::theme::Tokens;
+use crate::widgets;
+
+/// The operation dropdown's tooltip.
+pub(super) const OP_TIP: &str = tr_noop("Boolean groups already do Unite, Minus front, Intersect and Exclude.");
+
+/// The first of the operations a boolean group also does: a divider goes before it.
+pub(super) const FIRST_BOOLEAN: &str = "unite";
 
 /// The operations: (value written in `op`, label).
 const OPS: &[(&str, &str)] = &[
@@ -32,5 +40,27 @@ pub(super) const FIELDS: &[&[Field]] = &[
 /// Row `i`'s settings (a `pathfinder` row): its fields, then what it came to.
 pub(super) fn body(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView) {
     field_rows(app, ui, ids, i, r, FIELDS);
-    generator_status(app, ui, ids);
+    status(app, ui, ids);
+}
+
+/// "Computing…", or "Shapes 5 → Faces 9" (the layer draws its design instead: the warning says
+/// why), then the warnings.
+fn status(app: &FigApp, ui: &mut Ui, ids: &[NodeId]) {
+    let t = Tokens::get(ui.ctx());
+    let Ok(ds) = app.session.ds() else { return };
+    let Some(n) = ids.first().and_then(|i| ds.doc.node(*i)) else { return };
+    match figcraft_engine::picabia_generate::info(&ds.doc, n) {
+        None => widgets::note(ui, tr("Computing…"), t.text_secondary),
+        Some((info, fresh)) => {
+            if !info.keep_design {
+                let count = |k: &str| info.stats.get(k).and_then(serde_json::Value::as_u64).unwrap_or(0).to_string();
+                let line = trf("Shapes {shapes} → Faces {faces}", &[("shapes", &count("shapes")), ("faces", &count("faces"))]);
+                let line = if fresh { line } else { format!("{line} {}", tr("(updating…)")) };
+                widgets::note(ui, &line, t.text_secondary);
+            }
+            for w in &info.warnings {
+                widgets::note(ui, w, t.warning);
+            }
+        }
+    }
 }
