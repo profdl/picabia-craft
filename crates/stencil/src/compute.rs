@@ -3,9 +3,10 @@
 use figcraft_doc::BoolOp;
 use figcraft_geom::kurbo::{BezPath, Rect, Shape};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::Stencil;
+use figcraft_modifiers::{Stencil, StencilLimitMode};
 
 use crate::clean::{Limits, clean};
+use crate::problems::{CheckLimits, MAX_ZONES, Problem, ProblemCounts, Zones, check};
 use crate::{ColourInfo, Paint, Selector, colour_infos, mm_per_unit, visible_regions};
 
 /// The most paints [`compute`] takes; past it it makes an empty sheet with a warning.
@@ -36,6 +37,9 @@ pub struct Stats {
     pub pattern_held: usize,
     /// Islands left without a tie (gauze mode, or no bar could be placed).
     pub untied: usize,
+    /// What still breaks a limit, per kind (all of them; [`StencilOut::problems`] lists at most
+    /// [`MAX_PROBLEMS`](crate::MAX_PROBLEMS)).
+    pub problems_by_kind: ProblemCounts,
 }
 
 /// The computed stencil, in the layer's units and space.
@@ -60,6 +64,9 @@ pub struct StencilOut {
     pub ties: BezPath,
     /// Every paper island found in the cut sheet, outermost first.
     pub islands: Vec<Island>,
+    /// What still breaks a cutting limit in [`StencilOut::cut`], at most [`MAX_PROBLEMS`](crate::MAX_PROBLEMS) (taken in
+    /// turn from each kind, then grouped by kind); [`Stats::problems_by_kind`] has the counts.
+    pub problems: Vec<Problem>,
 }
 
 /// A paper island: a piece of paper the cut separates from the outer sheet (it would fall out
@@ -101,74 +108,141 @@ impl std::error::Error for StencilError {}
 /// Steps: [`visible_regions`] (curves flattened at `toleranceMm / 4`, every ring simplified to
 /// `toleranceMm / 2`), the cut colours ([`Selector`]) merged into one region, clean-up (area
 /// filter, opening by `minCutWidthMm / 2` then closing by `minBridgeMm / 2` as three offsets,
-/// area filter again, simplify to `toleranceMm / 2`), the cut clipped to the sheet, the islands
-/// found and held (ties, the pattern lattice, or none in gauze mode), `paper = sheet − cut`.
+/// area filter again, simplify to `toleranceMm / 2`; with `limitMode: flag` only the
+/// simplification), the cut clipped to the sheet, the islands found and held (ties, the pattern
+/// lattice, or none in gauze mode), `paper = sheet − cut`, and the checks ([`Problem`]s).
 ///
 /// More than [`MAX_PAINTS`] paints: an uncut sheet and a warning.
 pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result<StencilOut, StencilError> {
     let (p, mut warnings) = params.clamped();
     let mpu = mm_per_unit(p.width_mm, layer_bounds).ok_or(StencilError::BadBounds)?;
-    let units = |mm: f64| mm / mpu;
-    let margin = units(p.margin_mm);
+    let margin = p.margin_mm / mpu;
     let sheet = layer_bounds.abs().inflate(margin, margin);
     if !sheet.is_finite() {
         return Err(StencilError::BadBounds);
     }
-    let blank = |warnings: Vec<String>| StencilOut { paper: sheet.to_path(0.1), sheet, mm_per_unit: mpu, warnings, ..StencilOut::default() };
     if paints.len() > MAX_PAINTS {
         warnings.push(format!("the design has {} shapes; a stencil takes at most {MAX_PAINTS}", paints.len()));
-        return Ok(blank(warnings));
+        return Ok(StencilOut { paper: sheet.to_path(0.1), sheet, mm_per_unit: mpu, warnings, ..StencilOut::default() });
     }
+    let pre = prepare(paints, &p, mpu, sheet);
+    warnings.extend(pre.warnings);
+    let held = crate::hold::hold(pre.cut, sheet, &p, mpu);
+    warnings.extend(held.warnings);
+    let cut = held.cut;
+    let limits = check_limits(&p, mpu);
+    let zones = zones(&p, &limits, sheet, &[&held.ties]);
+    let checked = check(&cut, sheet, &held.untied_bounds, &limits, &zones);
+    warnings.extend(checked.warnings);
+    let mut stats = measure(&cut, mpu);
+    stats.dropped_specks = pre.dropped_specks;
+    stats.filled_holes = pre.filled_holes;
+    stats.islands = held.islands.len();
+    stats.ties = held.ties_placed;
+    stats.pattern_held = held.pattern_held;
+    stats.untied = held.untied;
+    stats.problems_by_kind = checked.counts;
+    Ok(StencilOut {
+        paper: paper(sheet, &cut),
+        cut,
+        sheet,
+        mm_per_unit: mpu,
+        warnings,
+        stats,
+        colours: pre.colours,
+        ties: held.ties,
+        islands: held.islands,
+        problems: checked.problems,
+    })
+}
+
+/// The checks' limits for the clamped params `p` at `mpu` mm per unit.
+pub(crate) fn check_limits(p: &Stencil, mpu: f64) -> CheckLimits {
+    CheckLimits {
+        min_bridge: p.min_bridge_mm / mpu,
+        min_cut_width: p.min_cut_width_mm / mpu,
+        min_area: p.min_cut_area_mm2 / (mpu * mpu),
+        min_corner_angle: p.min_corner_angle,
+        slack: p.tolerance_mm / mpu / 2.0,
+    }
+}
+
+/// Where the narrow checks look: everywhere in flag mode; in fix mode (the clean-up removed every
+/// narrow part) only near what changed the cut after it: the bars in `changed` (one zone per
+/// subpath) and a band along the sheet's edge (the clip, a thin margin).
+pub(crate) fn zones(p: &Stencil, l: &CheckLimits, sheet: Rect, changed: &[&BezPath]) -> Zones {
+    if p.limit_mode == StencilLimitMode::Flag {
+        return Zones::Everywhere;
+    }
+    let mut rects: Vec<Rect> = Zones::frame(sheet, l.min_bridge.max(l.min_cut_width) + l.slack).to_vec();
+    for path in changed {
+        if path.elements().len() > 8 * MAX_ZONES {
+            return Zones::Everywhere;
+        }
+        rects.extend(split_subpaths(path).iter().map(|s| s.bounding_box()));
+    }
+    Zones::near(rects)
+}
+
+/// The cleaned cut of a design, before islands are held.
+#[derive(Debug, Default)]
+pub(crate) struct Prepared {
+    pub cut: BezPath,
+    pub colours: Vec<ColourInfo>,
+    pub dropped_specks: usize,
+    pub filled_holes: usize,
+    pub warnings: Vec<String>,
+}
+
+/// Visible regions, colour selection, clean-up and the clip to `sheet` for the clamped params
+/// `p` at `mpu` mm per unit (stages 1–4). Nothing cut is an empty `cut` with a warning.
+pub(crate) fn prepare(paints: &[Paint], p: &Stencil, mpu: f64, sheet: Rect) -> Prepared {
+    let units = |mm: f64| mm / mpu;
+    let mut out = Prepared::default();
     let tolerance = units(p.tolerance_mm);
     let flatten = units(if p.tolerance_mm > 0.0 { p.tolerance_mm / 4.0 } else { FINEST_MM });
     let visible = visible_regions(paints, flatten, tolerance / 2.0);
-    warnings.extend(visible.warnings);
-    let selector = Selector::new(&p);
-    let colours = colour_infos(&visible.regions, &selector, mpu);
+    out.warnings.extend(visible.warnings);
+    let selector = Selector::new(p);
+    out.colours = colour_infos(&visible.regions, &selector, mpu);
     let mut chosen = BezPath::new();
     for r in visible.regions.iter().filter(|r| selector.cuts(r.colour)) {
         chosen.extend(r.path.iter());
     }
     if chosen.elements().is_empty() {
         if !visible.regions.is_empty() {
-            warnings.push("nothing is cut: no visible colour is chosen for cutting".into());
+            out.warnings.push("nothing is cut: no visible colour is chosen for cutting".into());
         }
-        return Ok(StencilOut { colours, ..blank(warnings) });
+        return out;
     }
     // The visible pieces are disjoint but touch: one sweep merges them into plain contours.
     let Ok(merged) = figcraft_pathops::simplify(&chosen) else {
-        warnings.push("couldn't merge the cut colours; nothing is cut".into());
-        return Ok(StencilOut { colours, ..blank(warnings) });
+        out.warnings.push("couldn't merge the cut colours; nothing is cut".into());
+        return out;
     };
     let limits = Limits {
         min_area: p.min_cut_area_mm2 / (mpu * mpu),
         open_radius: units(p.min_cut_width_mm) / 2.0,
         close_radius: units(p.min_bridge_mm) / 2.0,
         tolerance: tolerance / 2.0,
+        fix: p.limit_mode == StencilLimitMode::Fix,
     };
     let cleaned = clean(merged, limits);
-    warnings.extend(cleaned.warnings);
+    out.warnings.extend(cleaned.warnings);
+    out.dropped_specks = cleaned.dropped_specks;
+    out.filled_holes = cleaned.filled_holes;
     let mut cut = cleaned.cut;
     if !cut.elements().is_empty() && !contains(sheet, cut.bounding_box()) {
         match figcraft_pathops::boolean_step(&cut, &sheet.to_path(0.1), BoolOp::Intersect) {
             Ok(c) => cut = c,
-            Err(_) => warnings.push("couldn't clip the cut to the sheet".into()),
+            Err(_) => out.warnings.push("couldn't clip the cut to the sheet".into()),
         }
     }
     if cut.elements().is_empty() {
-        warnings.push("nothing is left to cut after clean-up".into());
+        out.warnings.push("nothing is left to cut after clean-up".into());
     }
-    let held = crate::hold::hold(cut, sheet, &p, mpu);
-    warnings.extend(held.warnings);
-    let cut = held.cut;
-    let mut stats = measure(&cut, mpu);
-    stats.dropped_specks = cleaned.dropped_specks;
-    stats.filled_holes = cleaned.filled_holes;
-    stats.islands = held.islands.len();
-    stats.ties = held.ties_placed;
-    stats.pattern_held = held.pattern_held;
-    stats.untied = held.untied;
-    Ok(StencilOut { paper: paper(sheet, &cut), cut, sheet, mm_per_unit: mpu, warnings, stats, colours, ties: held.ties, islands: held.islands })
+    out.cut = cut;
+    out
 }
 
 fn contains(outer: Rect, inner: Rect) -> bool {
@@ -177,7 +251,7 @@ fn contains(outer: Rect, inner: Rect) -> bool {
 
 /// The sheet with the cut's contours reversed inside it: sheet − cut, with no sweep (the cut is
 /// plain contours within the sheet), winding 1 on paper and 0 in the cut-outs.
-fn paper(sheet: Rect, cut: &BezPath) -> BezPath {
+pub(crate) fn paper(sheet: Rect, cut: &BezPath) -> BezPath {
     let mut out = sheet.to_path(0.1);
     if out.area() < 0.0 {
         out = out.reverse_subpaths();

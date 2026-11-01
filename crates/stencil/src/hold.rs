@@ -22,6 +22,8 @@ pub(crate) struct Held {
     pub ties_placed: usize,
     pub pattern_held: usize,
     pub untied: usize,
+    /// The bounds of the islands still floating after the hold (`untied` of them).
+    pub untied_bounds: Vec<Rect>,
     pub warnings: Vec<String>,
 }
 
@@ -96,6 +98,7 @@ pub(crate) fn hold(cut: BezPath, sheet: Rect, p: &Stencil, mpu: f64) -> Held {
         .collect();
     if p.tie_mode == StencilTieMode::Gauze {
         held.untied = originals.len();
+        held.untied_bounds = held.islands.iter().map(|i| i.bounds).collect();
         held.warnings.push(format!("{} islands are left untied (gauze mode): a mesh must hold them", originals.len()));
         held.cut = cut;
         return held;
@@ -150,10 +153,11 @@ pub(crate) fn hold(cut: BezPath, sheet: Rect, p: &Stencil, mpu: f64) -> Held {
     }
     held.pattern_held = held.islands.iter().filter(|i| i.pattern_held).count();
     // Look again: whatever still floats is untied.
-    held.untied = match Tree::new(&cut2) {
-        Some(t) => t.islands().len(),
-        None => held.islands.iter().filter(|i| i.tied == 0 && !i.pattern_held).count(),
+    held.untied_bounds = match Tree::new(&cut2) {
+        Some(t) => t.islands().iter().map(|&i| t.bounds.get(i).copied().unwrap_or(Rect::ZERO)).collect(),
+        None => held.islands.iter().filter(|i| i.tied == 0 && !i.pattern_held).map(|i| i.bounds).collect(),
     };
+    held.untied = held.untied_bounds.len();
     if held.untied > 0 {
         held.warnings.push(format!("{} islands couldn't be tied and would fall out", held.untied));
     }

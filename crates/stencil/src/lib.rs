@@ -15,6 +15,10 @@
 //!    nesting) held by tie bars to the paper around them, by a lattice of bars (`pattern`, ties for
 //!    what it misses), or flagged (`gauze`); [`StencilOut::islands`], [`StencilOut::ties`].
 //!
+//! 6. Checks: what still breaks a limit (narrow paper or cuts, small cuts or holes, sharp
+//!    corners, untied islands), [`StencilOut::problems`]; `limitMode: flag` skips the fixing
+//!    clean-up so every violation shows.
+//!
 //! [`compute`] runs them all and returns a [`StencilOut`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -25,12 +29,14 @@ mod hold;
 mod index;
 mod islands;
 mod pattern;
+mod problems;
 mod rings;
 mod ties;
 mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
 pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, compute};
+pub use problems::{MAX_PROBLEMS, Problem, ProblemCounts, ProblemKind};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
 use figcraft_geom::kurbo::BezPath;
@@ -65,5 +71,7 @@ mod fixture;
 mod fixture_tests;
 #[cfg(test)]
 mod hold_tests;
+#[cfg(test)]
+mod problems_tests;
 #[cfg(test)]
 mod visible_tests;

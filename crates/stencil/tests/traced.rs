@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use figcraft_geom::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::{Stencil, StencilTieMode};
+use figcraft_modifiers::{Stencil, StencilLimitMode, StencilTieMode};
 use figcraft_stencil::{Paint, compute, mm_per_unit, visible_regions};
 
 const SVG: &str = include_str!("fixtures/traced.svg");
@@ -197,6 +197,9 @@ fn report(name: &str, paints: &[Paint], bounds: Rect) {
     time(&format!("  {name} compute, gauze (islands found, no ties)"), 5, || compute(paints, &gauze, bounds).unwrap());
     let pattern = Stencil { tie_mode: StencilTieMode::Pattern, ..p.clone() };
     time(&format!("  {name} compute, pattern"), 5, || compute(paints, &pattern, bounds).unwrap());
+    let flag = Stencil { limit_mode: StencilLimitMode::Flag, ..p.clone() };
+    let f = time(&format!("  {name} compute, limits flagged"), 5, || compute(paints, &flag, bounds).unwrap());
+    eprintln!("  {name} flagged problems: {:?}", f.stats.problems_by_kind);
     let out = time(&format!("  {name} compute, defaults (ties)"), 5, || compute(paints, &p, bounds).unwrap());
     eprintln!("  {name} out: {} cut elements, {:?}", out.cut.elements().len(), out.stats);
 }

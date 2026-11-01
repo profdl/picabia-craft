@@ -30,6 +30,9 @@ pub(crate) struct Limits {
     pub open_radius: f64,
     pub close_radius: f64,
     pub tolerance: f64,
+    /// `limitMode: fix`: the area filter, opening and closing run. `flag`: only the
+    /// simplification runs, so every violation stays for the checks to report.
+    pub fix: bool,
 }
 
 /// `path` (plain contours: outers positive, holes negative) without the contours enclosing less
@@ -61,7 +64,7 @@ fn simplify_to(path: &BezPath, tolerance: f64) -> Option<BezPath> {
 
 /// The polygonal region `path` with every contour simplified to `tolerance`, no sweep (the
 /// offsets normalise their input).
-fn thin(path: &BezPath, tolerance: f64) -> BezPath {
+pub(crate) fn thin(path: &BezPath, tolerance: f64) -> BezPath {
     if tolerance <= 0.0 {
         return path.clone();
     }
@@ -94,9 +97,10 @@ pub(crate) fn open_close(cut: &BezPath, open: f64, close: f64, tolerance: f64) -
 }
 
 /// Run the clean-up on `cut` (plain contours). If the opening and closing fail they are skipped
-/// with a warning; the rest still runs.
+/// with a warning; the rest still runs. With `l.fix` off only the simplification runs.
 pub(crate) fn clean(cut: BezPath, l: Limits) -> Cleaned {
     let mut c = Cleaned::default();
+    let l = if l.fix { l } else { Limits { min_area: 0.0, open_radius: 0.0, close_radius: 0.0, ..l } };
     // Area first: specks dropped before the offsets cost nothing to offset.
     let (mut cut, s, h) = drop_small(&cut, l.min_area);
     c.dropped_specks += s;
