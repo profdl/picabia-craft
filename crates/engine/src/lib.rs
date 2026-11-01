@@ -415,6 +415,8 @@ mod picabia_canvas_tests; // PICABIA: modifier copies on the canvas and in expor
 #[cfg(test)]
 mod picabia_generate_tests; // PICABIA: generator framework tests.
 #[cfg(test)]
+mod picabia_pathfinder_tests; // PICABIA: pathfinder generator tests.
+#[cfg(test)]
 mod picabia_modifier_tests; // PICABIA: modifier command tests.
 #[cfg(test)]
 mod picabia_stencil_tests; // PICABIA: stencil gather, cache and commands.
