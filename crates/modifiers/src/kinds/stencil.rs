@@ -2,12 +2,14 @@
 //!
 //! Terminal and geometric: it makes no copies here (the evaluator stops at it and reports its
 //! params in [`crate::Output::stencil`]); `figcraft-stencil` computes the sheet from what the rows
-//! above drew. This module only puts the params in range.
+//! above drew. This module only puts the params in range and applies the material presets.
+
+use serde_json::{Map, Value};
 
 use super::Clamp;
 use crate::model::{
     MAX_CORNER_ANGLE, MAX_HOSHI_DIAMETER_MM, MAX_PATTERN_SPACING_MM, MAX_TIE_WIDTH_MM, MAX_TIES_PER_ISLAND, MIN_HOSHI_DIAMETER_MM,
-    MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, Stencil, StencilColourMode, hex_colour, parse_hex_colour,
+    MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, Stencil, StencilColourMode, StencilMaterial, hex_colour, parse_hex_colour,
 };
 
 /// `a` degrees in `0..360` (the same direction).
@@ -125,6 +127,43 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
         output: p.output,
     };
     (out, warnings)
+}
+
+/// The four fields a material preset fills, by their JSON names.
+const LIMIT_FIELDS: [&str; 4] = ["minCutWidthMm", "minBridgeMm", "tieWidthMm", "minCornerAngle"];
+
+/// [`crate::Modifier::set_props`] on a stencil, `old` → `new` from `props`: setting `material` to a
+/// preset fills the four limit fields that `props` doesn't set itself; setting one of them
+/// (without `material`) to a value off the current preset makes the material `custom`.
+pub(crate) fn apply_material(old: &Stencil, new: &mut Stencil, props: &Map<String, Value>) {
+    let sets = |k: &str| props.contains_key(k);
+    if sets("material") {
+        if let Some(l) = new.material.limits() {
+            let fields = [
+                (&mut new.min_cut_width_mm, l.min_cut_width_mm),
+                (&mut new.min_bridge_mm, l.min_bridge_mm),
+                (&mut new.tie_width_mm, l.tie_width_mm),
+                (&mut new.min_corner_angle, l.min_corner_angle),
+            ];
+            for ((field, preset), name) in fields.into_iter().zip(LIMIT_FIELDS) {
+                if !sets(name) {
+                    *field = preset;
+                }
+            }
+        }
+        return;
+    }
+    let Some(l) = old.material.limits() else { return };
+    let values = [
+        (new.min_cut_width_mm, l.min_cut_width_mm),
+        (new.min_bridge_mm, l.min_bridge_mm),
+        (new.tie_width_mm, l.tie_width_mm),
+        (new.min_corner_angle, l.min_corner_angle),
+    ];
+    let off_preset = values.into_iter().zip(LIMIT_FIELDS).any(|((v, preset), name)| sets(name) && (v - preset).abs() > 1e-9);
+    if off_preset {
+        new.material = StencilMaterial::Custom;
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +442,118 @@ mod tests {
         let (c, _) = Stencil { min_corner_angle: -5.0, ..Stencil::default() }.clamped();
         assert_eq!(c.min_corner_angle, 0.0);
         assert!(Modifier::from_value(&json!({"kind": "stencil", "hoshi": 1})).is_ok_and(|m| matches!(m.kind, ModifierKind::Other { .. })));
+    }
+
+    fn limits(m: &Modifier) -> (StencilMaterial, f64, f64, f64, f64) {
+        let ModifierKind::Stencil(p) = &m.kind else { panic!("stencil") };
+        (p.material, p.min_cut_width_mm, p.min_bridge_mm, p.tie_width_mm, p.min_corner_angle)
+    }
+
+    fn set(m: &mut Modifier, props: Value) {
+        m.set_props(props.as_object().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn set_props_applies_material_presets() {
+        use StencilMaterial::*;
+        let mut m = Modifier::new("m1", "stencil").unwrap();
+        set(&mut m, json!({"material": "film"}));
+        assert_eq!(limits(&m), (Film, 0.2, 0.4, 0.6, 20.0), "a preset fills the four fields");
+        set(&mut m, json!({"material": "card", "minBridgeMm": 2}));
+        assert_eq!(limits(&m), (Card, 0.5, 2.0, 1.5, 35.0), "fields set alongside it win");
+        set(&mut m, json!({"material": "film"}));
+        set(&mut m, json!({"tieWidthMm": 0.6, "widthMm": 400}));
+        assert_eq!(limits(&m).0, Film, "the preset's own value and other fields keep it");
+        set(&mut m, json!({"minCornerAngle": "21"}));
+        assert_eq!(limits(&m), (Custom, 0.2, 0.4, 0.6, 21.0), "a value off the preset makes it custom");
+        set(&mut m, json!({"minCutWidthMm": 0.2}));
+        assert_eq!(limits(&m).0, Custom, "custom stays custom, even at a preset's value");
+        set(&mut m, json!({"material": "custom"}));
+        assert_eq!(limits(&m), (Custom, 0.2, 0.4, 0.6, 21.0), "custom fills nothing");
+        set(&mut m, json!({"material": "paper"}));
+        assert_eq!(limits(&m), (Paper, 0.3, 0.5, 1.0, 30.0), "paper is the defaults again");
+        set(&mut m, json!({"material": "silk"}));
+        assert_eq!(limits(&m), (Paper, 0.3, 0.5, 1.0, 30.0), "an unknown material reads as paper");
+        set(&mut m, json!({"minBridgeMm": 0.6, "material": "card"}));
+        assert_eq!(limits(&m), (Card, 0.5, 0.6, 1.5, 35.0), "with `material` in the props, no switch to custom");
+        // A refused edit changes nothing.
+        let before = m.clone();
+        assert!(m.set_props(json!({"material": "film", "minBridgeMm": "wide"}).as_object().unwrap()).is_err());
+        assert_eq!(m, before);
+        // Bound values are applied without it: the stored material stands.
+        assert_eq!(Modifier::from_value(&json!({"kind": "stencil", "material": "film", "tieWidthMm": 3})).map(|m| limits(&m).0).unwrap(), Film);
+    }
+
+    fn repeat_of(mods: Value) -> Option<Repeat> {
+        evaluate(&stack(mods), B).repeat
+    }
+
+    fn rep(ox: f64, oy: f64, a: (f64, f64), b: (f64, f64)) -> Option<Repeat> {
+        Some(Repeat { origin: figcraft_geom::Point::new(ox, oy), a: figcraft_geom::Vec2::new(a.0, a.1), b: figcraft_geom::Vec2::new(b.0, b.1) })
+    }
+
+    #[test]
+    fn a_grid_above_the_stencil_gives_its_repeat() {
+        let grid = json!({"kind": "gridArray", "cols": 3, "rows": 2, "gapX": 5, "gapY": 2});
+        assert_eq!(repeat_of(json!([grid, {"kind": "stencil"}])), rep(0.0, 0.0, (25.0, 0.0), (0.0, 12.0)), "steps of bounds + gap");
+        let b = Rect::new(10.0, 20.0, 30.0, 30.0);
+        assert_eq!(evaluate(&stack(json!([grid, {"kind": "stencil"}])), b).repeat, rep(10.0, 20.0, (25.0, 0.0), (0.0, 12.0)), "at the top-left");
+        let column = json!([{"kind": "gridArray", "cols": 1, "rows": 3, "gapX": 0, "gapY": 0}, {"kind": "stencil"}]);
+        assert_eq!(repeat_of(column), rep(0.0, 0.0, (0.0, 0.0), (0.0, 10.0)), "one column: no repeat along a");
+        let row = json!([{"kind": "gridArray", "cols": 4, "rows": 1, "gapX": 0, "gapY": 0}, {"kind": "stencil"}]);
+        assert_eq!(repeat_of(row), rep(0.0, 0.0, (20.0, 0.0), (0.0, 0.0)), "one row: no repeat along b");
+        assert_eq!(repeat_of(json!([{"kind": "gridArray", "cols": 1, "rows": 1}, {"kind": "stencil"}])), None, "1 × 1: no repeat");
+    }
+
+    #[test]
+    fn a_wallpaper_above_the_stencil_gives_its_lattice() {
+        let wp = json!({"kind": "wallpaper", "group": "p4m", "cols": 2, "rows": 2, "cellWidth": 100, "cellHeight": 70, "originX": 3, "originY": 4});
+        assert_eq!(repeat_of(json!([wp, {"kind": "stencil"}])), rep(3.0, 4.0, (100.0, 0.0), (0.0, 100.0)), "square: w by w at the origin");
+        let hex = json!({"kind": "wallpaper", "group": "p6m", "cols": 1, "rows": 1, "cellWidth": 100});
+        let r = repeat_of(json!([hex, {"kind": "stencil"}])).unwrap();
+        assert_eq!((r.a, r.b.x), (figcraft_geom::Vec2::new(100.0, 0.0), 50.0), "the lattice even for one cell");
+        assert!((r.b.y - 50.0 * 3f64.sqrt()).abs() < 1e-9);
+        // The last lattice row counts; a motif row before it is fine.
+        let s =
+            json!([{"kind": "mirror"}, {"kind": "gridArray", "cols": 2, "rows": 2}, wp, {"kind": "linearArray", "count": 1}, {"kind": "stencil"}]);
+        assert_eq!(repeat_of(s), rep(3.0, 4.0, (100.0, 0.0), (0.0, 100.0)), "mirror and grid inside the motif, one copy after");
+    }
+
+    #[test]
+    fn no_repeat_without_an_intact_lattice() {
+        let grid = json!({"kind": "gridArray", "cols": 3, "rows": 2});
+        assert_eq!(repeat_of(json!([grid, {"kind": "stencil", "repeat": "off"}])), None, "repeat off");
+        assert_eq!(repeat_of(json!([grid])), None, "no stencil");
+        assert_eq!(repeat_of(json!([grid, {"kind": "stencil", "enabled": false}])), None, "a disabled stencil");
+        assert_eq!(repeat_of(json!([{"kind": "linearArray", "count": 3}, {"kind": "stencil"}])), None, "no lattice row");
+        for after in [
+            json!({"kind": "transformEach", "rotate": 10}),
+            json!({"kind": "randomize", "offsetX": 3}),
+            json!({"kind": "linearArray", "count": 2, "offsetX": 7}),
+            json!({"kind": "circularArray", "count": 3}),
+            json!({"kind": "mirror"}),
+        ] {
+            assert_eq!(repeat_of(json!([grid, after, {"kind": "stencil"}])), None, "{after} after the lattice row");
+        }
+        // Per-copy rows vary every final copy wherever they sit.
+        assert_eq!(repeat_of(json!([{"kind": "transformEach", "rotate": 10}, grid, {"kind": "stencil"}])), None);
+        // A disabled or unknown row after it doesn't count.
+        let s = json!([grid, {"kind": "transformEach", "enabled": false, "rotate": 10}, {"kind": "spiral"}, {"kind": "stencil"}]);
+        assert!(repeat_of(s).is_some());
+    }
+
+    #[test]
+    fn tile_output_needs_a_repeat() {
+        let tile = json!({"id": "s", "kind": "stencil", "output": "tile"});
+        let out = evaluate(&stack(json!([{"kind": "gridArray", "cols": 2}, tile])), B);
+        assert_eq!(out.stencil.as_ref().map(|s| s.params.output), Some(StencilOutput::Tile));
+        assert!(out.repeat.is_some() && out.warnings.is_empty(), "{:?}", out.warnings);
+        for s in [json!([tile]), json!([{"kind": "gridArray", "cols": 2}, {"id": "s", "kind": "stencil", "output": "tile", "repeat": "off"}])] {
+            let out = evaluate(&stack(s), B);
+            assert_eq!(out.stencil.as_ref().map(|s| s.params.output), Some(StencilOutput::Sheet), "evaluates as sheet");
+            let w: Vec<&Warning> = out.warnings.iter().filter(|w| w.message.contains("tile output needs a repeat")).collect();
+            assert_eq!((w.len(), w[0].modifier.as_deref()), (1, Some("s")), "{:?}", out.warnings);
+        }
     }
 
     #[test]

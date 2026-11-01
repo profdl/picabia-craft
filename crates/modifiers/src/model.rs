@@ -988,6 +988,10 @@ impl Modifier {
     /// Change params from `props` (camelCase names, as written in the file; `enabled` too).
     /// Refused, leaving the modifier unchanged, when a name isn't one of the kind's params, a
     /// value has the wrong type or a number isn't finite, or the kind is unknown.
+    ///
+    /// A stencil's `material` preset fills its four limit fields unless `props` sets them too, and
+    /// setting one of those fields (without `material`) off the current preset makes the material
+    /// `custom` ([`StencilMaterial::limits`]), so each edit is one undo step.
     pub fn set_props(&mut self, props: &Map<String, Value>) -> Result<(), ModError> {
         if let ModifierKind::Other { kind, .. } = &self.kind {
             return Err(ModError::Invalid(format!("can't edit a `{kind}` modifier (unknown kind)")));
@@ -1017,7 +1021,10 @@ impl Modifier {
         }
         match ModifierKind::read(self.kind.id(), &params) {
             (ModifierKind::Other { error, .. }, _) => Err(ModError::Invalid(error.unwrap_or_else(|| "bad params".into()))),
-            (kind, _) => {
+            (mut kind, _) => {
+                if let (ModifierKind::Stencil(old), ModifierKind::Stencil(new)) = (&self.kind, &mut kind) {
+                    crate::kinds::stencil_apply_material(old, new, props);
+                }
                 self.kind = kind;
                 self.enabled = enabled;
                 Ok(())

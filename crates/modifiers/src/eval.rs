@@ -3,7 +3,7 @@
 use figcraft_geom::{Affine, Point, Rect, Vec2};
 
 use crate::kinds::{self, Ctx, Stage};
-use crate::model::{ModifierKind, Stack, Stencil};
+use crate::model::{ModifierKind, Stack, Stencil, StencilOutput, StencilRepeat};
 use crate::target::{NoTargets, TargetResolver};
 use crate::{MAX_INSTANCES_PER_NODE, MAX_LENGTH};
 
@@ -56,8 +56,10 @@ pub struct Output {
     /// stencil (draw the copies as they are).
     pub stencil: Option<StencilRow>,
     /// The translation lattice the stencil can repeat along: set only when the stack ends in an
-    /// enabled stencil row with `repeat: auto` and the last `wallpaper` or `gridArray` row above it
-    /// still forms a lattice (no per-copy or array row after it). `None` otherwise.
+    /// enabled stencil row with `repeat: auto` and the last array row above it is a `wallpaper` or
+    /// `gridArray` whose copies still form its lattice (no array row after it, no `transformEach`
+    /// or `randomize` row anywhere: those vary every copy). `None` otherwise, without a warning; a
+    /// stencil with `output: tile` then evaluates as `sheet`, with a warning.
     pub repeat: Option<Repeat>,
 }
 
@@ -148,6 +150,10 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
     let mut set = vec![Instance::identity()];
     let mut each: Vec<kinds::EachFn> = Vec::new();
     let mut rows = stack.modifiers.iter().filter(|m| m.enabled);
+    // The last lattice row's repeat while the copies still form its lattice ([`Output::repeat`]).
+    let mut lattice: Option<Repeat> = None;
+    // A per-copy row anywhere varies the final copies one by one, so they never form a lattice.
+    let mut per_copy = false;
     for m in rows.by_ref() {
         // Terminal: no copies of its own, and the rows below it are ignored (one warning, below).
         if let ModifierKind::Stencil(p) = &m.kind {
@@ -175,6 +181,10 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
                     );
                     break;
                 }
+                // An array of identities alone (one copy) doesn't move the lattice.
+                if !copies.iter().all(|t| *t == Affine::IDENTITY) {
+                    lattice = kinds::repeat(&m.kind, &ctx);
+                }
                 set = repeat_block(&set, &copies);
             }
             Stage::TooMany(copies) => {
@@ -184,7 +194,10 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             }
             // Applied after every array stage has run (below), so each final copy gets its own
             // values wherever the row sits in the stack.
-            Stage::Each(local) => each.push(local),
+            Stage::Each(local) => {
+                per_copy = true;
+                each.push(local);
+            }
         }
         let before = set.len();
         set.retain(|i| i.transform.is_finite());
@@ -200,6 +213,18 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             _ => None,
         }) {
             out.set_stencil(id, p);
+        }
+    }
+    if let Some(st) = &mut out.stencil {
+        let repeat = if st.params.repeat == StencilRepeat::Auto && !per_copy { lattice } else { None };
+        let mut tile_without_repeat = None;
+        if st.params.output == StencilOutput::Tile && repeat.is_none() {
+            st.params.output = StencilOutput::Sheet;
+            tile_without_repeat = Some(st.modifier.clone());
+        }
+        out.repeat = repeat;
+        if let Some(id) = tile_without_repeat {
+            out.warn(Some(&id), "tile output needs a repeat (a wallpaper or grid row above, with repeat on); cutting the whole sheet");
         }
     }
     if let Some(st) = &out.stencil {

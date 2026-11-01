@@ -259,7 +259,7 @@ read too; they are written lowercase).
 | `minCornerAngle` | degrees | 0 to 179 | 30 | Paper corners sharper than this are flagged |
 | `hoshi` | on/off | | on | Registration holes (hoshi) at the corners of the sheet, or of the tile |
 | `hoshiDiameterMm` | mm | 0.2 to 20 | 1.5 | Diameter of the registration holes |
-| `repeat` | choice | `auto`, `off` | `auto` | `auto`: when the last `wallpaper` or `gridArray` row above the stencil still forms a lattice (no per-copy or array row after it), islands and ties follow the repeat. `off`: the design is one picture. An unknown value reads as `auto` |
+| `repeat` | choice | `auto`, `off` | `auto` | `auto`: when the last array row above the stencil is a `wallpaper` or `gridArray` (and no `transformEach` or `randomize` row varies the copies), islands and ties follow its repeat (a grid of one column or row repeats one way only). `off`: the design is one picture. An unknown value reads as `auto` |
 | `output` | choice | `sheet`, `tile` | `sheet` | `sheet`: the whole design. `tile`: one repeat cell plus margin and registration holes, for step-and-repeat printing; without a repeat it cuts the sheet, with a warning. An unknown value reads as `sheet` |
 
 Numbers outside their range are clamped when evaluating (a warning names the field); a colour that

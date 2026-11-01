@@ -19,11 +19,11 @@
 //! - hexagonal (`p3`, `p3m1`, `p31m`, `p6`, `p6m`): `a = (w, 0)`, `b = w (1/2, √3/2)`; `w` is the
 //!   lattice constant, `cellHeight` is ignored.
 
-use figcraft_geom::{Affine, Point};
+use figcraft_geom::{Affine, Point, Vec2};
 
 use super::{Clamp, Ctx, Stage, StageResult};
 use crate::MAX_INSTANCES_PER_NODE;
-use crate::eval::Guide;
+use crate::eval::{Guide, Repeat};
 use crate::model::{Wallpaper, WallpaperGroup};
 
 /// The most cells along one side.
@@ -120,15 +120,39 @@ pub(crate) fn group_ops(g: WallpaperGroup, w: f64, h: f64, angle: f64) -> Vec<Af
     fractional_ops(g).into_iter().map(|m| b * m * inv).collect()
 }
 
-pub(crate) fn stage(p: &Wallpaper, ctx: &Ctx) -> StageResult {
-    let mut warnings = Vec::new();
-    let mut c = Clamp { warnings: &mut warnings };
-    let cols = clamp_cells(&mut c, "cols", p.cols);
-    let rows = clamp_cells(&mut c, "rows", p.rows);
+/// The clamped cell geometry of a wallpaper row: what [`stage`] and [`repeat`] both use.
+struct Cell {
+    cols: usize,
+    rows: usize,
+    w: f64,
+    h: f64,
+    angle: f64,
+    /// The symmetry origin (a lattice point), parent space.
+    origin: Point,
+}
+
+fn cell_of(p: &Wallpaper, ctx: &Ctx, c: &mut Clamp<'_>) -> Cell {
+    let cols = clamp_cells(c, "cols", p.cols);
+    let rows = clamp_cells(c, "rows", p.rows);
     let w = c.within("cellWidth", p.cell_width, 0.001, crate::MAX_LENGTH, 100.0);
     let h = c.within("cellHeight", p.cell_height, 0.001, crate::MAX_LENGTH, 100.0);
     let angle = c.within("angle", p.angle, 1.0, 179.0, 90.0);
     let origin = Point::new(ctx.bounds.x0 + c.length("originX", p.origin_x), ctx.bounds.y0 + c.length("originY", p.origin_y));
+    Cell { cols, rows, w, h, angle, origin }
+}
+
+/// The row's translation lattice: its [`lattice`] basis at the symmetry origin, whatever `cols`
+/// and `rows` are (the pattern is periodic along both vectors).
+pub(crate) fn repeat(p: &Wallpaper, ctx: &Ctx) -> Repeat {
+    let Cell { w, h, angle, origin, .. } = cell_of(p, ctx, &mut Clamp { warnings: &mut Vec::new() });
+    let (a, b) = lattice(p.group, w, h, angle);
+    Repeat { origin, a: Vec2::new(a[0], a[1]), b: Vec2::new(b[0], b[1]) }
+}
+
+pub(crate) fn stage(p: &Wallpaper, ctx: &Ctx) -> StageResult {
+    let mut warnings = Vec::new();
+    let mut c = Clamp { warnings: &mut warnings };
+    let Cell { cols, rows, w, h, angle, origin } = cell_of(p, ctx, &mut c);
     let per_cell = fractional_ops(p.group).len();
     let total = rows.saturating_mul(cols).saturating_mul(per_cell);
     // Checked before allocating anything per copy.

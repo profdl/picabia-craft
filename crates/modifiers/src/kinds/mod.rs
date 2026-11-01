@@ -74,9 +74,28 @@ pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx, targets: &dyn TargetResolver
     }
 }
 
+/// The translation lattice of a `wallpaper` or `gridArray` row in `ctx` ([`crate::Output::repeat`]);
+/// `None` for every other kind (and a 1 × 1 grid).
+pub(crate) fn repeat(kind: &ModifierKind, ctx: &Ctx) -> Option<crate::eval::Repeat> {
+    match kind {
+        ModifierKind::Wallpaper(p) => Some(wallpaper::repeat(p, ctx)),
+        ModifierKind::GridArray(p) => grid::repeat(p, ctx),
+        _ => None,
+    }
+}
+
 /// [`crate::model::Stencil::clamped`].
 pub(crate) fn stencil_clamped(p: &crate::model::Stencil) -> (crate::model::Stencil, Vec<String>) {
     stencil::clamped(p)
+}
+
+/// [`crate::Modifier::set_props`]'s material rule for a stencil (see `stencil::apply_material`).
+pub(crate) fn stencil_apply_material(
+    old: &crate::model::Stencil,
+    new: &mut crate::model::Stencil,
+    props: &serde_json::Map<String, serde_json::Value>,
+) {
+    stencil::apply_material(old, new, props);
 }
 
 /// Clamp helpers: every param reaches a transform through one of these.
