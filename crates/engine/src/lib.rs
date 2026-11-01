@@ -103,7 +103,11 @@ mod doc_state;
 mod error;
 mod picabia_bake; // PICABIA: .fig/Penpot exports bake modifier copies.
 mod picabia_bind; // PICABIA: variable bindings on modifier params.
+pub mod picabia_generate; // PICABIA: generated layers (imageTrace, pathfinder): compute registry, apply, info.
+pub mod picabia_jobs; // PICABIA: the scheduler for stencil sheets and generator results.
+pub mod picabia_pathfinder; // PICABIA: the pathfinder generator.
 pub mod picabia_stencil; // PICABIA: stencil layers (gather, compute, cache, refresh).
+pub mod picabia_trace; // PICABIA: the imageTrace generator.
 mod prefs;
 mod session;
 mod view_state;
@@ -408,6 +412,8 @@ mod penpot_export_tests;
 mod picabia_binding_tests; // PICABIA: modifier binding and expression tests.
 #[cfg(test)]
 mod picabia_canvas_tests; // PICABIA: modifier copies on the canvas and in exports.
+#[cfg(test)]
+mod picabia_generate_tests; // PICABIA: generator framework tests.
 #[cfg(test)]
 mod picabia_modifier_tests; // PICABIA: modifier command tests.
 #[cfg(test)]

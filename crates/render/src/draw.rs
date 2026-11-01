@@ -543,8 +543,8 @@ pub fn draw_node(ctx: &Ctx, pix: &mut Pixmap, id: NodeId, parent_xf: Affine, dep
 
 /// [`draw_node`] for a node already looked up.
 fn draw_layer(ctx: &Ctx, pix: &mut Pixmap, n: &Node, parent_xf: Affine, depth: usize) {
-    // PICABIA: a stencil layer draws its sheet; a layer with a modifier stack draws once per copy (effects, opacity, blend each time).
-    if crate::picabia::stencil::draw(ctx, pix, n, parent_xf) {
+    // PICABIA: a stencil sheet or generator result replaces the design; a layer with a modifier stack draws once per copy (effects, opacity, blend each time).
+    if crate::picabia::draw_replaced(ctx, pix, n, parent_xf) {
         return;
     }
     if !crate::picabia::each_copy(ctx.doc, n, |t| draw_layer_once(ctx, pix, n, parent_xf * t, depth)) {

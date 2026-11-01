@@ -70,6 +70,8 @@ pub(crate) fn stage(kind: &ModifierKind, ctx: &Ctx, targets: &dyn TargetResolver
         ModifierKind::CopyToShape(p) => copy_to_shape::stage(p, ctx, targets),
         // Terminal: the evaluator stops before it; were it reached, it would add nothing.
         ModifierKind::Stencil(_) => StageResult::unchanged(),
+        // Generators split the stack: the evaluator handles them, never as a stage.
+        ModifierKind::ImageTrace(_) | ModifierKind::Pathfinder(_) => StageResult::unchanged(),
         ModifierKind::Other { .. } => StageResult::unchanged(),
     }
 }

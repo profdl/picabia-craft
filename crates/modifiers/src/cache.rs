@@ -117,7 +117,7 @@ pub(crate) fn evaluated_with(src: &str, bounds: Rect, targets: &dyn TargetResolv
     let out = Arc::new(evaluate_with(&stack, bounds, &Resolved(resolved)));
     let mut guard = lock();
     let c = guard.get_or_insert_with(Caches::default);
-    let n = out.instances.len();
+    let n = out.instances.len() + out.generator.as_ref().map_or(0, |g| g.inputs.len());
     if c.outputs.len() >= MAX_OUTPUTS || c.output_instances + n > MAX_OUTPUT_INSTANCES {
         c.outputs.clear();
         c.output_instances = 0;
@@ -125,7 +125,7 @@ pub(crate) fn evaluated_with(src: &str, bounds: Rect, targets: &dyn TargetResolv
     if n <= MAX_OUTPUT_INSTANCES {
         c.output_instances += n;
         if let Some(old) = c.outputs.insert(key, out.clone()) {
-            c.output_instances = c.output_instances.saturating_sub(old.instances.len());
+            c.output_instances = c.output_instances.saturating_sub(old.instances.len() + old.generator.as_ref().map_or(0, |g| g.inputs.len()));
         }
     }
     Ok(out)

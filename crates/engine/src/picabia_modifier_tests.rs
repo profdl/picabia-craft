@@ -249,9 +249,13 @@ fn modifier_commands_survive_junk() {
         json!({"kind": "stencil", "props": {"threshold": 1e308, "widthMm": -1e308, "marginMm": "inf", "toleranceMm": "NaN", "minCutAreaMm2": 1e308}}),
         json!({"kind": "stencil", "props": {"colourMode": 7, "preview": [1], "paperColour": "\u{0}", "cutColours": ["#zzz", 5, null, "x".repeat(10_000)]}}),
         json!({"kind": "stencil", "props": {"cutColours": vec!["#abcdef"; 5_000], "invert": "x", "clothColour": {"a": 1}}, "index": 0}),
+        json!({"kind": "imageTrace", "props": {"preset": [1], "colors": 1e308, "threshold": -1e308, "noise": "NaN", "ignoreColor": 5, "mode": {"x": 1}}}),
+        json!({"kind": "imageTrace", "props": {"preset": "outline", "fills": false, "strokes": false, "strokeWidth": 1e308, "palette": "documentLibrary"}}),
+        json!({"kind": "pathfinder", "props": {"op": 7, "precision": -1e308, "outlineWidth": "inf"}, "upTo": 1e308}),
+        json!({"kind": "pathfinder", "props": {"op": "outline", "precision": 1e-308}, "index": 0, "upTo": 0}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
-    assert_eq!(ids.len(), 14, "{ids:?}");
+    assert_eq!(ids.len(), 15, "{ids:?}");
     for cmd in ids {
         for j in &junk {
             for damaged in [false, true] {

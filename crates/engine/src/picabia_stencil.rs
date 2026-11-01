@@ -10,16 +10,14 @@
 //! - [`compute_now`]: gather, `figcraft_stencil::compute_repeat` (with the stack's repeat in the
 //!   layer's space), and keep the result in
 //!   `figcraft_render::picabia::stencil`'s store with a snapshot of its inputs.
-//! - [`refresh`] (the canvas, every frame): recompute what's stale off the UI thread (native: one
-//!   worker thread per layer; wasm: on the UI thread once the layer has stopped changing for
-//!   [`SETTLE`]), drawing the latest result meanwhile. [`busy`] says a result is still coming.
-//! - [`ensure`]: compute what's stale now (exports, headless renders, commands).
+//! - [`refresh`] (the canvas, every frame), [`ensure`] (exports, headless renders) and [`busy`]:
+//!   the scheduler shared with generated layers ([`crate::picabia_jobs`]).
 //! - [`info`] / [`info_json`]: the swatch list, stats, warnings, islands and problems
 //!   (`modifier.stencilInfo` and the Design panel); the tie bars, problems, registration holes
 //!   and repeat cell for the canvas markers.
 
 use std::any::Any;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use figcraft_color::{Paint as Fill, PaintKind};
 use figcraft_doc::{BoolOp, Document, Node, NodeId, NodeKind};
@@ -36,20 +34,39 @@ use serde_json::{Value, json};
 const MAX_DEPTH: usize = 64;
 /// The most layer visits (copies count once each) one gather makes.
 const MAX_VISITS: usize = 200_000;
-/// Background computes running at once (native).
-#[cfg(not(target_arch = "wasm32"))]
-const MAX_JOBS: usize = 2;
-/// wasm computes on the UI thread: only once a layer has stopped changing for this long.
-#[cfg(target_arch = "wasm32")]
-const SETTLE: std::time::Duration = std::time::Duration::from_millis(300);
 
 /// The painted outlines of a stencil layer's design.
 #[derive(Clone, Debug, Default)]
 pub struct Gathered {
     /// In the layer's own space, bottom first.
     pub paints: Vec<Paint>,
+    /// Where each paint came from (same index as [`Gathered::paints`]).
+    pub sources: Vec<Source>,
     /// What couldn't be cut as drawn (each said once).
     pub warnings: Vec<String>,
+}
+
+/// Where a gathered paint came from ([`Gathered::sources`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Source {
+    /// The layer that paints it (for a generated layer's result: the item's source, else the
+    /// generated layer).
+    pub node: NodeId,
+    /// That layer's name (a generated result item: the item's name).
+    pub name: String,
+    /// It is a stroke outlined into a shape of its own.
+    pub is_stroke: bool,
+    /// Its colour is a gradient's or an image's mean colour (not the paint as drawn).
+    pub gradient_or_image: bool,
+}
+
+/// What [`gather_design`] does differently from a stencil's gather.
+#[derive(Clone, Copy, Debug, Default)]
+struct Opts {
+    /// This layer's own generator is bypassed: its design is gathered, not its result.
+    bypass: Option<NodeId>,
+    /// Image and pattern fills are gathered as their mean colour (a stencil leaves them out).
+    images: bool,
 }
 
 struct G<'a> {
@@ -57,6 +74,14 @@ struct G<'a> {
     out: Gathered,
     visits: usize,
     full: bool,
+    opts: Opts,
+}
+
+/// The paint being gathered: its layer and whether it is a stroke.
+#[derive(Clone, Copy)]
+struct Src<'n> {
+    node: &'n Node,
+    is_stroke: bool,
 }
 
 impl G<'_> {
@@ -96,6 +121,25 @@ impl G<'_> {
         if !xf.is_finite() {
             return;
         }
+        // A generated layer is gathered as its result (not its design), unless it is the layer
+        // whose own generator is gathering its design.
+        if self.opts.bypass != Some(n.id)
+            && let Some((shape, _)) = figcraft_render::picabia::generated::lookup(self.doc, n)
+            && !shape.keep_design
+        {
+            for it in &shape.items {
+                let (area, even_odd) = it.area();
+                let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
+                let source = Source {
+                    node: it.source.unwrap_or(n.id),
+                    name: it.name.clone(),
+                    is_stroke: matches!(it.paint, figcraft_render::picabia::generated::GenPaint::Stroke { .. }),
+                    gradient_or_image: false,
+                };
+                self.push(area.into_owned(), rule, xf, it.rgba, clip, source);
+            }
+            return;
+        }
         if n.effects.iter().any(|e| e.visible) {
             self.warn("effects (shadows, blurs) aren't cut");
         }
@@ -105,7 +149,7 @@ impl G<'_> {
             NodeKind::Text(_) => self.text(n, xf, clip),
             NodeKind::BooleanOp { .. } => {
                 if let Some((p, rule)) = figcraft_render::node_outline(doc, n) {
-                    self.emit(p, rule, xf, &n.fills, clip);
+                    self.emit(p, rule, xf, &n.fills, clip, Src { node: n, is_stroke: false });
                 }
                 self.stroke(n, xf, clip);
             }
@@ -146,18 +190,18 @@ impl G<'_> {
                 let Some(path) = net.region_path(i) else { continue };
                 let rule = if region.winding == figcraft_doc::WindingRule::EvenOdd { FillRule::EvenOdd } else { FillRule::Winding };
                 let paints = region.fills.as_deref().unwrap_or(&n.fills);
-                self.emit(path, rule, xf, paints, clip);
+                self.emit(path, rule, xf, paints, clip, Src { node: n, is_stroke: false });
             }
             return;
         }
         if let Some((p, rule)) = figcraft_render::node_outline(self.doc, n) {
-            self.emit(p, rule, xf, &n.fills, clip);
+            self.emit(p, rule, xf, &n.fills, clip, Src { node: n, is_stroke: false });
         }
     }
 
     fn stroke(&mut self, n: &Node, xf: Affine, clip: Option<&BezPath>) {
         if let Some((area, rule)) = figcraft_render::stroke_fill(self.doc, n) {
-            self.emit((*area).clone(), rule, xf, &n.strokes, clip);
+            self.emit((*area).clone(), rule, xf, &n.strokes, clip, Src { node: n, is_stroke: true });
         }
     }
 
@@ -178,14 +222,14 @@ impl G<'_> {
         }
         for (k, path) in &runs {
             let fills = layout.styles.get(*k).and_then(|s| s.fills.as_ref()).unwrap_or(&n.fills);
-            self.emit(path.clone(), FillRule::Winding, gxf, fills, clip);
+            self.emit(path.clone(), FillRule::Winding, gxf, fills, clip, Src { node: n, is_stroke: false });
         }
         if n.has_visible_stroke() {
             let even_odd = n.stroke.sides.is_some() || (n.stroke.dashes.is_empty() && n.stroke.align != figcraft_doc::StrokeAlign::Center);
             let rule = if even_odd { FillRule::EvenOdd } else { FillRule::Winding };
             for path in runs.values() {
                 let area = figcraft_render::draw::stroke_area(n, path, true);
-                self.emit((*area).clone(), rule, gxf, &n.strokes, clip);
+                self.emit((*area).clone(), rule, gxf, &n.strokes, clip, Src { node: n, is_stroke: true });
             }
         }
     }
@@ -226,11 +270,20 @@ impl G<'_> {
 
     /// One painted area: `path` (in its layer's space, read by `rule`) placed by `xf`, filled by
     /// the top visible paint of `paints`, cut to `clip`.
-    fn emit(&mut self, mut path: BezPath, rule: FillRule, xf: Affine, paints: &[Fill], clip: Option<&BezPath>) {
+    fn emit(&mut self, path: BezPath, rule: FillRule, xf: Affine, paints: &[Fill], clip: Option<&BezPath>, from: Src<'_>) {
         if path.elements().is_empty() || self.full {
             return;
         }
-        let Some(colour) = self.colour(paints) else { return };
+        let Some((colour, gradient_or_image)) = self.colour(paints) else { return };
+        let source = Source { node: from.node.id, name: from.node.name.clone(), is_stroke: from.is_stroke, gradient_or_image };
+        self.push(path, rule, xf, colour, clip, source);
+    }
+
+    /// One painted area in `colour`: `path` (read by `rule`) placed by `xf`, cut to `clip`.
+    fn push(&mut self, mut path: BezPath, rule: FillRule, xf: Affine, colour: [f32; 4], clip: Option<&BezPath>, source: Source) {
+        if path.elements().is_empty() || self.full {
+            return;
+        }
         if self.out.paints.len() > figcraft_stencil::MAX_PAINTS {
             // `compute` refuses past its cap with a warning: one more is enough to say so.
             self.full = true;
@@ -251,18 +304,29 @@ impl G<'_> {
         }
         let order = u32::try_from(self.out.paints.len()).unwrap_or(u32::MAX);
         self.out.paints.push(Paint { path, colour, order });
+        self.out.sources.push(source);
     }
 
-    /// The colour a stack of paints shows: the top visible one (a gradient: its mean colour).
-    fn colour(&mut self, paints: &[Fill]) -> Option<[f32; 4]> {
+    /// The colour a stack of paints shows: the top visible one (a gradient: its mean colour), and
+    /// whether it is a mean colour.
+    fn colour(&mut self, paints: &[Fill]) -> Option<([f32; 4], bool)> {
         let top = paints.iter().rev().find(|p| p.visible && p.opacity > 0.0)?;
         match &top.kind {
-            PaintKind::Solid { color } => Some([color.r, color.g, color.b, color.a * top.opacity]),
+            PaintKind::Solid { color } => Some(([color.r, color.g, color.b, color.a * top.opacity], false)),
             PaintKind::Gradient(g) => {
-                self.warn("gradients are cut as their mean colour");
+                self.warn(if self.opts.images { "gradients are drawn as their mean colour" } else { "gradients are cut as their mean colour" });
                 let n = g.stops.len().max(1) as f32;
                 let sum = g.stops.iter().fold([0.0f32; 4], |a, s| [a[0] + s.color.r, a[1] + s.color.g, a[2] + s.color.b, a[3] + s.color.a]);
-                Some([sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n * top.opacity])
+                Some(([sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n * top.opacity], true))
+            }
+            PaintKind::Image(img) if self.opts.images => {
+                self.warn("images and patterns are drawn as their mean colour");
+                let c = image_mean(self.doc, img);
+                Some(([c[0], c[1], c[2], c[3] * top.opacity], true))
+            }
+            PaintKind::Pattern(_) if self.opts.images => {
+                self.warn("images and patterns are drawn as their mean colour");
+                Some(([0.5, 0.5, 0.5, top.opacity], true))
             }
             PaintKind::Image(_) | PaintKind::Pattern(_) => {
                 self.warn("images and patterns aren't cut; they're left out");
@@ -270,6 +334,32 @@ impl G<'_> {
             }
         }
     }
+}
+
+/// The mean colour of image paint `img` as drawn (its adjustments applied), sampled on a grid of at
+/// most 64 × 64 pixels; mid-grey when the image doesn't decode.
+fn image_mean(doc: &Document, img: &figcraft_color::ImagePaint) -> [f32; 4] {
+    let Some(pm) = figcraft_render::images::get(&img.image, doc.images.get(&img.image), &img.filters, doc.color_profile) else {
+        return [0.5, 0.5, 0.5, 1.0];
+    };
+    let (w, h) = (pm.width().max(1), pm.height().max(1));
+    let (sx, sy) = ((w / 64).max(1), (h / 64).max(1));
+    let (mut sum, mut n) = ([0.0f64; 4], 0.0f64);
+    for y in (0..h).step_by(sy as usize) {
+        for x in (0..w).step_by(sx as usize) {
+            if let Some(p) = pm.pixel(x, y) {
+                let c = p.demultiply();
+                for (s, v) in sum.iter_mut().zip([c.red(), c.green(), c.blue(), c.alpha()]) {
+                    *s += f64::from(v) / 255.0;
+                }
+                n += 1.0;
+            }
+        }
+    }
+    if n == 0.0 {
+        return [0.5, 0.5, 0.5, 1.0];
+    }
+    sum.map(|s| (s / n) as f32)
 }
 
 /// `p` as plain non-zero contours (even-odd paths simplified by their rule).
@@ -280,11 +370,24 @@ fn normalised(p: BezPath, rule: FillRule) -> BezPath {
 /// Layer `n`'s stencil frame and the painted outlines of its design (`None`: not a stencil).
 pub fn gather(doc: &Document, n: &Node) -> Option<(Frame, Gathered)> {
     let frame = store::frame(doc, n)?;
-    let mut g = G { doc, out: Gathered::default(), visits: 0, full: false };
+    let mut g = G { doc, out: Gathered::default(), visits: 0, full: false, opts: Opts::default() };
     for c in &frame.copies {
         g.once(n, *c, None, 0);
     }
     Some((frame, g.out))
+}
+
+/// The painted outlines of layer `n`'s own design (its own generator bypassed: generated layers
+/// inside it count as their results) at each of `copies` (maps of its own space; the generator's
+/// input copies), in its own space, bottom first: a pathfinder's input. Gathered as a stencil
+/// gathers (strokes outlined into shapes of their own, text as glyphs, clips and masks applied,
+/// the copies of stacks inside), except that image and pattern fills count as their mean colour.
+pub fn gather_design(doc: &Document, n: &Node, copies: &[figcraft_geom::Affine]) -> Gathered {
+    let mut g = G { doc, out: Gathered::default(), visits: 0, full: false, opts: Opts { bypass: Some(n.id), images: true } };
+    for c in copies {
+        g.once(n, *c, None, 0);
+    }
+    g.out
 }
 
 /// What the stencil panel and `modifier.stencilInfo` show.
@@ -323,6 +426,8 @@ pub struct Info {
 /// Gather and compute layer `id`'s stencil now and keep it for the renderer. `None`: not a
 /// stencil layer.
 pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
+    // The generated layers it cuts (inside it, or its own generator above the stencil) first.
+    crate::picabia_generate::prepare(doc, id, true);
     let n = doc.node(id)?;
     let inputs = store::inputs(doc, id)?;
     let (frame, g) = gather(doc, n)?;
@@ -501,113 +606,19 @@ pub fn stencil_layers(doc: &Document) -> Vec<NodeId> {
     doc.nodes().filter(|n| store::is_stencil(n)).map(|n| n.id).collect()
 }
 
-/// Compute every stale stencil of `doc` now (exports and headless renders draw fresh sheets).
+/// Compute every stale stencil (and generator result) of `doc` now (exports and headless renders
+/// draw fresh sheets): [`crate::picabia_jobs::ensure`].
 pub fn ensure(doc: &Document) {
-    for id in stencil_layers(doc) {
-        if !doc.node(id).is_some_and(|n| store::is_fresh(doc, n)) {
-            compute_now(doc, id);
-        }
-    }
+    crate::picabia_jobs::ensure(doc);
 }
 
-#[derive(Default)]
-struct Sched {
-    /// Layers being computed in the background.
-    running: Vec<NodeId>,
-    /// wasm: stale layers waiting to settle (the document they were seen in, and since when).
-    #[cfg(target_arch = "wasm32")]
-    waiting: Vec<(NodeId, usize, web_time::Instant)>,
-}
-
-static SCHED: Mutex<Option<Sched>> = Mutex::new(None);
-
-fn sched() -> MutexGuard<'static, Option<Sched>> {
-    SCHED.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Whether a stencil result is still coming (the canvas keeps repainting until it lands).
+/// Whether a stencil (or generator) result is still coming: [`crate::picabia_jobs::busy`].
 pub fn busy() -> bool {
-    let s = sched();
-    let Some(s) = s.as_ref() else { return false };
-    #[cfg(target_arch = "wasm32")]
-    if !s.waiting.is_empty() {
-        return true;
-    }
-    !s.running.is_empty()
+    crate::picabia_jobs::busy()
 }
 
-/// Bring `doc`'s stencils up to date without blocking the caller long: stale ones are recomputed
-/// in the background (native) or once they've stopped changing (wasm). Call it every frame.
+/// Bring `doc`'s stencils (and generator results) up to date without blocking the caller long:
+/// [`crate::picabia_jobs::refresh`].
 pub fn refresh(doc: &Arc<Document>) {
-    let mut stale = Vec::new();
-    for id in stencil_layers(doc) {
-        let Some(n) = doc.node(id) else { continue };
-        if store::is_fresh(doc, n) {
-            continue;
-        }
-        stale.push(id);
-        schedule(doc, id);
-    }
-    #[cfg(target_arch = "wasm32")]
-    if let Some(s) = sched().as_mut() {
-        s.waiting.retain(|w| stale.contains(&w.0));
-    }
-    let _ = stale;
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn schedule(doc: &Arc<Document>, id: NodeId) {
-    {
-        let mut g = sched();
-        let s = g.get_or_insert_with(Sched::default);
-        if s.running.contains(&id) || s.running.len() >= MAX_JOBS {
-            return;
-        }
-        s.running.push(id);
-    }
-    struct Done(NodeId);
-    impl Drop for Done {
-        fn drop(&mut self) {
-            if let Some(s) = sched().as_mut() {
-                s.running.retain(|r| *r != self.0);
-            }
-        }
-    }
-    let doc2 = doc.clone();
-    let spawned = std::thread::Builder::new().name("picabia-stencil".into()).spawn(move || {
-        let _done = Done(id);
-        compute_now(&doc2, id);
-    });
-    if spawned.is_err() {
-        let _done = Done(id);
-        compute_now(doc, id);
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn schedule(doc: &Arc<Document>, id: NodeId) {
-    let ptr = Arc::as_ptr(doc) as usize;
-    let now = web_time::Instant::now();
-    let first = doc.node(id).is_some_and(|n| store::lookup(doc, n).is_none());
-    let ready = {
-        let mut g = sched();
-        let s = g.get_or_insert_with(Sched::default);
-        match s.waiting.iter_mut().find(|w| w.0 == id) {
-            Some(w) if w.1 == ptr => first || now.duration_since(w.2) >= SETTLE,
-            Some(w) => {
-                *w = (id, ptr, now);
-                first
-            }
-            None => {
-                s.waiting.push((id, ptr, now));
-                first
-            }
-        }
-    };
-    if ready {
-        compute_now(doc, id);
-        if let Some(s) = sched().as_mut() {
-            s.waiting.retain(|w| w.0 != id);
-        }
-    }
+    crate::picabia_jobs::refresh(doc);
 }

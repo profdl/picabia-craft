@@ -3,7 +3,7 @@
 use figcraft_geom::{Affine, Point, Rect, Vec2};
 
 use crate::kinds::{self, Ctx, Stage};
-use crate::model::{ModifierKind, Stack, Stencil, StencilOutput, StencilRepeat};
+use crate::model::{ImageTrace, ModifierKind, Pathfinder, Stack, Stencil, StencilOutput, StencilRepeat};
 use crate::target::{NoTargets, TargetResolver};
 use crate::{MAX_INSTANCES_PER_NODE, MAX_LENGTH};
 
@@ -61,6 +61,56 @@ pub struct Output {
     /// or `randomize` row anywhere: those vary every copy). `None` otherwise, without a warning; a
     /// stencil with `output: tile` then evaluates as `sheet`, with a warning.
     pub repeat: Option<Repeat>,
+    /// The stack's generator row, when it has an enabled one (the first: later ones are ignored
+    /// with a warning). The layer then draws the generator's result instead of its design:
+    /// [`GeneratorRow::inputs`] are the copies the rows above it made (folded into one result),
+    /// and [`Output::instances`] are the copies of that **result** the rows below it make.
+    /// `None` = no generator.
+    pub generator: Option<GeneratorRow>,
+}
+
+/// The generator row of an evaluated stack ([`Output::generator`]).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GeneratorRow {
+    /// The generator modifier's id.
+    pub modifier: String,
+    /// Its kind and params, clamped.
+    pub kind: GeneratorKind,
+    /// The copies of the layer the rows above the generator made (per-instance rows above it
+    /// applied), in the same convention as [`Output::instances`]: its input. At least one.
+    pub inputs: Vec<Instance>,
+}
+
+/// A generator's kind and params ([`GeneratorRow::kind`]).
+#[derive(Clone, Debug, PartialEq)]
+pub enum GeneratorKind {
+    ImageTrace(ImageTrace),
+    Pathfinder(Pathfinder),
+}
+
+impl GeneratorKind {
+    /// The kind id (`"imageTrace"`, `"pathfinder"`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            GeneratorKind::ImageTrace(_) => "imageTrace",
+            GeneratorKind::Pathfinder(_) => "pathfinder",
+        }
+    }
+
+    /// `kind`'s params clamped, with the clamping warnings; `None` when it isn't a generator.
+    pub fn of(kind: &ModifierKind) -> Option<(GeneratorKind, Vec<String>)> {
+        match kind {
+            ModifierKind::ImageTrace(p) => {
+                let (p, w) = p.clamped();
+                Some((GeneratorKind::ImageTrace(p), w))
+            }
+            ModifierKind::Pathfinder(p) => {
+                let (p, w) = p.clamped();
+                Some((GeneratorKind::Pathfinder(p), w))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// A translation lattice in the layer's parent space (like [`Instance::transform`]): the copies
@@ -154,11 +204,37 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
     let mut lattice: Option<Repeat> = None;
     // A per-copy row anywhere varies the final copies one by one, so they never form a lattice.
     let mut per_copy = false;
+    // A cap stopped this side of the stack: the rows after it are skipped up to a generator (which
+    // starts the result side) or a stencil (which still ends the stack).
+    let mut capped = false;
     for m in rows.by_ref() {
         // Terminal: no copies of its own, and the rows below it are ignored (one warning, below).
         if let ModifierKind::Stencil(p) = &m.kind {
             out.set_stencil(&m.id, p);
             break;
+        }
+        if m.kind.is_generator() {
+            if out.generator.is_some() {
+                out.warn(Some(&m.id), "only the first generator counts; this one is ignored");
+                continue;
+            }
+            // The copies so far are the generator's input (their per-instance rows applied); the
+            // rows below act on its result, starting again from the one original.
+            let mut inputs = finish(&mut out, std::mem::replace(&mut set, vec![Instance::identity()]), &std::mem::take(&mut each), pivot);
+            if inputs.is_empty() {
+                inputs.push(Instance::identity());
+            }
+            if let Some((kind, warnings)) = GeneratorKind::of(&m.kind) {
+                for w in warnings {
+                    out.warn(Some(&m.id), w);
+                }
+                out.generator = Some(GeneratorRow { modifier: m.id.clone(), kind, inputs });
+            }
+            (lattice, per_copy, capped) = (None, false, false);
+            continue;
+        }
+        if capped {
+            continue;
         }
         if let ModifierKind::Other { kind, error } = &m.kind {
             out.warn(Some(&m.id), other_message(kind, error.as_deref()));
@@ -179,7 +255,8 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
                         Some(&m.id),
                         format!("{n} copies is more than {MAX_INSTANCES_PER_NODE}; this modifier and the ones after it are skipped"),
                     );
-                    break;
+                    capped = true;
+                    continue;
                 }
                 // An array of identities alone (one copy) doesn't move the lattice.
                 if !copies.iter().all(|t| *t == Affine::IDENTITY) {
@@ -190,10 +267,11 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             Stage::TooMany(copies) => {
                 let n = set.len().saturating_mul(copies);
                 out.warn(Some(&m.id), format!("{n} copies is more than {MAX_INSTANCES_PER_NODE}; this modifier and the ones after it are skipped"));
-                break;
+                capped = true;
+                continue;
             }
-            // Applied after every array stage has run (below), so each final copy gets its own
-            // values wherever the row sits in the stack.
+            // Applied after every array stage of its side of the stack has run (below), so each
+            // final copy gets its own values wherever the row sits.
             Stage::Each(local) => {
                 per_copy = true;
                 each.push(local);
@@ -205,15 +283,6 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             out.warn(Some(&m.id), format!("{} copies with invalid transforms were dropped", before - set.len()));
         }
         reindex(&mut set);
-    }
-    if out.stencil.is_none() {
-        // A cap stopped the rows early: a stencil further down still ends the stack.
-        if let Some((id, p)) = rows.by_ref().find_map(|m| match &m.kind {
-            ModifierKind::Stencil(p) => Some((m.id.as_str(), p)),
-            _ => None,
-        }) {
-            out.set_stencil(id, p);
-        }
     }
     if let Some(st) = &mut out.stencil {
         let repeat = if st.params.repeat == StencilRepeat::Auto && !per_copy { lattice } else { None };
@@ -235,11 +304,17 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
             out.warn(Some(&id), format!("a stencil ends the stack: the {rows} below it are ignored"));
         }
     }
-    // Per-copy stages see the final copies: `i` and `n` count all of them. Each acts in the copy's
-    // own frame (`S_i · pivot · L · pivot⁻¹`), so where it sat among the arrays doesn't change
-    // how it composes, only that every copy is treated separately.
+    out.instances = finish(&mut out, set, &each, pivot);
+    out
+}
+
+/// `set` with the per-copy stages `each` applied (`i` and `n` count all of it): each acts in the
+/// copy's own frame (`S_i · pivot · L · pivot⁻¹`), so where it sat among the arrays doesn't change
+/// how it composes, only that every copy is treated separately. Invalid copies are dropped (with a
+/// warning in `out`); reindexed.
+fn finish(out: &mut Output, mut set: Vec<Instance>, each: &[kinds::EachFn], pivot: Point) -> Vec<Instance> {
     let n = set.len();
-    for local in &each {
+    for local in each {
         for (i, inst) in set.iter_mut().enumerate() {
             let l = local(inst, i, n);
             inst.transform *= around(pivot, l);
@@ -251,8 +326,7 @@ pub fn evaluate_with(stack: &Stack, bounds: Rect, targets: &dyn TargetResolver) 
         out.warn(None, format!("{} copies with invalid transforms were dropped", before - set.len()));
     }
     reindex(&mut set);
-    out.instances = set;
-    out
+    set
 }
 
 fn other_message(kind: &str, error: Option<&str>) -> String {
