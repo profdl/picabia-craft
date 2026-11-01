@@ -6,7 +6,7 @@ use super::{
 /// Whether a command, or a batch wrapping one, imports a file passed as Base64 `data`.
 fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
     match id {
-        "file.import" => params::get(params, "data").is_some(),
+        "file.import" | "image.replace" => params::get(params, "data").is_some(),
         "command.batch" => params.get("commands").and_then(Value::as_array).is_some_and(|commands| {
             commands.iter().any(|c| {
                 c.get("command").and_then(Value::as_str).zip(c.get("params")).is_some_and(|(id, params)| command_carries_import_bytes(id, params))
@@ -14,6 +14,13 @@ fn command_carries_import_bytes(id: &str, params: &Value) -> bool {
         }),
         _ => false,
     }
+}
+
+/// The layers `check_finite_geometry` looks at: only those the command added or changed. The diff
+/// skips what the two versions share, so the check costs about the size of the edit, not of the
+/// document (#1672).
+pub(crate) fn finite_check_candidates(doc: &Document, before: &Document) -> Vec<NodeId> {
+    doc.changed_ids(before, usize::MAX).unwrap_or_default()
 }
 
 impl Session {
@@ -47,10 +54,14 @@ impl Session {
 
     /// [`Session::execute`] for an AI agent named `agent` (the client's name; empty when it gave
     /// none), or for the user (`None`): the comments it makes are signed with the agent's name and
-    /// marked as an agent's.
+    /// marked as an agent's, and the app shows where it works ([`Session::agent_presence_at`]).
     pub fn execute_as(&mut self, agent: Option<&str>, id: &str, params: &Value) -> Result<Value> {
         let was = std::mem::replace(&mut self.agent, agent.map(cmd::comment::agent_author));
+        let before = agent.and_then(|_| self.agent_before());
         let r = self.execute(id, params);
+        if agent.is_some() {
+            self.note_agent(before);
+        }
         self.agent = was;
         r
     }
@@ -178,19 +189,22 @@ impl Session {
         }
         let broken = |n: &Node| !(n.transform.as_coeffs().iter().all(|c| c.is_finite()) && n.width.is_finite() && n.height.is_finite());
         let untouched = |n: &Node| bdoc.node_arc(n.id).zip(ds.doc.node_arc(n.id)).is_some_and(|(a, b)| Arc::ptr_eq(a, b));
-        match ds.doc.nodes().find(|n| broken(n) && !untouched(n)) {
+        match finite_check_candidates(&ds.doc, bdoc).iter().filter_map(|i| ds.doc.node(*i)).find(|n| broken(n) && !untouched(n)) {
             Some(n) => Err(bad(id, format!("\"{}\" would get a position or size beyond the number range", n.name))),
             None => Ok(()),
         }
     }
 
     /// A live session's document you may only view (or that is on its way to a server) is
-    /// read-only: refuse an edit (it is rolled back).
+    /// read-only: refuse an edit (it is rolled back). With a comment link, one that changes only
+    /// comment threads goes through.
     fn check_live_access(&self, id: &str, before: &Option<(Arc<Document>, Vec<NodeId>, NodeId, u64)>) -> Result<()> {
         let Some((bdoc, _, _, uid)) = before else { return Ok(()) };
         let Some(ds) = self.docs.iter().find(|d| d.uid == *uid) else { return Ok(()) };
         match self.live_read_only(*uid) {
-            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) => Err(EngineError::Disabled(id.to_string(), why.into())),
+            Some(why) if !Arc::ptr_eq(&ds.doc, bdoc) && !self.live_comment_edit(*uid, &ds.doc) => {
+                Err(EngineError::Disabled(id.to_string(), why.into()))
+            }
             _ => Ok(()),
         }
     }
@@ -252,8 +266,18 @@ impl Session {
         if self.live_doc(uid) {
             return self.live_edit(uid, label);
         }
+        let grouped = self.group_depth > 0;
         if let (Some(label), Some(ds)) = (label, self.docs.iter_mut().find(|d| d.uid == uid)) {
+            // A group becomes one step at its end: its edits add to the step it already pushed,
+            // so a long batch keeps one snapshot, not one per edit (#1099).
+            if grouped && ds.history.group_step == Some(ds.history.undo.len()) {
+                ds.history.redo.clear();
+                return;
+            }
             ds.push_undo(label, before, selection, page);
+            if grouped {
+                ds.history.group_step = Some(ds.history.undo.len());
+            }
         }
     }
 }

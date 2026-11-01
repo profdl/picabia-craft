@@ -26,7 +26,7 @@ impl Session {
         let ds = self.ds()?;
         let (doc, sel, page) = (ds.doc.clone(), ds.selection.clone(), ds.page);
         if self.tool.tool == ToolId::Pen {
-            return self.pen_finish();
+            return self.pen_double_click(ev);
         }
         let edits = !self.tool.dev_mode;
         // A frame's or section's name label: rename it there (the canvas puts a field over it).
@@ -334,6 +334,10 @@ impl Session {
         let sel = ds.selection.clone();
         if self.tool.pick_only {
             self.tool.picked = Some(c);
+        } else if ev.cmd && ev.shift {
+            // Cmd/Ctrl+Shift: make a colour style or variable of it instead (the UI asks which
+            // and what to call it; nothing is applied).
+            self.request_ui("dialog.createFromColor", json!({"color": c.to_css_hex()}));
         } else if !sel.is_empty() {
             self.execute("node.set", &json!({"ids": sel, "props": {"fill": c.to_css_hex()}}))?;
         }

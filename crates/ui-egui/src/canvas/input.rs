@@ -1,5 +1,36 @@
 use super::{FigApp, Point, PointerKind, Pos2, Rect, Ui, json, pointer_event};
 
+/// What a hover was found in: the event (where, the modifiers, the zoom) and what decides what it
+/// hits (the file and page, their revision, the selection, the tool and modes). The same again finds
+/// the same, so it isn't sent again.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HoverKey {
+    event: figcraft_engine::tools::PointerEvent,
+    doc: Option<(u64, figcraft_engine::doc::NodeId, u64)>,
+    selection: Vec<figcraft_engine::doc::NodeId>,
+    tool: figcraft_engine::ToolId,
+    modes: [bool; 3],
+}
+
+impl HoverKey {
+    fn of(app: &FigApp, event: figcraft_engine::tools::PointerEvent) -> Self {
+        let ds = app.session.ds().ok();
+        HoverKey {
+            event,
+            doc: ds.map(|d| (d.uid, d.page, d.revision)),
+            selection: ds.map(|d| d.selection.clone()).unwrap_or_default(),
+            tool: app.session.tool.tool,
+            modes: [app.session.tool.dev_mode, ds.is_some_and(|d| d.vector_edit.is_some()), ds.is_some_and(|d| d.text_edit.is_some())],
+        }
+    }
+}
+
+/// The pointer left the canvas (or something over it took the pointer): nothing is hovered there.
+fn left(app: &mut FigApp) {
+    app.canvas.last_hover = None;
+    app.session.pointer_left();
+}
+
 /// The zoom tool while Z is held (Alt: zoom out): a click zooms a step about the pointer, a drag
 /// zooms to the dragged area. Takes the pointer from the other tools while it's active.
 fn zoom_tool(app: &mut FigApp, ui: &Ui, resp: &egui::Response, pos: Pos2, mods: egui::Modifiers, typing: bool) -> bool {
@@ -25,9 +56,58 @@ fn zoom_tool(app: &mut FigApp, ui: &Ui, resp: &egui::Response, pos: Pos2, mods: 
     true
 }
 
+/// The wheel's scroll and the zoom for this frame. With Preferences ▸ Scroll wheel zoom on, a
+/// mouse wheel zooms and Cmd/Ctrl+wheel scrolls ([`swap_wheel`]); Shift+wheel still scrolls
+/// sideways, and trackpads, pinches and touch screens are left as they are.
+fn wheel_zoom(app: &mut FigApp, ctx: &egui::Context, zoom: f32, shift: bool) -> (egui::Vec2, f32) {
+    let (wheel, latest, pinch) = ctx.input(|i| {
+        let latest = i.events.iter().rev().find_map(|e| match e {
+            egui::Event::MouseWheel { unit, source, .. } => Some(is_mouse_wheel(*source, *unit)),
+            _ => None,
+        });
+        let pinch = i.multi_touch().is_some() || i.events.iter().any(|e| matches!(e, egui::Event::Zoom(_)));
+        (i.smooth_scroll_delta, latest, pinch)
+    });
+    let speed = ctx.options(|o| o.input_options.scroll_zoom_speed);
+    // egui spreads a wheel step over a few frames: the kind holds until the next scroll event.
+    if let Some(mouse) = latest {
+        app.canvas.wheel_is_mouse = mouse;
+    }
+    if !app.session.prefs.scroll_wheel_zoom || !app.canvas.wheel_is_mouse || pinch {
+        return (wheel, zoom);
+    }
+    swap_wheel(wheel, zoom, shift, speed)
+}
+
+/// Whether a scroll event came from a mouse wheel. Only macOS says which device scrolled; elsewhere
+/// a wheel scrolls by lines and a trackpad by points, which is the best guess there is.
+pub(crate) fn is_mouse_wheel(source: egui::MouseWheelSource, unit: egui::MouseWheelUnit) -> bool {
+    match source {
+        egui::MouseWheelSource::Wheel => true,
+        egui::MouseWheelSource::Unknown => unit != egui::MouseWheelUnit::Point,
+        _ => false,
+    }
+}
+
+/// Scroll wheel zoom on a mouse wheel's frame: egui reads Cmd/Ctrl+wheel as `zoom`, which becomes
+/// a scroll down (across with Shift: `ViewState::scroll`), and a plain
+/// `wheel` scroll becomes a zoom at egui's own Cmd/Ctrl+wheel rate (`speed`). Shift+wheel is
+/// left a sideways scroll.
+pub(crate) fn swap_wheel(wheel: egui::Vec2, zoom: f32, shift: bool, speed: f32) -> (egui::Vec2, f32) {
+    if zoom > 0.0 && (zoom - 1.0).abs() > 1e-6 && speed > 0.0 {
+        return (egui::vec2(0.0, zoom.ln() / speed), 1.0);
+    }
+    if !shift && wheel != egui::Vec2::ZERO {
+        return (egui::Vec2::ZERO, (speed * (wheel.x + wheel.y)).exp());
+    }
+    (wheel, zoom)
+}
+
 fn import_dropped(app: &mut FigApp, ctx: &egui::Context, hover_pos: Option<egui::Pos2>) {
     let dropped = ctx.input(|i| i.raw.dropped_files.clone());
     let mut refused = false;
+    // The first image goes to the colour picker that shows an image; the rest to the canvas.
+    let mut well = crate::colorpicker::image_drop_target(app, ctx).map(|(_, params)| params);
     for f in dropped {
         let path = f.path().to_path_buf();
         if crate::is_document(&path) {
@@ -40,17 +120,23 @@ fn import_dropped(app: &mut FigApp, ctx: &egui::Context, hover_pos: Option<egui:
         }
         let pt = hover_pos.map(|h| app.to_page(h)).unwrap_or_default();
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped.png".into());
-        let (params, read) = if path.exists() {
-            (json!({"path": path.to_string_lossy(), "x": pt.x, "y": pt.y}), None)
+        let (command, mut params) = match well.take() {
+            Some(params) => ("image.replace", params),
+            None => ("file.import", json!({"name": name, "x": pt.x, "y": pt.y})),
+        };
+        let read = if path.exists() {
+            params["path"] = json!(path.to_string_lossy());
+            params.as_object_mut().map(|o| o.remove("name"));
+            None
         } else {
-            (json!({"name": name, "x": pt.x, "y": pt.y}), Some(crate::dropped_bytes(&f, &name)))
+            Some(crate::dropped_bytes(&f, &name))
         };
         let Some(target) =
             app.session.ds().ok().map(|doc| crate::pending_open::ImportTarget { uid: doc.uid, page: doc.page, name: doc.doc.name.clone() })
         else {
             continue;
         };
-        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command: "file.import", target: Some(target), read });
+        app.ui.pending_opens.push(crate::pending_open::PendingOpen { label: name, params, command, target: Some(target), read });
     }
 }
 
@@ -65,10 +151,12 @@ pub(super) fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> boo
     }
     let ctx = ui.ctx().clone();
     // Two fingers pan as well as pinch (a touch screen has no scroll wheel).
-    let (mods, scroll, zoom_delta, hover_pos, space) = ctx.input(|i| {
+    let (mods, pan, zoom_delta, hover_pos, space) = ctx.input(|i| {
         let pan = i.multi_touch().map_or(egui::Vec2::ZERO, |m| m.translation_delta);
-        (i.modifiers, i.smooth_scroll_delta + pan, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space))
+        (i.modifiers, pan, i.zoom_delta(), i.pointer.hover_pos(), i.key_down(egui::Key::Space))
     });
+    let (wheel, zoom_delta) = wheel_zoom(app, &ctx, zoom_delta, mods.shift);
+    let scroll = wheel + pan;
     let editing_text = app.session.ds().map(|d| d.text_edit.is_some()).unwrap_or(false);
     let typing_elsewhere = crate::a11y::field_focused(&ctx);
     app.canvas.space_pan = space && !editing_text && !typing_elsewhere;
@@ -89,7 +177,7 @@ pub(super) fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> boo
         }
         // Leaving the canvas: nothing is hovered there any more.
         if !app.canvas.dragging && std::mem::take(&mut app.canvas.hovering) {
-            app.session.pointer_left();
+            left(app);
         }
         // A pan whose button was released off the canvas is over.
         if !ctx.input(|i| i.pointer.button_down(egui::PointerButton::Middle) || i.pointer.primary_down()) {
@@ -103,7 +191,8 @@ pub(super) fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> boo
         app.ui.pages_focus = None;
         app.ui.key_box = None;
     }
-    // Zoom (pinch, Cmd/Ctrl+scroll) about the pointer; plain scroll pans.
+    // Zoom (pinch, Cmd/Ctrl+scroll; a plain mouse wheel with Scroll wheel zoom) about the pointer;
+    // other scrolls pan.
     if resp.hovered() {
         if (zoom_delta - 1.0).abs() > 1e-4 {
             let anchor = app.to_page(pos);
@@ -220,7 +309,7 @@ pub(super) fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> boo
     } else {
         // Something over the canvas took the pointer.
         if std::mem::take(&mut app.canvas.hovering) {
-            app.session.pointer_left();
+            left(app);
         }
         None
     };
@@ -252,6 +341,12 @@ pub(super) fn input(app: &mut FigApp, ui: &mut Ui, resp: &egui::Response) -> boo
 /// Pointer event `kind` at screen point `pos`, to the tools.
 fn send(app: &mut FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) {
     let ev = pointer_event(app, kind, pos, m);
+    // A hover where nothing changed since the last one finds what that one found (the state is
+    // taken after it ran: what it set, such as the hovered layer, is part of it).
+    let hover = kind == PointerKind::Hover;
+    if hover && app.canvas.last_hover.as_ref().is_some_and(|k| *k == HoverKey::of(app, ev.clone())) {
+        return;
+    }
     if kind == PointerKind::Up {
         app.canvas.pressure = None;
     }
@@ -259,6 +354,7 @@ fn send(app: &mut FigApp, kind: PointerKind, pos: Pos2, m: &egui::Modifiers) {
     if let Err(e) = app.session.pointer(&ev) {
         app.toast(e.to_string());
     }
+    app.canvas.last_hover = hover.then(|| HoverKey::of(app, ev));
     app.handle_ui_requests();
 }
 

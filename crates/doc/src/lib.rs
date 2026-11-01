@@ -9,6 +9,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod board;
+mod board_route;
 pub mod colors;
 pub mod comments;
 pub mod facilitation;
@@ -27,6 +28,7 @@ pub mod vector_faces;
 pub mod vector_regions;
 
 pub use board::*;
+pub use board_route::{RouteEnd, attached_sides, path_handles, reshaped, route_along, route_points};
 pub use colors::*;
 pub use comments::*;
 pub use facilitation::*;
@@ -244,6 +246,9 @@ pub struct Document {
     /// The vote's ballots, by voter.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub votes: Ballots,
+    /// Ended votes' results kept in the file, oldest first (at most [`VOTE_HISTORY_MAX`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vote_history: Vec<VoteRecord>,
 }
 
 impl Default for Document {
@@ -286,6 +291,7 @@ impl Document {
             timer: None,
             vote: None,
             votes: BTreeMap::new(),
+            vote_history: Vec::new(),
         }
     }
 
@@ -739,7 +745,8 @@ impl Document {
 
     /// Bounds of everything painted by a node, effects and strokes included (page coordinates):
     /// a clipping frame's own area, else that and what its visible children show (masked
-    /// children only within their mask). A group is what its children show, grown by its effects.
+    /// children only within their mask). A group, or an unclipped frame past its box, is what its
+    /// children show grown by its effects, which apply to all of it.
     pub fn world_render_bounds(&self, id: NodeId) -> Option<Rect> {
         self.render_bounds_at(id, 0)
     }
@@ -752,7 +759,8 @@ impl Document {
         }
         Some(match (self.children_render_bounds(n, depth + 1), &n.kind) {
             (Some(kids), NodeKind::Group) => n.grow_by_effects(kids),
-            (Some(kids), _) => own.union(kids),
+            // An unclipped frame's effects apply to its children too, past its box included.
+            (Some(kids), _) => own.union(n.grow_by_effects(kids)),
             (None, _) => own,
         })
     }
@@ -1279,6 +1287,8 @@ fn remap_action(a: &mut proto::Action, map: &BTreeMap<NodeId, NodeId>) {
 
 #[cfg(test)]
 mod blur_tests;
+#[cfg(test)]
+mod board_shape_tests;
 #[cfg(test)]
 mod boolean_hit_tests;
 #[cfg(test)]

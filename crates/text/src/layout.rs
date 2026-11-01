@@ -1,11 +1,12 @@
 //! Text layout: shaping styled spans, fallback fonts, bidirectional text, line breaking,
 //! alignment and decorations.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use figcraft_doc::{
-    DecorationLength, DecorationStyle, LeadingTrim, ListStyle, ParaList, TextAlignH, TextAutoResize, TextCase, TextData, TextDecoration, TextStyle,
-    valid_feature_tag,
+    DecorationLength, DecorationStyle, LeadingTrim, LetterSpacing, LineHeight, ListStyle, ParaList, TextAlignH, TextAutoResize, TextCase, TextData,
+    TextDecoration, TextStyle, color::PaintKind, valid_feature_tag,
 };
 use figcraft_geom::{Affine, BezPath, Rect};
 use harfrust::{Direction, Feature, ShapeOptions, ShaperInstance, Tag, UnicodeBuffer, Variation};
@@ -331,21 +332,128 @@ struct ShapedText {
     bidi: Option<Bidi>,
     /// For each char, whether it starts a grapheme cluster.
     cluster_start: Vec<bool>,
+    /// For each char, whether a Thai, Lao, Khmer or Burmese word starts there (empty without them).
+    word_breaks: Vec<bool>,
 }
 
+/// Zero-sized; only its address is used: a per-process seed for style fingerprints, so
+/// document-supplied names can't precompute hash collisions (ASLR varies it across runs).
+struct FingerprintSeed;
+static FINGERPRINT_SEED: FingerprintSeed = FingerprintSeed;
+
+/// `x`'s bits, with −0.0 folded onto 0.0 so the fingerprint merges what `PartialEq` does
+/// (`-0.0 == 0.0` is true, their bits differ).
+fn float_key(x: f64) -> u64 {
+    if x == 0.0 { 0 } else { x.to_bits() }
+}
+
+/// The FNV-1a 64-bit offset basis and prime (Fowler–Noll–Vo), a published pair that spreads
+/// short inputs evenly with one multiply and one xor per byte. Any well-mixed pair would do;
+/// these are the standard ones, so the arithmetic is recognisable.
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+/// Mix `w` into the FNV-1a state `h`.
+fn mix(h: u64, w: u64) -> u64 {
+    (h ^ w).wrapping_mul(FNV_PRIME)
+}
+
+/// Base for the "some other paint kind" tags below: the values mean nothing, they only differ.
+const PAINT_KIND_TAG: u64 = 0x5157_0000;
+
+/// A cheap fingerprint of the fields that usually tell two styles apart. Only the equality run
+/// after it decides matches, so this may skip any field: skipping one just sends two different
+/// styles to the same bucket. Keep the cheap discriminators here so the common distinct styles
+/// land in different buckets — and when `TextStyle` grows a usually-discriminating field, mix
+/// it in too.
+fn style_fingerprint(s: &TextStyle, seed: u64) -> u64 {
+    let mut h = seed ^ FNV_OFFSET_BASIS;
+    // A separator between the two names, so ("ab", "c") and ("a", "bc") differ; any byte a
+    // family or style name cannot contain would do.
+    const SEPARATOR: u64 = 0xff;
+    for b in s.font_family.bytes() {
+        h = mix(h, b as u64);
+    }
+    h = mix(h, SEPARATOR);
+    for b in s.font_style.bytes() {
+        h = mix(h, b as u64);
+    }
+    h = mix(h, SEPARATOR);
+    h = mix(h, float_key(s.font_size));
+    // The enum variants below key their payload's number into disjoint ranges (Auto 0, odd,
+    // even) so one variant's payload never reads as another's.
+    h = mix(
+        h,
+        match &s.line_height {
+            LineHeight::Auto => 0,
+            LineHeight::Pixels(px) => float_key(*px).wrapping_mul(2).wrapping_add(1),
+            LineHeight::Percent(p) => float_key(*p).wrapping_mul(2).wrapping_add(2),
+        },
+    );
+    h = mix(
+        h,
+        match &s.letter_spacing {
+            LetterSpacing::Pixels(px) => float_key(*px).wrapping_mul(2).wrapping_add(1),
+            LetterSpacing::Percent(p) => float_key(*p).wrapping_mul(2).wrapping_add(2),
+        },
+    );
+    h = mix(h, s.case as u64);
+    h = mix(h, s.decoration as u64);
+    h = mix(h, s.fills.as_ref().map_or(0, Vec::len) as u64);
+    if let Some(fills) = &s.fills {
+        // Solid colours discriminate the everyday case; other paint kinds by their kind tag.
+        for p in fills {
+            match &p.kind {
+                PaintKind::Solid { color } => {
+                    let [r, g, b, a] = color.to_rgba8();
+                    h = mix(h, ((r as u64) << 24) | ((g as u64) << 16) | ((b as u64) << 8) | a as u64);
+                }
+                PaintKind::Gradient(_) => h = mix(h, PAINT_KIND_TAG + 1),
+                PaintKind::Image(_) => h = mix(h, PAINT_KIND_TAG + 2),
+                PaintKind::Pattern(_) => h = mix(h, PAINT_KIND_TAG + 3),
+            }
+        }
+    }
+    h = mix(h, s.variations.len() as u64);
+    h
+}
+
+/// Shape `text`: each span split by paragraph, bidi run and face into glyphs (items, in logical
+/// order), with the grapheme cluster starts and word breaks line breaking needs.
 fn shape_text(text: &TextData) -> ShapedText {
     let chars: Vec<char> = text.characters.chars().collect();
     let spans = text.spans();
     let mut styles: Vec<TextStyle> = Vec::new();
     let mut span_style: Vec<usize> = Vec::with_capacity(spans.len());
+    // Dedupe spans into styles: the last two styles again (spans run in blocks of one style, and
+    // alternate between a few), then buckets keyed by a cheap fingerprint of discriminating
+    // fields, each bucket resolved with the full `PartialEq`. Bucketing never merges what the
+    // equality wouldn't (a collision only splits the scan it replaces), so the result is the
+    // scan's, in O(spans) for names and sizes that differ (the audit's O(spans × styles),
+    // #1102). The seed comes from the address space, so document-supplied
+    // family names can't precompute collisions; the worst an adversarial document does is fall
+    // back to the full scan it started with.
+    let seed = std::ptr::from_ref(&FINGERPRINT_SEED) as u64;
+    let mut last: [Option<usize>; 2] = [None, None];
+    let mut buckets: HashMap<u64, Vec<usize>> = HashMap::new();
     for (_, _, s) in &spans {
-        let idx = match styles.iter().position(|x| x == *s) {
+        let idx = match last.iter().find_map(|i| i.filter(|&i| &styles[i] == *s)) {
             Some(i) => i,
             None => {
-                styles.push((*s).clone());
-                styles.len() - 1
+                let fp = style_fingerprint(s, seed);
+                let bucket = buckets.entry(fp).or_default();
+                match bucket.iter().find(|&&i| &styles[i] == *s) {
+                    Some(&i) => i,
+                    None => {
+                        styles.push((*s).clone());
+                        let i = styles.len() - 1;
+                        bucket.push(i);
+                        i
+                    }
+                }
             }
         };
+        last = [Some(idx), last[0]];
         span_style.push(idx);
     }
     let mut dbw = db().write().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -430,7 +538,8 @@ fn shape_text(text: &TextData) -> ShapedText {
         }
     }
 
-    ShapedText { chars, styles, faces, fallbacks, items, bidi, cluster_start }
+    let word_breaks = crate::breaks::word_breaks(&chars);
+    ShapedText { chars, styles, faces, fallbacks, items, bidi, cluster_start, word_breaks }
 }
 
 /// The face a grapheme cluster `cl` is shaped with. A letter and its marks come from one face that
@@ -522,11 +631,13 @@ impl SavedStarts<'_> {
 }
 
 /// The lines (item range, paragraph end, paragraph), wrapped by measure or at `saved` line starts;
-/// None when a saved line would overflow its box by more than [`SAVED_LINE_SLACK`].
+/// None when a saved line would overflow its box by more than [`SAVED_LINE_SLACK`]. Lines break
+/// where [`crate::breaks::break_between`] allows, and between the words `word_breaks` marks.
 fn break_lines(
     items: &[Item],
     chars: &[char],
     cluster_start: &[bool],
+    word_breaks: &[bool],
     wrap: Option<f64>,
     line_indent_of: &impl Fn(usize, bool, usize) -> f64,
     rtl_para_at: &impl Fn(usize) -> bool,
@@ -595,7 +706,10 @@ fn break_lines(
             }
         }
         x += w;
-        if items.get(i + 1).is_some_and(|next| crate::breaks::break_between(it.ch, next.ch)) {
+        // A word starts at the next glyph only if that glyph starts a new cluster (marks are glyphs
+        // of their letter's cluster).
+        let word_start = |next: &Item| it.char_end <= next.char_start && word_breaks.get(next.char_start).copied().unwrap_or(false);
+        if items.get(i + 1).is_some_and(|next| crate::breaks::break_between(it.ch, next.ch) || word_start(next)) {
             last_break = Some(i);
         }
         i += 1;
@@ -816,7 +930,7 @@ fn finish_layout(out: &mut TextLayout, finish: LayoutFinish<'_>) {
 /// Lay out `text` for a box of `box_width` (used when the text wraps or aligns; for auto width
 /// pass `None`). `box_height` is used for truncation only.
 pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) -> TextLayout {
-    let ShapedText { chars, styles, faces, fallbacks, items, bidi, cluster_start } = shape_text(text);
+    let ShapedText { chars, styles, faces, fallbacks, items, bidi, cluster_start, word_breaks } = shape_text(text);
     let rtl_para_at = |i: usize| bidi.as_ref().and_then(|b| b.rtl_para.get(i)).copied().unwrap_or(false);
 
     // List markers sit in a gutter (one more per nesting level) and wrapped lines hang at the
@@ -852,7 +966,7 @@ pub fn layout(text: &TextData, box_width: Option<f64>, box_height: Option<f64>) 
         TextAutoResize::WidthAndHeight => None,
         _ => box_width.filter(|w| w.is_finite() && *w > 0.0),
     };
-    let breaks = |saved| break_lines(&items, &chars, &cluster_start, wrap, &line_indent_of, &rtl_para_at, hang_start, hang_end, saved);
+    let breaks = |saved| break_lines(&items, &chars, &cluster_start, &word_breaks, wrap, &line_indent_of, &rtl_para_at, hang_start, hang_end, saved);
     // Where the file saved its line breaks, they win while the text and box are as saved.
     let saved = wrap.and_then(|w| text.saved_breaks_for(w)).map(|starts| SavedStarts { starts, next: 0 });
     let lines = saved.and_then(|s| breaks(Some(s))).or_else(|| breaks(None)).unwrap_or_default();

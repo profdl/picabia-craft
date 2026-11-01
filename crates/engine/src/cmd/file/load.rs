@@ -4,13 +4,24 @@ use super::{DocState, Document, EngineError, LineHeight, NodeId, NodeKind, Resul
 
 /// The recovery copy at `path` as a document with unsaved changes and no path.
 pub(crate) fn recovered(path: &str) -> Result<DocState> {
-    let loaded = read(path).and_then(|b| figcraft_format::load_bytes_with_versions(&b).map_err(|e| EngineError::Other(e.to_string())))?;
+    recovered_from(&read(path)?)
+}
+
+/// A recovery copy's bytes as a document with unsaved changes and no path (the browser keeps its
+/// copies in the page's storage, not in files).
+pub(crate) fn recovered_from(bytes: &[u8]) -> Result<DocState> {
+    let loaded = figcraft_format::load_bytes_with_versions(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
     Ok(DocState::new(loaded.doc, None).with_versions(loaded.versions).with_branches(loaded.branches).unsaved())
 }
 
+/// The largest file opened or imported as a document. A `.figcraft` file keeps its images as
+/// they are, so a real one can be far larger than it unpacks to (#1313's took 7.4 GB); twice that
+/// opens, while a device, a pipe or an absurd file is refused before it is read (#1114).
+pub const MAX_DOCUMENT_FILE: u64 = 16 << 30;
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn read(path: &str) -> Result<Vec<u8>> {
-    crate::file_access::read(path)
+    crate::file_access::read_capped(path, MAX_DOCUMENT_FILE)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -114,7 +125,7 @@ fn load_any(
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff" => {
             let mut doc = Document::new(file_stem(name_hint));
             let page = doc.first_page().ok_or(EngineError::NoDocument)?;
-            let (hash, w, h) = figcraft_format::add_image(&mut doc, bytes.to_vec()).map_err(|e| EngineError::Other(e.to_string()))?;
+            let (hash, w, h) = crate::cmd::create::add_readable_image(&mut doc, bytes.to_vec()).map_err(EngineError::Other)?;
             let id = doc.create(page, NodeKind::Rectangle, &file_stem(name_hint), 0.0, 0.0, f64::from(w), f64::from(h))?;
             doc.get_mut(id)?.fills = vec![figcraft_color::Paint::image(hash, figcraft_color::ImageScaleMode::Fill)];
             Ok((doc.into(), false))
@@ -129,6 +140,7 @@ fn load_any(
             if let Some(r) = figcraft_format::rest::try_import_with(bytes, variables, images) {
                 let (mut doc, warnings) = r.map_err(|e| EngineError::Other(e.to_string()))?;
                 link_instances(&mut doc);
+                installed_fonts_first();
                 return Ok((figcraft_format::Loaded { issues: warnings, ..doc.into() }, true));
             }
             let mut loaded = figcraft_format::load_bytes_with_versions(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
@@ -370,11 +382,19 @@ pub(crate) fn installed_family(family: &str, installed: &[String]) -> Option<Str
     installed.iter().find(|f| key(f) == want).cloned()
 }
 
+/// An imported file names its fonts by family: the installed ones must be known before its text is
+/// laid out, or it is measured (and reported missing) in a fallback font while the desktop's
+/// background scan is still running (#1292).
+fn installed_fonts_first() {
+    figcraft_text::scan_system_fonts();
+}
+
 /// Gives `None` when `bytes` are not a `.fig` file. Then other readers can try.
 pub(crate) fn load_fig(bytes: &[u8], name: &str) -> Option<Result<figcraft_format::Loaded>> {
     let r = figcraft_format::fig::try_import(bytes, name)?;
     Some(r.map_err(|e| EngineError::Other(e.to_string())).map(|(mut doc, warnings)| {
         link_instances(&mut doc);
+        installed_fonts_first();
         figcraft_format::Loaded { issues: warnings, ..doc.into() }
     }))
 }
@@ -551,7 +571,8 @@ fn font_report_with_families(doc: &Document, installed: &[String]) -> Value {
             } else if known.is_empty() {
                 None
             } else {
-                Some(known.contains(&lower))
+                // Also under the other name its fonts give the family ("Economia Medium").
+                Some(known.contains(&lower) || figcraft_text::has_family(&family))
             };
             json!({"family":family,"available":available,"layers":layers.into_iter().collect::<Vec<_>>()})
         })
@@ -693,6 +714,10 @@ pub(crate) fn variables_param(cmd: &str, p: &Value) -> Result<Option<Value>> {
         None | Some(Value::Null) => return Ok(None),
         Some(v @ Value::Object(_)) => v.clone(),
         Some(Value::String(s)) if s.trim_start().starts_with('{') => parse(s.as_bytes())?,
+        // Capped like the sibling file; the browser has no file system, which `read` says.
+        #[cfg(not(target_arch = "wasm32"))]
+        Some(Value::String(path)) => parse(&read_capped(path, MAX_VARIABLES_FILE)?)?,
+        #[cfg(target_arch = "wasm32")]
         Some(Value::String(path)) => parse(&read(path)?)?,
         Some(_) => return Err(bad(cmd, "variables: the local variables JSON (an object, JSON text or a path)")),
     };

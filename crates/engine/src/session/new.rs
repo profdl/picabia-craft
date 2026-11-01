@@ -15,6 +15,7 @@ impl Session {
             active: 0,
             clipboard: Clipboard::default(),
             prefs: Prefs::default(),
+            prefs_unsaved: false,
             tool: tools::ToolState::default(),
             ui_requests: Vec::new(),
             ui_dark: None,
@@ -31,6 +32,7 @@ impl Session {
             events: Arc::new(events::EventLog::default()),
             pending_events: Vec::new(),
             agent: None,
+            agent_presence: None,
             picabia_laser: crate::picabia_laser_link::LaserLink::default(), // PICABIA: the laser link.
         }
     }

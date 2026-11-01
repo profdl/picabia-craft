@@ -16,8 +16,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel}
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use figcraft_collab::Replica;
-use figcraft_collab::message::{self, Admin, AdminReply, ClientMsg, HostInfo, Presence, ServerMsg};
+use figcraft_collab::message::{self, ClientMsg, HostInfo, Presence, ServerMsg};
 use figcraft_doc::Document;
 use figcraft_engine::live::{Event, Published, Status};
 use tungstenite::protocol::frame::coding::CloseCode;
@@ -30,19 +29,9 @@ pub use crate::join::GuestConfig;
 use crate::join::{Next, Outcome, Resuming, Seen, Taken, after, closed, hello, resolved, take, too_large, unresolved};
 use crate::manage;
 use crate::net::{Duplex, NetLimits, config, open, shutdown};
+use crate::requests;
+pub use crate::requests::Publish;
 use crate::throttle::{PRESENCE_INTERVAL, Throttle, earliest};
-
-/// What [`Guest::publish`] uploads, and where.
-pub struct Publish {
-    pub server: Endpoint,
-    /// The server's key (`None`: publish as anyone may, on a server open to the public).
-    pub key: Option<String>,
-    /// The file's name on the server.
-    pub name: String,
-    pub doc: Arc<Document>,
-    /// Share the file once it is there: links and join codes for others ([`Event::Shared`]).
-    pub share: bool,
-}
 
 /// A joined (or joining) session. Dropping it leaves.
 pub struct Guest {
@@ -67,11 +56,12 @@ impl Guest {
         let (tx, rx) = channel();
         let me = tx.clone();
         let thread = std::thread::Builder::new().name("live-guest".into()).spawn(move || {
-            // A join code: the server says which file it opens, then the join goes on as with a link.
-            if let Some(code) = cfg.code.clone() {
+            // A join code (or a file of the team list): the server says which file and token, then
+            // the join goes on as with a link.
+            if let Some(lookup) = cfg.lookup.clone() {
                 inbox.push(Event::Status(Status::Connecting));
                 let asked =
-                    manage::resolve(&cfg.invite.server, &code, &cfg.limits, cfg.connect_timeout).map_err(|e| match e.strip_prefix(manage::REFUSED) {
+                    manage::resolve(&cfg.invite, &lookup, &cfg.limits, cfg.connect_timeout).map_err(|e| match e.strip_prefix(manage::REFUSED) {
                         Some(why) => Outcome::Refused(why.to_string()),
                         None => Outcome::Retry(e),
                     });
@@ -183,8 +173,7 @@ pub(crate) fn upload_file(
     limits: &NetLimits,
     timeout: Duration,
 ) -> Result<(Invite, Published, Option<HostInfo>), String> {
-    let snapshot = Replica::new(doc.clone()).snapshot().map_err(|e| e.to_string())?;
-    let publish = vec![Admin::Publish { name: name.to_string(), snapshot }];
+    let publish = vec![requests::upload(name, doc)?];
     let (replies, hosting) = match key {
         Some(key) => (manage::request(server, key, publish, limits, timeout)?, None),
         None => {
@@ -192,16 +181,7 @@ pub(crate) fn upload_file(
             (replies, Some(info))
         }
     };
-    let (file, edit, view, owner, expires) = match replies.into_iter().next() {
-        Some(AdminReply::Published { file, edit, view }) => (file, edit, view, None, None),
-        Some(AdminReply::Hosted { file, edit, view, owner, expires }) => (file, edit, view, Some(owner), expires),
-        Some(AdminReply::Failed { reason }) => return Err(reason),
-        _ => return Err("the server didn't say where the file is".into()),
-    };
-    let link = |token: String| Invite { server: server.clone(), file: file.id.clone(), token };
-    let (edit, view) = (link(edit.token), link(view.token));
-    let published =
-        Published { server: server.display(), file: file.id.clone(), name: file.name, edit: edit.link(), view: view.link(), owner, expires };
+    let (edit, published) = requests::uploaded(server, replies.into_iter().next())?;
     Ok((edit, published, hosting))
 }
 

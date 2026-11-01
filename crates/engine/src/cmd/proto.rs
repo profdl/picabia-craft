@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "proto.interaction.add",
             "Add interaction",
-            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key (a key or a combination: Shift+K, Ctrl+Alt+Delete; or a controller button: Gamepad A|B|X|Y|LB|RB|LT|RT|View|Menu|LS|RS|Up|Down|Left|Right|Home)}}, action {type: navigate {preserveScroll?}|back|scrollTo {offset? [x, y] (where the layer ends up from the top-left)}|openOverlay {position?, anchor? screen|triggerInside|triggerOutside (default screen; the trigger ones measure the position preset on the layer that opens the overlay: outside puts top presets above it and bottom presets below it, edges lined up), offset? [x, y] (position manual: the overlay's top-left from the top-left of the layer that opens it; without it, right below that layer), close_on_outside? (default true), background?}|swapOverlay|closeOverlay|openUrl {url}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], dest? (without action: a click-navigate to it), transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs? | duration_ms?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}, delayMs? | delay_ms? (mouse enter, leave, down and up: how long after the gesture the actions run, up to 600000)} — or {id, dest} for a click-navigate. Returns {index}",
+            "{id?, trigger? {type: onClick|onHover|onPress|onDrag|mouseEnter|mouseLeave|mouseDown|mouseUp|afterDelay {ms}|keyPress {key (a key or a combination: Shift+K, Ctrl+Alt+Delete; or a controller button: Gamepad A|B|X|Y|LB|RB|LT|RT|View|Menu|LS|RS|Up|Down|Left|Right|Home)}}, action {type: navigate {preserveScroll?}|back|scrollTo {offset? [x, y] (where the layer ends up from the top-left)}|openOverlay {position?, anchor? screen|triggerInside|triggerOutside (default screen; the trigger ones measure the position preset on the layer that opens the overlay: outside puts top presets above it and bottom presets below it, edges lined up), offset? [x, y] (position manual: the overlay's top-left from the top-left of the layer that opens it; without it, right below that layer), close_on_outside? (default true), background?}|swapOverlay|closeOverlay|openUrl {url, openInNewTab? (default true; false opens it in place of the prototype where the viewer's tab can go there: the web build)}|changeTo|setVariable {variable, value | expression (text, e.g. \"count + 1\")}|setVariableMode {collection, mode}|conditional {blocks [{condition? | expression? (text, e.g. \"count >= 3\"), actions}]}, dest?}, actions? [..], dest? (without action: a click-navigate to it), transition? {type: instant|dissolve|smartAnimate|moveIn|moveOut|push|slideIn|slideOut, direction?: left|right|top|bottom}, durationMs? | duration_ms?, easing? linear|easeIn|easeOut|easeInOut|easeInBack|easeOutBack|easeInOutBack|gentle|quick|bouncy|slow|{customBezier {x1, y1, x2, y2}}|{customSpring {mass, stiffness, damping}}, delayMs? | delay_ms? (mouse enter, leave, down and up: how long after the gesture the actions run, up to 600000)} — or {id, dest} for a click-navigate. Returns {index}",
             true,
             add
         ),
@@ -166,6 +166,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let show = boolean(p, "show").unwrap_or(true);
                 s.prefs.link_notice_skipped = !show;
+                s.prefs_unsaved = true;
                 Ok(json!({"shown": show}))
             }
         ),
@@ -308,40 +309,6 @@ pub(crate) fn check_action_dests(cmd: &str, doc: &Document, actions: &[Action]) 
     Ok(())
 }
 
-/// Variables, collections and modes that actions name by name, stored by id.
-fn canonical_ids(doc: &Document, it: &mut Interaction) {
-    canonical_actions(&doc.variables, &mut it.actions);
-}
-
-/// Variables (also those expressions read), collections and modes that `actions` name by name,
-/// stored by id.
-pub(crate) fn canonical_actions(vars: &Variables, actions: &mut [Action]) {
-    walk_mut(actions, &mut |a| match a {
-        Action::SetVariable { variable, expr, .. } => {
-            if let Some(v) = vars.get(variable) {
-                *variable = v.id.clone();
-            }
-            if let Some(e) = expr {
-                canonical_expr(vars, e, 0);
-            }
-        }
-        Action::SetVariableMode { collection, mode } => {
-            if let Some(c) = vars.collection(collection) {
-                if let Some(m) = c.find_mode(mode) {
-                    *mode = m.id.clone();
-                }
-                *collection = c.id.clone();
-            }
-        }
-        Action::Conditional { blocks } => {
-            for e in blocks.iter_mut().filter_map(|b| b.condition.as_mut()) {
-                canonical_expr(vars, e, 0);
-            }
-        }
-        _ => {}
-    });
-}
-
 /// Variables, collections and modes an expression names by name, stored by id.
 pub(crate) fn canonical_expr(vars: &Variables, e: &mut Expr, depth: usize) {
     match e {
@@ -357,7 +324,7 @@ pub(crate) fn canonical_expr(vars: &Variables, e: &mut Expr, depth: usize) {
         }
         Expr::InMode { variable, mode } => {
             if let Some(v) = vars.get(variable) {
-                if let Some(m) = vars.collection(&v.collection).and_then(|c| c.find_mode(mode)) {
+                if let Some(m) = vars.collection_by_id(&v.collection).and_then(|c| c.find_mode(mode)) {
                     *mode = m.id.clone();
                 }
                 *variable = v.id.clone();
@@ -425,7 +392,6 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let mut it = it;
     it.delay_ms = delay(cmd, p)?.unwrap_or(0);
     settle(&mut it);
-    canonical_ids(s.doc()?, &mut it);
     check_dests(cmd, s, &it)?;
     let mut index = 0;
     for i in req_targets(cmd, s, p)? {
@@ -484,7 +450,6 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         if it.actions.is_empty() {
             return Err(bad(cmd, "an interaction needs an action"));
         }
-        canonical_ids(s.doc()?, &mut it);
         check_dests(cmd, s, &it)?;
         if let Some(slot) = s.doc_mut()?.get_mut(i)?.interactions.get_mut(k) {
             *slot = it;

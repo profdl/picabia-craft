@@ -71,7 +71,7 @@ fn through(inputs: &[Affine], local: Rect) -> Option<Rect> {
 /// stencil above it).
 pub fn frame(doc: &Document, n: &Node) -> Option<GenFrame> {
     let (modifier, kind, inputs) = row(doc, n)?;
-    let local = crate::draw::local_paint_bounds(doc, n, 0, None);
+    let local = crate::draw::local_paint_bounds(doc, n, doc.world_transform(n.id), 0, None);
     let content = through(&inputs, local)?;
     Some(GenFrame { modifier, kind, inputs, content })
 }
@@ -259,7 +259,7 @@ pub fn world_content(doc: &Document, id: NodeId) -> Option<Rect> {
     if !is_generated(n) {
         return None;
     }
-    let local = local_reach(n, doc, crate::draw::local_paint_bounds(doc, n, 0, None))?;
+    let local = local_reach(n, doc, crate::draw::local_paint_bounds(doc, n, doc.world_transform(n.id), 0, None))?;
     let p = n.parent.map(|p| doc.world_transform(p)).unwrap_or(Affine::IDENTITY);
     let copies = instance_transforms(doc, n).unwrap_or_else(|| vec![Affine::IDENTITY]);
     copies.iter().map(|t| figcraft_geom::transform_rect_bbox(p * *t * n.transform, local)).filter(Rect::is_finite).reduce(|a, b| a.union(b))
