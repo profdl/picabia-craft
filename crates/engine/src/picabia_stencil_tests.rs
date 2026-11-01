@@ -215,8 +215,10 @@ fn results_are_fresh_until_the_design_changes() {
     let (mut d, g, inner) = two_tone();
     let n = d.node(g).unwrap().clone();
     let first = compute_now(&d, g).unwrap();
-    assert_eq!(first.stats.cut_pieces, 1);
-    assert!((first.stats.area_cut_mm2 - 2500.0 * 9.0).abs() < 1.0, "{:?}", first.stats);
+    // The white square and four 1.5 mm registration holes in the margin corners.
+    assert_eq!(first.stats.cut_pieces, 5);
+    let holes = 4.0 * std::f64::consts::PI * 0.75 * 0.75;
+    assert!((first.stats.area_cut_mm2 - 2500.0 * 9.0 - holes).abs() < 1.0, "{:?}", first.stats);
     assert!(store::is_fresh(&d, &n));
     let (i, fresh) = info(&d, &n).unwrap();
     assert!(fresh && i.colours.iter().any(|c| c.hex == "#ffffff" && c.cut));
@@ -252,8 +254,8 @@ fn the_canvas_draws_the_sheet_in_place_of_the_design() {
         let i = ((y - world.y0) as usize * pix.width() as usize + (x - world.x0) as usize) * 4;
         pix.data()[i..i + 4].to_vec()
     };
-    // Margin: paper (kakishibu brown, #c8a165).
-    assert_eq!(px(7.0, 17.0), [0xc8, 0xa1, 0x65, 0xff]);
+    // Margin: paper (kakishibu brown, #c8a165), beside the registration hole at (7.5, 17.5).
+    assert_eq!(px(9.0, 17.0), [0xc8, 0xa1, 0x65, 0xff]);
     // Where the black square was: paper too.
     assert_eq!(px(15.0, 25.0), [0xc8, 0xa1, 0x65, 0xff]);
     // The white square is cut: the canvas shows through.
@@ -266,7 +268,7 @@ fn the_canvas_draws_the_sheet_in_place_of_the_design() {
         let i = ((y - world.y0) as usize * pix.width() as usize + (x - world.x0) as usize) * 4;
         pix.data()[i..i + 4].to_vec()
     };
-    assert_eq!(px(7.0, 17.0), [0xf4, 0xef, 0xe6, 0xff], "cloth");
+    assert_eq!(px(9.0, 17.0), [0xf4, 0xef, 0xe6, 0xff], "cloth");
     assert_eq!(px(60.0, 70.0), [0x1f, 0x3a, 0x8a, 0xff], "paste");
 }
 
@@ -310,7 +312,7 @@ fn stencil_info_reports_colours_stats_and_size() {
     let white = colours.iter().find(|c| c["hex"] == "#ffffff").unwrap();
     assert_eq!(white["cut"], true);
     assert!((white["area"].as_f64().unwrap() - 150.0 * 150.0).abs() < 1.0, "100 units at 1.5 mm/unit: {white}");
-    assert_eq!(i["stats"]["cutPieces"], 1);
+    assert_eq!(i["stats"]["cutPieces"], 5, "the white square and four registration holes");
     assert!(i["stats"]["cutLengthMm"].as_f64().unwrap() > 0.0);
     // 200 × 100 design, 300 mm wide, plus 15 mm all round.
     assert!((i["sheetMm"]["w"].as_f64().unwrap() - 330.0).abs() < 1e-6);

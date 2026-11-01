@@ -1,7 +1,7 @@
 //! The whole pipeline: [`compute`].
 
 use figcraft_doc::BoolOp;
-use figcraft_geom::kurbo::{BezPath, Rect, Shape};
+use figcraft_geom::kurbo::{BezPath, Point, Rect, Shape};
 use figcraft_geom::split_subpaths;
 use figcraft_modifiers::{Stencil, StencilLimitMode};
 
@@ -67,6 +67,10 @@ pub struct StencilOut {
     /// What still breaks a cutting limit in [`StencilOut::cut`], at most [`MAX_PROBLEMS`](crate::MAX_PROBLEMS) (taken in
     /// turn from each kind, then grouped by kind); [`Stats::problems_by_kind`] has the counts.
     pub problems: Vec<Problem>,
+    /// The registration holes' centres (layer units), `hoshiDiameterMm` across, already in `cut`:
+    /// in the margin at the design's corners. Empty when `hoshi` is off or the margin is narrower
+    /// than a hole.
+    pub hoshi: Vec<Point>,
 }
 
 /// A paper island: a piece of paper the cut separates from the outer sheet (it would fall out
@@ -110,7 +114,8 @@ impl std::error::Error for StencilError {}
 /// filter, opening by `minCutWidthMm / 2` then closing by `minBridgeMm / 2` as three offsets,
 /// area filter again, simplify to `toleranceMm / 2`; with `limitMode: flag` only the
 /// simplification), the cut clipped to the sheet, the islands found and held (ties, the pattern
-/// lattice, or none in gauze mode), `paper = sheet − cut`, and the checks ([`Problem`]s).
+/// lattice, or none in gauze mode), the registration holes ([`StencilOut::hoshi`]),
+/// `paper = sheet − cut`, and the checks ([`Problem`]s).
 ///
 /// More than [`MAX_PAINTS`] paints: an uncut sheet and a warning.
 pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result<StencilOut, StencilError> {
@@ -129,9 +134,9 @@ pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result
     warnings.extend(pre.warnings);
     let held = crate::hold::hold(pre.cut, sheet, &p, mpu);
     warnings.extend(held.warnings);
-    let cut = held.cut;
+    let (cut, hoshi, holes) = crate::hoshi::register(&p, held.cut, crate::hoshi::sheet_points(layer_bounds, margin), margin, mpu, &mut warnings);
     let limits = check_limits(&p, mpu);
-    let zones = zones(&p, &limits, sheet, &[&held.ties]);
+    let zones = zones(&p, &limits, sheet, &[&held.ties, &holes]);
     let checked = check(&cut, sheet, &held.untied_bounds, &limits, &zones);
     warnings.extend(checked.warnings);
     let mut stats = measure(&cut, mpu);
@@ -153,6 +158,7 @@ pub fn compute(paints: &[Paint], params: &Stencil, layer_bounds: Rect) -> Result
         ties: held.ties,
         islands: held.islands,
         problems: checked.problems,
+        hoshi,
     })
 }
 

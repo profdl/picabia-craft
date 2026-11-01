@@ -15,7 +15,8 @@
 //!    nesting) held by tie bars to the paper around them, by a lattice of bars (`pattern`, ties for
 //!    what it misses), or flagged (`gauze`); [`StencilOut::islands`], [`StencilOut::ties`].
 //!
-//! 6. Checks: what still breaks a limit (narrow paper or cuts, small cuts or holes, sharp
+//! 6. Registration holes (hoshi) in the margin at the design's corners, [`StencilOut::hoshi`].
+//! 7. Checks: what still breaks a limit (narrow paper or cuts, small cuts or holes, sharp
 //!    corners, untied islands), [`StencilOut::problems`]; `limitMode: flag` skips the fixing
 //!    clean-up so every violation shows.
 //!
@@ -26,6 +27,7 @@ mod clean;
 mod colour;
 mod compute;
 mod hold;
+mod hoshi;
 mod index;
 mod islands;
 mod pattern;
@@ -71,6 +73,8 @@ mod fixture;
 mod fixture_tests;
 #[cfg(test)]
 mod hold_tests;
+#[cfg(test)]
+mod hoshi_tests;
 #[cfg(test)]
 mod problems_tests;
 #[cfg(test)]

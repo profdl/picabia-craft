@@ -20,9 +20,10 @@ fn on_black(white: &[Rect]) -> Vec<Paint> {
     v
 }
 
-/// Gauze: these tests look at the cut before ties change it (`hold_tests` has the ties).
+/// Gauze: these tests look at the cut before ties change it (`hold_tests` has the ties); no
+/// registration holes (`hoshi_tests`).
 fn params() -> Stencil {
-    Stencil { width_mm: 100.0, margin_mm: 10.0, tie_mode: StencilTieMode::Gauze, ..Stencil::default() }
+    Stencil { width_mm: 100.0, margin_mm: 10.0, tie_mode: StencilTieMode::Gauze, hoshi: false, ..Stencil::default() }
 }
 
 /// No clean-up, no simplification.

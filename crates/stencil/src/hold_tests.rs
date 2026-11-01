@@ -27,9 +27,10 @@ fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> BezPath {
     Rect::new(x0, y0, x1, y1).to_path(0.01)
 }
 
-/// No clean-up, no simplification.
+/// No clean-up, no simplification, no registration holes.
 fn raw() -> Stencil {
     Stencil {
+        hoshi: false,
         width_mm: 100.0,
         margin_mm: 10.0,
         min_cut_area_mm2: 0.0,
