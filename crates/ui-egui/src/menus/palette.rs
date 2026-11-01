@@ -170,6 +170,7 @@ pub(crate) fn palette_sections(app: &FigApp, q: &str, tab: PaletteTab) -> Vec<(S
         out.push((tr("Plugins").to_string(), plugin_rows(app, q)));
         out.push((tr("Widgets").to_string(), widget_rows(app, q)));
     }
+    out.iter_mut().for_each(|(_, rows)| rows.retain(|r| crate::picabia_hide::keeps_row(app, &r.key))); // PICABIA: hidden features
     out.retain(|(_, rows)| !rows.is_empty());
     out
 }

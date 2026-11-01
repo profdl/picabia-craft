@@ -225,6 +225,7 @@ fn main() -> eframe::Result {
     // open (no frame then).
     figcraft_ui_egui::i18n::set(&session.prefs.language, figcraft_ui_egui::Services::system_language(&svc).as_deref());
     let mut fig = FigApp::new(session, Box::new(svc));
+    figcraft_ui_egui::picabia_hide::hide(&mut fig); // PICABIA: no prototyping, Dev Mode, boards or live sessions
     fig.set_startup_update_check(true);
     fig.automation_roots = roots;
     fig.ui.home = false;

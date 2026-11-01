@@ -72,7 +72,8 @@ pub fn record_recent(app: &mut FigApp, key: &str) {
 /// Run a menu, shortcut or palette action by id: actions that need the UI (dialogs, panels, the
 /// clipboard) are handled here, the rest go to the engine.
 pub fn invoke(app: &mut FigApp, id: &str) {
-    if dev_mode_refuses(app, id) {
+    if dev_mode_refuses(app, id) || crate::picabia_hide::hides(app, id) {
+        // PICABIA: hidden features (menus, shortcuts, the palette)
         return;
     }
     match id {
@@ -266,6 +267,9 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
                     last_sep = true;
                 }
                 continue;
+            }
+            if crate::picabia_hide::hides(app, m.id) {
+                continue; // PICABIA: hidden features
             }
             last_sep = false;
             if m.id == "file.openRecent" {

@@ -18,6 +18,7 @@ pub mod icons_picabia; // PICABIA: modifier icons
 pub mod live;
 pub mod menus;
 pub mod pending_open;
+pub mod picabia_hide; // PICABIA: prototyping, Dev Mode, boards and live sessions hidden
 mod picabia_ui; // PICABIA: modifier menus, layers badge, Inspect and a11y lines
 pub mod popover;
 pub mod present;
@@ -348,6 +349,8 @@ pub struct UiState {
     pub left_width: f32,
     pub right_width: f32,
     pub right_tab: RightTab,
+    /// PICABIA: prototyping, Dev Mode, boards and live sessions left out of the interface.
+    pub picabia_hide: bool,
     /// The tab of the previous frame, to see the right panel change mode.
     pub last_right_tab: RightTab,
     pub left_tab: LeftTab,
@@ -561,6 +564,7 @@ impl Default for UiState {
             left_width: PANEL_DEFAULT,
             right_width: PANEL_DEFAULT,
             right_tab: RightTab::Design,
+            picabia_hide: false, // PICABIA: upstream's interface by default
             last_right_tab: RightTab::Design,
             left_tab: LeftTab::File,
             pages_open: true,

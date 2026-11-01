@@ -111,50 +111,56 @@ pub fn right_panel(app: &mut FigApp, ui: &mut Ui) {
     let edge = ui.max_rect();
     ui.painter().line_segment([edge.left_top(), edge.left_bottom()], Stroke::new(1.0, t.border));
     let w = ui.available_width();
-    // Top bar: people (you and the others in a live session), present, share.
-    let (top, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
-    // As wide as its label needs (longer in some languages).
-    let label = ui.painter().layout_no_wrap(tr("Share").to_string(), semibold(11.5), t.accent_on);
-    let sw = (label.size().x + 24.0).max(56.0);
-    let share = Rect::from_min_size(pos2(top.max.x - 14.0 - sw, top.center().y - 16.0), vec2(sw, 32.0));
-    let sresp = ui.interact(share, ui.scope_id().with("share"), Sense::click()).tip(tr("Share: live session, export"));
-    ui.painter().rect_filled(share, CornerRadius::same(6), if sresp.hovered() { t.accent_hover } else { t.accent });
-    ui.painter().galley(share.center() - label.size() / 2.0, label, t.accent_on);
-    crate::live::share_popover(app, &sresp);
-    // Play presents; its chevron opens the play menu (present, or preview in a pane).
-    let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
-    let (tri_r, chev_r) =
-        (Rect::from_min_max(play.min, pos2(play.max.x - 16.0, play.max.y)), Rect::from_min_max(pos2(play.max.x - 16.0, play.min.y), play.max));
-    let present_keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("proto.present").unwrap_or(""));
-    let presp = ui.interact(tri_r, ui.scope_id().with("play"), Sense::click()).tip(format!("{}  {present_keys}", tr("Present")));
-    let mresp = ui.interact(chev_r, ui.scope_id().with("play_menu"), Sense::click()).tip(tr("Present or preview"));
-    if presp.hovered() || mresp.hovered() {
-        ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
-    }
-    let tri = Rect::from_center_size(play.center() - vec2(7.0, 0.0), vec2(16.0, 16.0));
-    let c = tri.center();
-    ui.painter().add(egui::Shape::closed_line(vec![c + vec2(-5.0, -7.0), c + vec2(7.0, 0.0), c + vec2(-5.0, 7.0)], Stroke::new(1.4, t.icon)));
-    icons::paint(ui.painter(), Rect::from_center_size(play.center() + vec2(12.0, 0.0), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
-    crate::live::people_bar(app, ui, Rect::from_min_max(pos2(top.min.x + 12.0, top.min.y), pos2(play.min.x - 6.0, top.max.y)));
-    if presp.clicked() {
-        app.run("proto.present", json!({}));
-    }
-    menu_popup(&mresp).width(200.0).show(|ui| {
-        if menu_item(ui, tr("Present"), &present_keys) {
+    // PICABIA: no people, Present or Share without live sessions and prototyping.
+    let hide = crate::picabia_hide::on(app);
+    if !hide {
+        // Top bar: people (you and the others in a live session), present, share.
+        let (top, _) = ui.allocate_exact_size(vec2(w, 48.0), Sense::hover());
+        // As wide as its label needs (longer in some languages).
+        let label = ui.painter().layout_no_wrap(tr("Share").to_string(), semibold(11.5), t.accent_on);
+        let sw = (label.size().x + 24.0).max(56.0);
+        let share = Rect::from_min_size(pos2(top.max.x - 14.0 - sw, top.center().y - 16.0), vec2(sw, 32.0));
+        let sresp = ui.interact(share, ui.scope_id().with("share"), Sense::click()).tip(tr("Share: live session, export"));
+        ui.painter().rect_filled(share, CornerRadius::same(6), if sresp.hovered() { t.accent_hover } else { t.accent });
+        ui.painter().galley(share.center() - label.size() / 2.0, label, t.accent_on);
+        crate::live::share_popover(app, &sresp);
+        // Play presents; its chevron opens the play menu (present, or preview in a pane).
+        let play = Rect::from_min_size(pos2(share.min.x - 50.0, top.center().y - 14.0), vec2(42.0, 28.0));
+        let (tri_r, chev_r) =
+            (Rect::from_min_max(play.min, pos2(play.max.x - 16.0, play.max.y)), Rect::from_min_max(pos2(play.max.x - 16.0, play.min.y), play.max));
+        let present_keys = crate::toolbar::pretty_shortcut(crate::shortcuts::shortcut("proto.present").unwrap_or(""));
+        let presp = ui.interact(tri_r, ui.scope_id().with("play"), Sense::click()).tip(format!("{}  {present_keys}", tr("Present")));
+        let mresp = ui.interact(chev_r, ui.scope_id().with("play_menu"), Sense::click()).tip(tr("Present or preview"));
+        if presp.hovered() || mresp.hovered() {
+            ui.painter().rect_filled(play, CornerRadius::same(5), t.hover);
+        }
+        let tri = Rect::from_center_size(play.center() - vec2(7.0, 0.0), vec2(16.0, 16.0));
+        let c = tri.center();
+        ui.painter().add(egui::Shape::closed_line(vec![c + vec2(-5.0, -7.0), c + vec2(7.0, 0.0), c + vec2(-5.0, 7.0)], Stroke::new(1.4, t.icon)));
+        icons::paint(ui.painter(), Rect::from_center_size(play.center() + vec2(12.0, 0.0), vec2(10.0, 10.0)), Icon::Chevron, t.icon_secondary);
+        crate::live::people_bar(app, ui, Rect::from_min_max(pos2(top.min.x + 12.0, top.min.y), pos2(play.min.x - 6.0, top.max.y)));
+        if presp.clicked() {
             app.run("proto.present", json!({}));
-            ui.close();
         }
-        let (label, cmd) = if app.ui.preview.is_some() { (tr("Close preview"), "proto.closePreview") } else { (tr("Preview"), "proto.preview") };
-        if menu_item(ui, label, "") {
-            app.run(cmd, json!({}));
-            ui.close();
-        }
-    });
+        menu_popup(&mresp).width(200.0).show(|ui| {
+            if menu_item(ui, tr("Present"), &present_keys) {
+                app.run("proto.present", json!({}));
+                ui.close();
+            }
+            let (label, cmd) = if app.ui.preview.is_some() { (tr("Close preview"), "proto.closePreview") } else { (tr("Preview"), "proto.preview") };
+            if menu_item(ui, label, "") {
+                app.run(cmd, json!({}));
+                ui.close();
+            }
+        });
+    }
     // Tabs row.
     let (tabs, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
     ui.painter().line_segment([tabs.left_top(), tabs.right_top()], Stroke::new(1.0, t.border));
     let mut x = tabs.min.x + 8.0;
-    for (tab, label) in [(RightTab::Design, tr("Design")), (RightTab::Prototype, tr("Prototype"))] {
+    let shown = [(RightTab::Design, tr("Design")), (RightTab::Prototype, tr("Prototype"))];
+    for (tab, label) in shown.into_iter().filter(|(tab, _)| crate::picabia_hide::tab_shown(hide, *tab)) {
+        // PICABIA: no Prototype tab
         let galley = ui.painter().layout_no_wrap(label.into(), semibold(11.0), t.text);
         let r = Rect::from_min_size(pos2(x, tabs.center().y - 12.0), vec2(galley.size().x + 16.0, 24.0));
         let resp = ui.interact(r, ui.scope_id().with(("rtab", label)), Sense::click());

@@ -28,16 +28,18 @@ fn tallest_column() -> usize {
     Group::ALL.iter().map(|g| count(*g).div_ceil(COLUMNS)).max().unwrap_or(1)
 }
 
-fn rows(group: Option<Group>, query: &str, platform: Platform) -> Vec<Row> {
+fn rows(group: Option<Group>, query: &str, platform: Platform, hide: bool) -> Vec<Row> {
     let q = query.trim().to_lowercase();
     // Labels match in the UI language and in English.
     let wanted = |g: Group, label: &str, english: &str| {
-        group.is_none_or(|x| x == g) && (q.is_empty() || label.to_lowercase().contains(&q) || english.to_lowercase().contains(&q))
+        crate::picabia_hide::group_listed(hide, g) // PICABIA: hidden features
+            && group.is_none_or(|x| x == g)
+            && (q.is_empty() || label.to_lowercase().contains(&q) || english.to_lowercase().contains(&q))
     };
     let mut out: Vec<Row> = KEYS
         .iter()
         .map(|b| (b, i18n::command(b.id, b.title())))
-        .filter(|(b, label)| wanted(b.group, label, b.title()))
+        .filter(|(b, label)| wanted(b.group, label, b.title()) && !(hide && crate::picabia_hide::hidden_id(b.id))) // PICABIA
         .map(|(b, label)| {
             // Alternatives that read the same (⌘+ and ⇧⌘+) show once.
             let mut keys: Vec<String> = Vec::with_capacity(MAX_KEYS);
@@ -100,12 +102,14 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     }
     let t = Tokens::get(ctx);
     let platform = crate::shortcuts::platform();
+    let hide = crate::picabia_hide::on(app); // PICABIA: hidden features
     let width = (ctx.content_rect().width() - 48.0).clamp(480.0, 1040.0);
     let mut open = true;
     crate::dialogs::window(tr("Keyboard shortcuts"), ctx).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -16.0)).open(&mut open).show(ctx, |ui| {
         ui.set_width(width);
         ui.horizontal(|ui| {
-            crate::dialogs::tab_strip(ui, &t, &Group::ALL, |g| tr(g.label()), &mut app.ui.shortcuts_tab);
+            let groups: Vec<Group> = Group::ALL.into_iter().filter(|g| crate::picabia_hide::group_listed(hide, *g)).collect(); // PICABIA
+            crate::dialogs::tab_strip(ui, &t, &groups, |g| tr(g.label()), &mut app.ui.shortcuts_tab);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = ui.add(egui::TextEdit::singleline(&mut app.ui.shortcuts_query).hint_text(tr("Search shortcuts")).desired_width(180.0));
                 crate::widgets::select_all_on_focus(ui, &r, &app.ui.shortcuts_query);
@@ -113,7 +117,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         });
         ui.add_space(10.0);
         let searching = !app.ui.shortcuts_query.trim().is_empty();
-        let list = rows((!searching).then_some(app.ui.shortcuts_tab), &app.ui.shortcuts_query, platform);
+        let list = rows((!searching).then_some(app.ui.shortcuts_tab), &app.ui.shortcuts_query, platform, hide);
         let body_h = (ROW_H + 2.0) * tallest_column().min(MAX_ROWS) as f32;
         if list.is_empty() {
             ui.allocate_ui(vec2(width, body_h), |ui| {

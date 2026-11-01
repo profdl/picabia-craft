@@ -226,6 +226,7 @@ impl FigApp {
         }
         theme::set_doc_profile(&ctx, self.session.doc().map_or(figcraft_color::ColorProfile::Srgb, |d| d.color_profile));
         widgets::set_nudge(&ctx, self.session.prefs.nudge_small, self.session.prefs.nudge_big);
+        crate::picabia_hide::settle(self); // PICABIA: no Prototype or Dev Mode tab
         self.sync_dev_mode();
         self.end_pen_outside_design();
         tabs::relink_presents(self);

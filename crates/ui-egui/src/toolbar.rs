@@ -139,7 +139,8 @@ pub fn show(app: &mut FigApp, ui: &mut Ui) {
 /// read as one bar.
 pub(crate) fn bar_width(app: &FigApp) -> f32 {
     let board = app.session.doc().is_ok_and(figcraft_engine::board::is_board);
-    main_width(if board { BOARD_GROUPS } else { GROUPS }, board)
+    // PICABIA: without the hidden modes
+    main_width(if board { BOARD_GROUPS } else { GROUPS }, board) - crate::picabia_hide::hidden_modes(app, board) * TOOL_CELL
 }
 
 /// The main toolbar pill's width: the tool groups with their flyout carets, Actions, the divider
@@ -156,7 +157,7 @@ fn main_width(groups: &[Group], board: bool) -> f32 {
 /// Draw · Design · Prototype · Inspect mode switcher (on a board, its two buttons).
 fn main_toolbar(app: &mut FigApp, ui: &mut Ui, canvas: Rect, t: &Tokens, board: bool) {
     let groups = if board { BOARD_GROUPS } else { GROUPS };
-    let width = main_width(groups, board);
+    let width = main_width(groups, board) - crate::picabia_hide::hidden_modes(app, board) * TOOL_CELL; // PICABIA: hidden modes
     let rect = pill(ui, &mut app.ui.nav, canvas, width, t);
     let cy = rect.center().y;
     let scroll = pill_scroll(ui, rect, width);
@@ -284,10 +285,13 @@ fn mode_switcher(app: &mut FigApp, ui: &mut Ui, x: f32, cy: f32, t: &Tokens) {
         crate::RightTab::Prototype => 2,
         crate::RightTab::Inspect => 3,
     };
-    let seg = Rect::from_min_size(pos2(x, cy - TOOL_CELL / 2.0), vec2(4.0 * TOOL_CELL, TOOL_CELL));
+    // PICABIA: only Draw and Design without prototyping and Dev Mode.
+    let shown: Vec<usize> = (0..modes.len()).filter(|i| crate::picabia_hide::mode_shown(app, *i)).collect();
+    let seg = Rect::from_min_size(pos2(x, cy - TOOL_CELL / 2.0), vec2(shown.len() as f32 * TOOL_CELL, TOOL_CELL));
     ui.painter().rect_filled(seg, CornerRadius::same(5), t.field);
-    for (i, (icon, tip)) in modes.iter().enumerate() {
-        let r = Rect::from_min_size(pos2(seg.min.x + i as f32 * TOOL_CELL, seg.min.y), vec2(TOOL_CELL, TOOL_CELL));
+    for (slot, &i) in shown.iter().enumerate() {
+        let Some((icon, tip)) = modes.get(i) else { continue };
+        let r = Rect::from_min_size(pos2(seg.min.x + slot as f32 * TOOL_CELL, seg.min.y), vec2(TOOL_CELL, TOOL_CELL));
         let resp = ui.interact(r, ui.scope_id().with(("mode", i)), Sense::click()).on_hover_text(*tip);
         a11y::toggle(&resp, tip, i == active);
         if i == active {
