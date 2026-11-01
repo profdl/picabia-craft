@@ -139,7 +139,7 @@ fn an_array_above_a_pathfinder_is_folded_into_its_input() {
     let mut s = Session::new();
     let g = two_squares(&mut s);
     add(&mut s, g, "gridArray", json!({"rows": 1, "cols": 3, "gapX": 10}));
-    add(&mut s, g, "pathfinder", json!({}));
+    add(&mut s, g, "pathfinder", json!({"op": "trim"}));
     let info = ex(&mut s, "modifier.resultInfo", json!({"id": g}));
     assert_eq!(info["stats"]["shapes"], 6, "{info}");
     let l = ex(&mut s, "modifier.list", json!({"id": g}));
@@ -212,7 +212,7 @@ fn a_pathfinder_over_a_traced_child_computes_the_child_first() {
     let red = s.doc().unwrap().get(g).unwrap().children[0];
     red_image_on(&mut s, red);
     add(&mut s, red, "imageTrace", json!({}));
-    add(&mut s, g, "pathfinder", json!({}));
+    add(&mut s, g, "pathfinder", json!({"op": "trim"}));
     let doc = s.doc().unwrap().clone();
     crate::picabia_generate::compute_now(&doc, g).unwrap();
     assert!(store::is_fresh(&doc, doc.get(red).unwrap()));
@@ -340,7 +340,7 @@ fn apply_on_a_pathfinder_names_faces_after_their_sources() {
     let mut s = Session::new();
     let g = two_squares(&mut s);
     ex(&mut s, "node.set", json!({"ids": [g], "props": {"name": "Shapes"}}));
-    add(&mut s, g, "pathfinder", json!({}));
+    add(&mut s, g, "pathfinder", json!({"op": "trim"}));
     let out = ex(&mut s, "modifier.apply", json!({"ids": [g]}));
     let gid = id_of(&out["ids"][0]).unwrap();
     let doc = s.doc().unwrap();
