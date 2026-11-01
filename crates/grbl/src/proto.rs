@@ -298,7 +298,7 @@ pub fn clean_line(line: &str) -> Result<String, String> {
             c => {
                 out.push(c);
                 if out.len() > MAX_LINE {
-                    return Err(format!("longer than GRBL's {MAX_LINE} characters"));
+                    return Err(format!("is longer than GRBL's {MAX_LINE} characters"));
                 }
             }
         }

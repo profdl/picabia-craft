@@ -13,7 +13,7 @@
 //!   bytes out from [`Controller::poll`], state out with [`Controller::snapshot`]. Time comes in
 //!   as `now_ms`, so it runs the same natively, in the browser build and in tests.
 //! - [`Transport`]: where the bytes go ([`pump`] moves them between a transport and a controller).
-//! - `serial` (native only): the serial ports and a [`Transport`] over one.
+//! - `serial` (native only, PIC17.6): the serial ports and a [`Transport`] over one.
 //! - [`sim`]: a simulated GRBL machine behind the same [`Transport`], laser mode modelled, so tests
 //!   can check that the beam is never on while travelling.
 //!
@@ -25,16 +25,27 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 pub mod codes;
+mod controller;
+mod job;
 pub mod proto;
 mod settings;
+pub mod sim;
 mod streamer;
+mod transport;
 
 #[cfg(test)]
+mod controller_tests;
+#[cfg(test)]
 mod proto_tests;
+#[cfg(test)]
+mod sim_tests;
 #[cfg(test)]
 mod streamer_tests;
 
 pub use codes::{alarm_advice, alarm_text, error_text};
+pub use controller::{Controller, HANDSHAKE_TIMEOUT_MS, LOG_LINES, MAX_JOB_LINES, STATUS_INTERVAL_MS};
+pub use job::{AlarmInfo, Job, JobState, Phase, Refusal, Snapshot};
 pub use proto::{HOLD, JOG_CANCEL, MAX_LINE, MachineState, RESET, RESUME, RX_BUFFER, Response, STATUS, Status, clean_line, parse_line};
 pub use settings::Settings;
 pub use streamer::Streamer;
+pub use transport::{Transport, pump};
