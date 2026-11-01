@@ -2,7 +2,8 @@
 //! accessibility labels. Each is reached from one marked seam (see `docs/picabia/SEAMS.md`).
 //!
 //! - Object ▸ Modifiers and the same submenu in the canvas/layer context menu: Add modifier ▸ one
-//!   item per kind, Apply modifiers, Remove all modifiers. Every item is a `modifier.*` command.
+//!   item per kind, Apply modifiers, Remove all modifiers; with a stencil layer selected, Export for
+//!   laser… and Laser test card…. Every item is a `modifier.*` command.
 //! - The layers panel's badge on rows whose layer has an active stack.
 //! - The Inspect tab's read-only Modifiers lines and the layer rows' accessible descriptions
 //!   ("Rectangle, Linear array ×5").
@@ -15,6 +16,7 @@ use crate::FigApp;
 use crate::i18n::{self, tr, tr_noop};
 use crate::icons_picabia::{self, Glyph};
 use crate::menus::{item, separator, submenu};
+use crate::picabia_laser::Kind;
 use crate::theme::Tokens;
 
 /// The kinds Add modifier offers, in menu order, with their labels (catalog keys). Kinds this
@@ -57,6 +59,15 @@ pub fn items(app: &FigApp) -> Vec<(String, &'static str, Value, bool)> {
     v.push((String::new(), "", Value::Null, false));
     v.push((i18n::command("modifier.apply", "Apply modifiers").into_owned(), "modifier.apply", json!({}), stacked));
     v.push((i18n::command("modifier.remove_all", "Remove all modifiers").into_owned(), "modifier.remove_all", json!({}), stacked));
+    // A stencil layer exports for the laser and cuts its material's test card.
+    let stencil = app.session.doc().ok().and_then(|d| crate::picabia_laser::stencil_layer(d, &app.session.selection()));
+    if let Some(node) = stencil {
+        v.push((String::new(), "", Value::Null, false));
+        for (kind, label) in [(Kind::Export, "Export for laser…"), (Kind::TestCard, "Laser test card…")] {
+            let (id, params) = crate::picabia_laser::request(kind, Some(node));
+            v.push((i18n::menu_item(id, label).into_owned(), id, params, true));
+        }
+    }
     v
 }
 

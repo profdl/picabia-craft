@@ -762,7 +762,15 @@ fn a_swatch_toggle_writes_cut_colours_in_one_step() {
     let steps = undo_steps(&u);
     // The swatch list sits just over the size.
     centred(&mut u, Id::unique(("mod", "widthMm", 0)).with("lead"));
-    let blue = labelled(&mut u, "Cut out #1F3A8A");
+    let mut blue = labelled(&mut u, "Cut out #1F3A8A");
+    // The toggles sit above the size: clear of the panel's tabs too.
+    for _ in 0..10 {
+        if blue.first().is_none_or(|p| p.y > 150.0) {
+            break;
+        }
+        wheel(&mut u, 50.0);
+        blue = labelled(&mut u, "Cut out #1F3A8A");
+    }
     assert_eq!(blue.len(), 1, "one cut toggle per colour, named by it");
     click(&mut u, blue[0]);
     assert_eq!(stack(&mut u, r)[0]["cutColours"], json!(["#ffffff", "#1f3a8a"]));

@@ -187,7 +187,7 @@ const PATTERN_WHERE: &[(&str, &str)] = &[("everywhere", tr_noop("Everywhere")), 
 
 /// Stencil sheet materials: (value written in `material`, label). A preset fills the cutting
 /// limits (the model's `set_props`), so picking one is one `modifier.set` of `material` alone.
-const MATERIALS: &[(&str, &str)] = &[
+pub(crate) const MATERIALS: &[(&str, &str)] = &[
     ("paper", tr_noop("Cut from paper")),
     ("film", tr_noop("Cut from film")),
     ("card", tr_noop("Cut from card")),
@@ -557,6 +557,10 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         // a click shows the next one on the canvas.
         if let (Some(s), Some(node)) = (&r.stencil, sel.first()) {
             problem_rows(app, ui, *node, s, gauze(r));
+        }
+        // Laser export and the material test card, at the stencil's end.
+        if let (true, Some(node)) = (r.kind == "stencil", sel.first()) {
+            crate::picabia_laser::panel_buttons(app, ui, *node);
         }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
     }
