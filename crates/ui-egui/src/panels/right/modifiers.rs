@@ -747,28 +747,6 @@ fn field_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowVi
     }
 }
 
-/// What the first selected layer's generator came to (`figcraft_engine::picabia_generate::info`):
-/// a status line, then the result's warnings. "Working out the result…" until the engine has one.
-fn generator_status(app: &FigApp, ui: &mut Ui, ids: &[NodeId]) {
-    let t = Tokens::get(ui.ctx());
-    let Ok(ds) = app.session.ds() else { return };
-    let Some(n) = ids.first().and_then(|i| ds.doc.node(*i)) else { return };
-    match figcraft_engine::picabia_generate::info(&ds.doc, n) {
-        None => widgets::note(ui, tr("Working out the result…"), t.text_secondary),
-        Some((info, fresh)) => {
-            if !info.keep_design {
-                let (items, colours) = (info.items.to_string(), info.colours.len().to_string());
-                let line = trf("{items} shapes in {colours} colours", &[("items", &items), ("colours", &colours)]);
-                let line = if fresh { line } else { format!("{line} {}", tr("(updating…)")) };
-                widgets::note(ui, &line, t.text_secondary);
-            }
-            for w in &info.warnings {
-                widgets::note(ui, w, t.warning);
-            }
-        }
-    }
-}
-
 /// How row `r` holds its islands, when it's the same on every layer: `ties`, `pattern`, `gauze`.
 fn tie_mode(r: &RowView) -> Option<&str> {
     common_str(&r.params, "tieMode")
