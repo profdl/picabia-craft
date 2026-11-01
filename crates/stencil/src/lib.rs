@@ -24,6 +24,10 @@
 //! and allows a one-cell tile output: [`compute_repeat`].
 //!
 //! [`compute`] runs them all and returns a [`StencilOut`].
+//!
+//! Laser export (millimetres): [`laser_job`] turns the drawn cut into kerf-compensated, cleaned,
+//! ordered sheets (split to the bed, labelled in a single-stroke font, [`text_polylines`]),
+//! [`laser_svg`] writes one as an SVG for laser software.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod clean;
@@ -33,6 +37,10 @@ mod hold;
 mod hoshi;
 mod index;
 mod islands;
+mod laser;
+mod laser_bed;
+mod laser_font;
+mod laser_svg;
 mod pattern;
 mod problems;
 mod repeat;
@@ -42,6 +50,11 @@ mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
 pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, Tile, compute, compute_repeat};
+pub use laser::{
+    Contour, LaserInput, LaserJob, LaserParams, LaserSheet, MAX_LABEL_LINES, MAX_SHEET_MM, MAX_SHEET_POINTS, MAX_SHEETS, Polyline, laser_job,
+};
+pub use laser_font::{MAX_TEXT_CHARS, font_has, text_polylines};
+pub use laser_svg::laser_svg;
 pub use problems::{MAX_PROBLEMS, Problem, ProblemCounts, ProblemKind};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
@@ -79,6 +92,10 @@ mod fixture_tests;
 mod hold_tests;
 #[cfg(test)]
 mod hoshi_tests;
+#[cfg(test)]
+mod laser_font_tests;
+#[cfg(test)]
+mod laser_tests;
 #[cfg(test)]
 mod problems_tests;
 #[cfg(test)]

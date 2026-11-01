@@ -23,7 +23,7 @@ pub(crate) fn sheet_points(design: Rect, margin: f64) -> Vec<Point> {
 
 /// A circle of `radius` at `c` as a polygon within `tolerance` of it and of the same area (its
 /// corners just outside the circle, its edges just inside), wound positively (a cut outline).
-fn disc(c: Point, radius: f64, tolerance: f64) -> Vec<Point> {
+pub(crate) fn disc(c: Point, radius: f64, tolerance: f64) -> Vec<Point> {
     let t = tolerance.clamp(radius * 1e-4, radius);
     let step = 2.0 * (1.0 - t / radius).clamp(-1.0, 1.0).acos();
     let sides = if step.is_finite() && step > 0.0 { (std::f64::consts::TAU / step).ceil() as usize } else { MAX_SIDES };

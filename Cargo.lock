@@ -1961,6 +1961,7 @@ dependencies = [
  "figcraft-geom",
  "figcraft-modifiers",
  "figcraft-pathops",
+ "serde_json",
 ]
 
 [[package]]
