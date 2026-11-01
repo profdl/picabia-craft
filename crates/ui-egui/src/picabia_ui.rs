@@ -28,6 +28,8 @@ pub const KINDS: &[(&str, &str)] = &[
     ("randomize", tr_noop("Randomize")),
     ("wallpaper", tr_noop("Wallpaper")),
     ("stencil", tr_noop("Stencil")),
+    ("imageTrace", tr_noop("Image trace")),
+    ("pathfinder", tr_noop("Pathfinder")),
 ];
 
 /// The context menu's row standing for the Modifiers submenu (its command-id slot).

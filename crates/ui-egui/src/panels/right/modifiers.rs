@@ -28,6 +28,13 @@ use crate::list_drag::{ListDrag, move_flags, remove_flags};
 use crate::theme::{Tokens, regular};
 use crate::widgets::{self, Edit, Empty, FIELD_H, Lead, PAD_RIGHT};
 
+// Each generator kind's settings live in a file of their own (children of this module: they use
+// its fields, rows and status line).
+#[path = "modifiers_pathfinder.rs"]
+mod pathfinder;
+#[path = "modifiers_trace.rs"]
+mod trace;
+
 /// Salt of the flags that keep modifier rows' settings open (`Id::unique((MOD_OPEN, index))`).
 pub(crate) const MOD_OPEN: &str = "mod_open";
 
@@ -45,6 +52,8 @@ pub(crate) const KIND_MENU: &[(&str, &str)] = &[
     ("wallpaper", tr_noop("Wallpaper")),
     ("copyToShape", tr_noop("Copy to shape")),
     ("stencil", tr_noop("Stencil")),
+    ("imageTrace", tr_noop("Image trace")),
+    ("pathfinder", tr_noop("Pathfinder")),
 ];
 
 /// A field's label: plain text not translated ("X"), a catalog key, or an icon with its name.
@@ -327,6 +336,9 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[Field::Colour { param: "pasteColour", label: tr_noop("Paste") }, Field::Colour { param: "clothColour", label: tr_noop("Cloth") }],
         ],
     ),
+    // The generators' tables live with their settings, in their own files.
+    ("imageTrace", trace::FIELDS),
+    ("pathfinder", pathfinder::FIELDS),
 ];
 
 /// The settings rows of kind id `kind` (none for kinds this build doesn't know).
@@ -639,12 +651,30 @@ fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usiz
 /// rows of their own. Scrubs are live and one undo step; typed relative edits on "Mixed" apply to
 /// each layer from its own value.
 fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView) {
+    // The generator kinds draw their own settings.
+    match r.kind.as_str() {
+        "imageTrace" => return trace::body(app, ui, ids, i, r),
+        "pathfinder" => return pathfinder::body(app, ui, ids, i, r),
+        _ => {}
+    }
     let rows = fields_of(&r.kind);
     let t = Tokens::get(ui.ctx());
     if rows.is_empty() {
         widgets::note(ui, tr("This version doesn't know this kind of modifier: it is kept in the file but not drawn"), t.text_secondary);
         return;
     }
+    field_rows(app, ui, ids, i, r, rows);
+    // What the stencil came to: its pieces, its islands and how they're held, the specks
+    // clean-up dropped and the length to cut.
+    if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
+        widgets::note(ui, &stats_line(&stats, gauze(r)), t.text_secondary);
+    }
+}
+
+/// Row `i`'s settings rows `rows` (one inner slice per 32 pt row): numbers two to a row, choices
+/// and checkboxes on rows of their own, with their headings and notes.
+fn field_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, rows: &[&[Field]]) {
+    let t = Tokens::get(ui.ctx());
     let half = widgets::col_width(ui.available_width());
     for fields in rows {
         // Fields the row's current choice makes meaningless are left out (wallpaper: the height
@@ -711,10 +741,27 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
             }
         }
     }
-    // What the stencil came to: its pieces, its islands and how they're held, the specks
-    // clean-up dropped and the length to cut.
-    if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
-        widgets::note(ui, &stats_line(&stats, gauze(r)), t.text_secondary);
+}
+
+/// What the first selected layer's generator came to (`figcraft_engine::picabia_generate::info`):
+/// a status line, then the result's warnings. "Working out the result…" until the engine has one.
+fn generator_status(app: &FigApp, ui: &mut Ui, ids: &[NodeId]) {
+    let t = Tokens::get(ui.ctx());
+    let Ok(ds) = app.session.ds() else { return };
+    let Some(n) = ids.first().and_then(|i| ds.doc.node(*i)) else { return };
+    match figcraft_engine::picabia_generate::info(&ds.doc, n) {
+        None => widgets::note(ui, tr("Working out the result…"), t.text_secondary),
+        Some((info, fresh)) => {
+            if !info.keep_design {
+                let (items, colours) = (info.items.to_string(), info.colours.len().to_string());
+                let line = trf("{items} shapes in {colours} colours", &[("items", &items), ("colours", &colours)]);
+                let line = if fresh { line } else { format!("{line} {}", tr("(updating…)")) };
+                widgets::note(ui, &line, t.text_secondary);
+            }
+            for w in &info.warnings {
+                widgets::note(ui, w, t.warning);
+            }
+        }
     }
 }
 

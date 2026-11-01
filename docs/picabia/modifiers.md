@@ -389,7 +389,9 @@ complex to compute keeps the contents drawn, with a warning.
 `modifier.resultInfo {id?}` gives a generator's status, computing it when it is out of date:
 `{modifier, kind, fresh, pending, warnings, stats}`, where `stats` is `{paths, anchors, colours,
 tracedPx: {w, h}}` for `imageTrace` and `{shapes (input), faces (output)}` for `pathfinder`, plus
-`colours: ["#rrggbb"]` (the result's colours, largest area first). Results are computed off the UI
+`colours: ["#rrggbb"]` (the result's colours, largest area first; at the top level of the reply,
+beside `stats`, with `items`, the number of result paths, and `drawsDesign`, true when the generator
+made no result and the layer draws as usual). Results are computed off the UI
 thread natively (the previous result stays drawn meanwhile) and on the UI thread once the layer
 has stopped changing for 300 ms in the browser; exports and commands compute them first.
 
