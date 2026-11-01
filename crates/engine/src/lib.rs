@@ -419,6 +419,8 @@ mod picabia_modifier_tests; // PICABIA: modifier command tests.
 #[cfg(test)]
 mod picabia_stencil_tests; // PICABIA: stencil gather, cache and commands.
 #[cfg(test)]
+mod picabia_trace_tests; // PICABIA: imageTrace generator tests.
+#[cfg(test)]
 mod pixel_preview_tests;
 #[cfg(test)]
 mod placed_image_size_tests;
