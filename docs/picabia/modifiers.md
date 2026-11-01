@@ -289,7 +289,7 @@ usual, with the warning "imageTrace needs a layer with an image fill".
 **Resolution.** The layer is rendered at its image's own pixel density (the densest image fill's
 pixels per layer point, clamped to 0.05 to 16), so a 4000 px photo in a 400 pt box is traced at
 4000 px. `paths`, `noise` and `strokeWidth` count those **image pixels**, as in VectorCraft. The
-rendered raster is capped at 16 megapixels natively and 4 megapixels in the browser (scaled down,
+rendered raster is capped at 16 megapixels natively and 1 megapixel in the browser (where the trace runs on the UI thread) (scaled down,
 with a warning), and the result at 8 million anchors natively and 2 million in the browser (past
 it: the warning "the trace is too detailed", and the previous result or the image stays drawn).
 The anchor budget counts every input copy. A raster over 1500 px on a side (not in Flat Logo
