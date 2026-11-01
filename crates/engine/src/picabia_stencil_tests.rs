@@ -464,3 +464,205 @@ fn a_ring_around_an_island_reports_it_tied_through_stencil_info() {
     let (info, _) = info(doc, doc.node(g).unwrap()).unwrap();
     assert!(area(&info.ties) > 0.0);
 }
+
+// P11: repeat, tile, problems, registration holes, materials.
+
+/// A 20 × 20 group at (10, 20): black, with a white 6-unit square in each corner holding a black
+/// 2-unit square. Repeated by `rows` (a gridArray of gap 0 or a wallpaper) the corners meet as a
+/// white ring around a black island centred on each inner lattice point: across the cell edges.
+fn corner_motif(rows: Value) -> (Document, NodeId) {
+    let mut d = Document::new("repeat");
+    let page = d.first_page().unwrap();
+    let g = d.create(page, NodeKind::Group, "G", 10.0, 20.0, 20.0, 20.0).unwrap();
+    rect_in(&mut d, g, Rect::new(0.0, 0.0, 20.0, 20.0), BLACK);
+    for (x, y) in [(0.0, 0.0), (14.0, 0.0), (0.0, 14.0), (14.0, 14.0)] {
+        rect_in(&mut d, g, Rect::new(x, y, x + 6.0, y + 6.0), WHITE);
+    }
+    for (x, y) in [(0.0, 0.0), (18.0, 0.0), (0.0, 18.0), (18.0, 18.0)] {
+        rect_in(&mut d, g, Rect::new(x, y, x + 2.0, y + 2.0), BLACK);
+    }
+    d.get_mut(g).unwrap().plugin_data.insert(PLUGIN_KEY.into(), stack(rows));
+    (d, g)
+}
+
+fn grid_row(rows: u32, cols: u32) -> Value {
+    json!({"id": "g1", "enabled": true, "kind": "gridArray", "rows": rows, "cols": cols, "gapX": 0, "gapY": 0})
+}
+
+fn set_stack(d: &mut Document, g: NodeId, rows: Value) {
+    d.get_mut(g).unwrap().plugin_data.insert(PLUGIN_KEY.into(), stack(rows));
+}
+
+fn info_of(d: &Document, g: NodeId) -> Value {
+    crate::picabia_stencil::info_json(&compute_now(d, g).unwrap())
+}
+
+#[test]
+fn stencil_info_lists_registration_holes_problems_and_materials() {
+    let (d, g, _) = two_tone();
+    let v = info_of(&d, g);
+    // Four registration holes, at the design's corners pushed half the 5-unit margin out.
+    let hoshi = v["hoshi"].as_array().unwrap();
+    assert_eq!(hoshi.len(), 4, "{v}");
+    assert!(hoshi.iter().any(|h| (h["x"].as_f64().unwrap() + 2.5).abs() < 1e-6 && (h["y"].as_f64().unwrap() + 2.5).abs() < 1e-6), "{hoshi:?}");
+    // Every kind counted, none here.
+    let counts = v["stats"]["problems"].as_object().unwrap();
+    let kinds = ["narrowPaper", "narrowCut", "smallCut", "smallHole", "sharpCorner", "untied"];
+    assert_eq!(counts.len(), 6);
+    for k in kinds {
+        assert!(counts.contains_key(k), "{k}: {counts:?}");
+    }
+    assert_eq!(v["problems"], json!([]));
+    assert_eq!(v["stats"]["repeatIslands"], 0);
+    // No repeat: no lattice, cell or tile.
+    assert_eq!((v["repeat"].clone(), v["cell"].clone(), v["tile"].clone()), (Value::Null, Value::Null, Value::Null));
+    // The presets (custom has none); paper is the defaults.
+    let m = v["materials"].as_array().unwrap();
+    assert_eq!(m.iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["paper", "film", "card"]);
+    assert_eq!(m[0], json!({"id": "paper", "minCutWidthMm": 0.3, "minBridgeMm": 0.5, "tieWidthMm": 1.0, "minCornerAngle": 30.0, "kerfMm": 0.1}));
+    assert_eq!(m[1]["minCutWidthMm"], 0.2);
+    // The canvas reads them without JSON.
+    let (i, _) = info(&d, d.node(g).unwrap()).unwrap();
+    assert_eq!(i.hoshi.len(), 4);
+    assert!(i.problems.is_empty() && i.cell.is_none() && i.repeat.is_none());
+}
+
+#[test]
+fn flag_mode_reports_problems_by_kind() {
+    // A white sliver 0.05 units (0.15 mm at 3 mm per unit) wide: narrower than the 0.3 mm minimum.
+    let (mut d, g) = doc_with(|d, g| {
+        rect_in(d, g, Rect::new(0.0, 0.0, 100.0, 100.0), BLACK);
+        rect_in(d, g, Rect::new(20.0, 50.0, 80.0, 50.05), WHITE);
+    });
+    let fixed = info_of(&d, g);
+    set_stack(&mut d, g, json!([{"id": "s1", "kind": "stencil", "limitMode": "flag"}]));
+    let v = info_of(&d, g);
+    let problems = v["problems"].as_array().unwrap();
+    assert!(!problems.is_empty(), "{v}");
+    let kinds = crate::picabia_stencil::ProblemKind::ALL.map(|k| k.id());
+    for p in problems {
+        assert!(kinds.contains(&p["kind"].as_str().unwrap()), "{p}");
+        // Layer space, near the sliver.
+        assert!(p["x"].as_f64().unwrap() >= 19.0 && p["x"].as_f64().unwrap() <= 81.0 && (p["y"].as_f64().unwrap() - 50.0).abs() < 2.0, "{p}");
+    }
+    assert!(v["stats"]["problems"]["narrowCut"].as_u64().unwrap() > 0, "{v}");
+    let listed = problems.iter().filter(|p| p["kind"] == "narrowCut").count() as u64;
+    assert_eq!(v["stats"]["problems"]["narrowCut"].as_u64().unwrap(), listed);
+    // Fixed, the sliver is cleaned away instead.
+    assert_eq!(fixed["stats"]["problems"]["narrowCut"], 0, "{fixed}");
+    let (i, _) = info(&d, d.node(g).unwrap()).unwrap();
+    assert_eq!(i.problems.len(), problems.len());
+}
+
+#[test]
+fn a_grid_repeated_island_across_the_cell_edge_is_tied_repeat_aware() {
+    let (d, g) = corner_motif(json!([grid_row(3, 3), stencil_row()]));
+    let frame = store::frame(&d, d.node(g).unwrap()).unwrap();
+    // The grid's lattice in the group's own space (the parent's moved by the group's place).
+    let r = frame.repeat.unwrap();
+    assert_eq!((r.origin, r.a, r.b), (Point::ORIGIN, figcraft_geom::Vec2::new(20.0, 0.0), figcraft_geom::Vec2::new(0.0, 20.0)));
+    assert_eq!(frame.layer_bounds, Rect::new(0.0, 0.0, 60.0, 60.0));
+    let v = info_of(&d, g);
+    // Four inner lattice points, each an island across four cells; one in the centre cell.
+    assert_eq!(v["stats"]["islands"], 4, "{v}");
+    assert_eq!(v["stats"]["repeatIslands"], 1, "{v}");
+    assert_eq!(v["stats"]["untied"], 0, "{v}");
+    assert_eq!(v["stats"]["problems"]["untied"], 0);
+    assert_eq!(v["repeat"], json!({"ax": 20.0, "ay": 0.0, "bx": 0.0, "by": 20.0}));
+    // The centre cell [20, 40]².
+    let cell = v["cell"].as_array().unwrap();
+    assert_eq!(cell.len(), 4);
+    let (xs, ys): (Vec<f64>, Vec<f64>) = cell.iter().map(|p| (p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap())).unzip();
+    assert_eq!((xs.iter().cloned().fold(f64::MAX, f64::min), xs.iter().cloned().fold(f64::MIN, f64::max)), (20.0, 40.0));
+    assert_eq!((ys.iter().cloned().fold(f64::MAX, f64::min), ys.iter().cloned().fold(f64::MIN, f64::max)), (20.0, 40.0));
+    assert_eq!(v["tile"], Value::Null, "sheet output");
+    // Repeat off: judged on the sheet as drawn, no lattice.
+    let (d2, g2) = corner_motif(json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "repeat": "off"}]));
+    let off = info_of(&d2, g2);
+    assert_eq!((off["stats"]["repeatIslands"].clone(), off["repeat"].clone(), off["cell"].clone()), (json!(0), Value::Null, Value::Null));
+    assert_eq!(off["stats"]["untied"], 0);
+}
+
+#[test]
+fn tile_output_places_the_sheet_on_the_repeat_cell() {
+    let (mut d, g) = corner_motif(json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "output": "tile"}]));
+    let n = d.node(g).unwrap().clone();
+    // 60 units across at 300 mm: 5 mm per unit, the 15 mm margin is 3 units. Known before compute.
+    let frame = store::frame(&d, &n).unwrap();
+    assert_eq!(frame.sheet, Rect::new(17.0, 17.0, 43.0, 43.0));
+    assert!(frame.cell.is_some());
+    assert_eq!(store::parent_sheet(&d, &n), Some(Rect::new(27.0, 37.0, 53.0, 63.0)));
+    let v = info_of(&d, g);
+    // The tile's sheet: (20 + 2·3) units at 5 mm; the design's sheet stays for the panel.
+    assert_eq!(v["tile"], json!({"w": 130.0, "h": 130.0}), "{v}");
+    assert!((v["sheetMm"]["w"].as_f64().unwrap() - 330.0).abs() < 1e-9);
+    let (shape, fresh) = store::lookup(&d, &n).unwrap();
+    assert!(fresh);
+    assert_eq!(shape.sheet, frame.sheet, "what is cut is where the frame put it");
+    // Bounds and hit testing follow the tile.
+    let world = figcraft_render::export_bounds(&d, g).unwrap();
+    assert!((world.x0 - 27.0).abs() < 1e-9 && (world.x1 - 53.0).abs() < 1e-9, "{world:?}");
+    let page = d.first_page().unwrap();
+    let hit = |d: &Document, x: f64, y: f64| {
+        figcraft_render::picabia::hit_with_copies(d, page, Point::new(x, y), 0.0, figcraft_doc::geometry::BoolResult::default(), None)
+    };
+    assert_eq!(hit(&d, 28.0, 38.0), Some(g), "on the tile's margin");
+    assert_eq!(hit(&d, 8.0, 18.0), None, "where the whole sheet's margin was");
+    assert_eq!(hit(&d, 15.0, 25.0), None, "the design off the tile isn't drawn");
+    let boxes = figcraft_render::picabia::copy_boxes(&d, g);
+    assert!(boxes.contains(&Rect::new(27.0, 37.0, 53.0, 63.0)), "marquee: {boxes:?}");
+    // Output and repeat changes recompute, and move the sheet back. (A tie seed no other test uses:
+    // the store is shared by the tests running at once.)
+    set_stack(&mut d, g, json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "tieSeed": 4711}]));
+    let n = d.node(g).unwrap().clone();
+    assert!(!store::is_fresh(&d, &n), "output sheet: stale");
+    assert_eq!(store::frame(&d, &n).unwrap().sheet, Rect::new(-3.0, -3.0, 63.0, 63.0));
+    ensure(&d);
+    assert!(store::is_fresh(&d, &n));
+    set_stack(&mut d, g, json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "tieSeed": 4711, "repeat": "off"}]));
+    let n = d.node(g).unwrap().clone();
+    assert!(!store::is_fresh(&d, &n), "repeat off: stale");
+    ensure(&d);
+    let (i, fresh) = info(&d, &n).unwrap();
+    assert!(fresh && i.repeat.is_none() && i.stats.repeat_islands == 0);
+    // Tile without a repeat: the whole sheet.
+    set_stack(&mut d, g, json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "repeat": "off", "output": "tile"}]));
+    let n = d.node(g).unwrap().clone();
+    assert_eq!(store::frame(&d, &n).unwrap().sheet, Rect::new(-3.0, -3.0, 63.0, 63.0));
+    assert_eq!(info_of(&d, g)["tile"], Value::Null);
+}
+
+#[test]
+fn the_tile_frame_matches_what_the_stencil_cuts() {
+    // Lattices of each shape: grid, one row, one column, an oblique wallpaper, a rotated layer.
+    let cases = [
+        json!([grid_row(3, 4)]),
+        json!([grid_row(1, 4)]),
+        json!([grid_row(3, 1)]),
+        json!([{"id": "w1", "kind": "wallpaper", "group": "p1", "cols": 3, "rows": 3, "cellWidth": 20, "cellHeight": 20, "angle": 60}]),
+        json!([{"id": "w1", "kind": "wallpaper", "group": "p6", "cols": 2, "rows": 2, "cellWidth": 25, "cellHeight": 25}]),
+    ];
+    for (k, rows) in cases.iter().enumerate() {
+        for rotate in [false, true] {
+            let mut rows = rows.as_array().unwrap().clone();
+            rows.push(json!({"id": "s1", "kind": "stencil", "output": "tile"}));
+            let (mut d, g) = corner_motif(Value::Array(rows));
+            if rotate {
+                let t = d.node(g).unwrap().transform;
+                d.get_mut(g).unwrap().transform = t * figcraft_geom::Affine::rotate(0.3);
+            }
+            let n = d.node(g).unwrap().clone();
+            let frame = store::frame(&d, &n).unwrap();
+            assert!(frame.repeat.is_some(), "case {k}");
+            let i = compute_now(&d, g).unwrap();
+            let (shape, _) = store::lookup(&d, &n).unwrap();
+            let close = |a: Rect, b: Rect| [a.x0 - b.x0, a.y0 - b.y0, a.x1 - b.x1, a.y1 - b.y1].iter().all(|v| v.abs() < 1e-6);
+            assert!(close(shape.sheet, frame.sheet), "case {k} rotate {rotate}: cut {:?}, frame {:?}; {:?}", shape.sheet, frame.sheet, i.warnings);
+            assert!(i.tile_mm.is_some(), "case {k}: {:?}", i.warnings);
+            let (cell, fc) = (i.cell.unwrap(), frame.cell.unwrap());
+            for p in fc {
+                assert!(cell.iter().any(|q| (*q - p).hypot() < 1e-6), "case {k}: {cell:?} vs {fc:?}");
+            }
+        }
+    }
+}

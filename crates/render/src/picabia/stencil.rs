@@ -8,8 +8,10 @@
 //! latest result (**stale**: shown while the engine recomputes). A layer with no result yet draws
 //! its design as usual.
 //!
-//! The sheet's place doesn't need the result: [`frame`] works it out from the params and the
-//! layer's box (bounds and hit testing use it on every frame).
+//! The sheet's place doesn't need the result: [`frame`] works it out from the params, the layer's
+//! box and the stack's repeat (bounds and hit testing use it on every frame). With `output: tile`
+//! the sheet is one repeat cell plus the margin, the cell chosen as `figcraft-stencil` chooses it
+//! ([`tile_cell`]).
 //!
 //! Every store bumps [`generation`]; the retained renderer and the canvas job key fold it into
 //! their "fonts changed" counter ([`crate::picabia::frame_generation`]), so a result that arrives
@@ -20,9 +22,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use figcraft_doc::{Document, Node, NodeId};
+use figcraft_geom::kurbo::Vec2;
 use figcraft_geom::kurbo::{BezPath, Shape as _};
 use figcraft_geom::{Affine, Point, Rect};
-use figcraft_modifiers::{ModifierKind, PLUGIN_KEY, Stencil, StencilPreview};
+use figcraft_modifiers::{ModifierKind, PLUGIN_KEY, Repeat, Stencil, StencilOutput, StencilPreview, StencilTieMode};
 use tiny_skia::{FillRule, Pixmap};
 
 use super::{has_stack, instance_transforms};
@@ -31,6 +34,8 @@ use super::{has_stack, instance_transforms};
 const MAX_ENTRIES: usize = 64;
 /// The most layers an [`Inputs`] snapshot records; a bigger subtree compares its first ones.
 const MAX_INPUT_NODES: usize = 100_000;
+/// The most lattice cells a sheet may span (`figcraft-stencil` ignores a finer repeat).
+const MAX_CELLS: f64 = 10_000.0;
 
 /// Where a stencil layer's sheet lies, worked out from its params and box (no geometry).
 #[derive(Clone, Debug, PartialEq)]
@@ -46,8 +51,14 @@ pub struct Frame {
     pub layer_bounds: Rect,
     /// Millimetres per layer unit (`widthMm / layer_bounds width`).
     pub mm_per_unit: f64,
-    /// The sheet: `layer_bounds` grown by `marginMm`, in the layer's own space.
+    /// The sheet, in the layer's own space: `layer_bounds` grown by `marginMm`; with tile output
+    /// (and a usable repeat) the tile's: [`Frame::cell`]'s bounds grown by the margin.
     pub sheet: Rect,
+    /// The stack's repeat lattice ([`figcraft_modifiers::Output::repeat`]) in the layer's own
+    /// space (the space the design is gathered in), what `figcraft_stencil::compute_repeat` takes.
+    pub repeat: Option<Repeat>,
+    /// With tile output: the repeat cell the tile is cut from, its four corners (layer space).
+    pub cell: Option<[Point; 4]>,
 }
 
 /// `n`'s stencil frame, `None` when its stack doesn't end in an enabled stencil row (or it has no
@@ -76,11 +87,94 @@ pub fn frame(doc: &Document, n: &Node) -> Option<Frame> {
         return None;
     }
     let margin = row.params.margin_mm / mm_per_unit;
-    let sheet = layer_bounds.inflate(margin, margin);
+    let mut sheet = layer_bounds.inflate(margin, margin);
     if !sheet.is_finite() {
         return None;
     }
-    Some(Frame { modifier: row.modifier.clone(), params: row.params.clone(), copies, layer_bounds, mm_per_unit, sheet })
+    let repeat = out.repeat.and_then(|r| layer_repeat(r, nt));
+    let mut cell = None;
+    if row.params.output == StencilOutput::Tile
+        && row.params.tie_mode != StencilTieMode::Pattern
+        && let Some(c) = repeat.and_then(|r| tile_cell(r, layer_bounds, margin))
+    {
+        let b = c.iter().skip(1).fold(Rect::from_points(c[0], c[0]), |b, p| b.union_pt(*p)).inflate(margin, margin);
+        if b.is_finite() {
+            sheet = b;
+            cell = Some(c);
+        }
+    }
+    Some(Frame { modifier: row.modifier.clone(), params: row.params.clone(), copies, layer_bounds, mm_per_unit, sheet, repeat, cell })
+}
+
+/// Repeat `r` (in the layer's parent space) in the layer's own space: through `nt⁻¹`.
+fn layer_repeat(r: Repeat, nt: Affine) -> Option<Repeat> {
+    if !nt.is_finite() || nt.determinant().abs() <= 1e-12 {
+        return None;
+    }
+    let inv = nt.inverse();
+    let lin = |v: Vec2| inv * Point::new(v.x, v.y) - inv * Point::ORIGIN;
+    let out = Repeat { origin: inv * r.origin, a: lin(r.a), b: lin(r.b) };
+    [out.origin.x, out.origin.y, out.a.x, out.a.y, out.b.x, out.b.y].iter().all(|v| v.is_finite()).then_some(out)
+}
+
+fn cross(u: Vec2, v: Vec2) -> f64 {
+    u.x * v.y - u.y * v.x
+}
+
+/// The repeat cell a tile is cut from (layer space): the lattice cell of `r` containing the
+/// centre of `design`, its corners `o, o + a, o + a + b, o + b`. A strip (one zero vector) has a
+/// cell spanning the design across the repeat. `None` where `figcraft-stencil` ignores the repeat:
+/// degenerate (zero or parallel vectors) or over 10 000 cells on the sheet (`design` grown by
+/// `margin`). Mirrors `figcraft_stencil`'s lattice (`Lattice::new`, `cell_at`) exactly; the
+/// engine's tests check the two agree.
+pub fn tile_cell(r: Repeat, design: Rect, margin: f64) -> Option<[Point; 4]> {
+    let finite = [r.origin.x, r.origin.y, r.a.x, r.a.y, r.b.x, r.b.y].iter().all(|v| v.is_finite());
+    let size = design.width().abs().max(design.height().abs());
+    if !(finite && size.is_finite() && size > 0.0) {
+        return None;
+    }
+    let eps = size * 1e-9;
+    let (la, lb) = (r.a.hypot(), r.b.hypot());
+    let (origin, a, b, two_d) = match (la > eps, lb > eps) {
+        (false, false) => return None,
+        (true, true) => {
+            if cross(r.a, r.b).abs() <= la * lb * 1e-9 {
+                return None;
+            }
+            (r.origin, r.a, r.b, true)
+        }
+        (one_a, _) => {
+            let (a, len) = if one_a { (r.a, la) } else { (r.b, lb) };
+            let n = Vec2::new(-a.y, a.x) / len;
+            let d = design.abs();
+            let across = [d.origin(), Point::new(d.x1, d.y0), Point::new(d.x1, d.y1), Point::new(d.x0, d.y1)].map(|p| (p - r.origin).dot(n));
+            let (u0, u1) = across.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &u| (lo.min(u), hi.max(u)));
+            if u1 - u0 <= eps {
+                return None;
+            }
+            (r.origin + n * u0, a, n * (u1 - u0), false)
+        }
+    };
+    let det = cross(a, b);
+    let coords = |p: Point| {
+        let d = p - origin;
+        (cross(d, b) / det, cross(a, d) / det)
+    };
+    let sheet = design.abs().inflate(margin, margin);
+    let corners = [Point::new(sheet.x0, sheet.y0), Point::new(sheet.x1, sheet.y0), Point::new(sheet.x1, sheet.y1), Point::new(sheet.x0, sheet.y1)];
+    let (s0, s1, t0, t1) = corners
+        .iter()
+        .map(|&p| coords(p))
+        .fold((f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY), |(w, x, y, z), (s, t)| (w.min(s), x.max(s), y.min(t), z.max(t)));
+    let cells = (s1.ceil() - s0.floor()) * if two_d { t1.ceil() - t0.floor() } else { 1.0 };
+    if !(cells.is_finite() && cells <= MAX_CELLS) {
+        return None;
+    }
+    let (s, t) = coords(design.abs().center());
+    let (i, j) = (s.floor() as i64, if two_d { t.floor() as i64 } else { 0 });
+    let o = origin + (a * i as f64 + b * j as f64);
+    let c = [o, o + a, o + a + b, o + b];
+    c.iter().all(|p| p.x.is_finite() && p.y.is_finite()).then_some(c)
 }
 
 /// Whether `n`'s stack ends in an enabled stencil row (a cheap check: the stack is cached).
@@ -109,6 +203,9 @@ pub struct Inputs {
     nodes: Vec<Node>,
     /// Per layer with a stack (pre-order): its copy transforms (the layer's own: in its space).
     copies: Vec<(NodeId, Vec<Affine>)>,
+    /// The layer's repeat lattice, in its own space (it follows from the stack and the copies,
+    /// compared anyway: the result depends on it).
+    repeat: Option<Repeat>,
     fonts: u64,
     /// Some value doesn't equal itself (a NaN): any snapshot of the layer then counts as a match,
     /// or it would be recomputed forever.
@@ -119,6 +216,7 @@ impl PartialEq for Inputs {
     fn eq(&self, o: &Self) -> bool {
         self.fonts == o.fonts
             && self.root == o.root
+            && same_repeat(self.repeat, o.repeat)
             && self.nodes == o.nodes
             && self.copies.len() == o.copies.len()
             && self.copies.iter().zip(&o.copies).all(|((a, ta), (b, tb))| a == b && same_affines(ta, tb))
@@ -129,6 +227,17 @@ fn same_affines(a: &[Affine], b: &[Affine]) -> bool {
     // Copies of a moved layer come out of `N⁻¹ · T · N` with last-bit differences.
     let close = |x: f64, y: f64| (x - y).abs() <= 1e-9 * (1.0 + x.abs().max(y.abs()));
     a.len() == b.len() && a.iter().zip(b).all(|(p, q)| p.as_coeffs().iter().zip(q.as_coeffs()).all(|(x, y)| close(*x, y)))
+}
+
+fn same_repeat(a: Option<Repeat>, b: Option<Repeat>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            let t = |r: Repeat| Affine::new([r.a.x, r.a.y, r.b.x, r.b.y, r.origin.x, r.origin.y]);
+            same_affines(&[t(a)], &[t(b)])
+        }
+        _ => false,
+    }
 }
 
 /// `n` with what doesn't change its stencil's geometry reset.
@@ -170,16 +279,17 @@ fn descendants<'a>(doc: &'a Document, root: &Node, mut f: impl FnMut(&'a Node) -
     }
 }
 
-/// The root's copies in its own space (as [`frame`] has them).
-fn root_copies(doc: &Document, n: &Node) -> Vec<Affine> {
-    frame(doc, n).map(|f| f.copies).unwrap_or_default()
+/// The root's copies and repeat in its own space (as [`frame`] has them).
+fn root_copies(doc: &Document, n: &Node) -> (Vec<Affine>, Option<Repeat>) {
+    frame(doc, n).map(|f| (f.copies, f.repeat)).unwrap_or_default()
 }
 
 /// What layer `id`'s stencil would be computed from now.
 pub fn inputs(doc: &Document, id: NodeId) -> Option<Inputs> {
     let n = doc.node(id)?;
     let mut nodes = Vec::new();
-    let mut copies = vec![(id, root_copies(doc, n))];
+    let (own, repeat) = root_copies(doc, n);
+    let mut copies = vec![(id, own)];
     descendants(doc, n, |c| {
         nodes.push(c.clone());
         if has_stack(c)
@@ -189,7 +299,7 @@ pub fn inputs(doc: &Document, id: NodeId) -> Option<Inputs> {
         }
         true
     });
-    let mut i = Inputs { root: neutral_root(n), nodes, copies, fonts: figcraft_text::layout_generation(), unstable: false };
+    let mut i = Inputs { root: neutral_root(n), nodes, copies, repeat, fonts: figcraft_text::layout_generation(), unstable: false };
     let copy = i.clone();
     i.unstable = copy != i;
     Some(i)
@@ -205,7 +315,8 @@ impl Inputs {
             return false;
         }
         let Some((_, own)) = self.copies.first() else { return false };
-        if !same_affines(own, &root_copies(doc, n)) {
+        let (now, repeat) = root_copies(doc, n);
+        if !same_affines(own, &now) || !same_repeat(self.repeat, repeat) {
             return false;
         }
         let (mut i, mut k, mut same) = (0usize, 1usize, true);
@@ -276,6 +387,32 @@ pub fn lookup(doc: &Document, n: &Node) -> Option<(Arc<StencilShape>, bool)> {
         }
     }
     found.into_iter().next().map(|(_, s, _)| (s, false))
+}
+
+/// Whether some result was ever stored for layer `id` (cheap: no snapshot comparison).
+fn has_result(id: NodeId) -> bool {
+    lock().iter().any(|e| e.id == id)
+}
+
+/// The sheet of layer `id`'s latest stored result (layer space).
+fn latest_sheet(id: NodeId) -> Option<Rect> {
+    lock().iter().filter(|e| e.id == id).max_by_key(|e| e.stamp).map(|e| e.shape.sheet)
+}
+
+/// Whether stencil layer `n` draws only a repeat tile: tile output with a repeat, and a result to
+/// draw (until the first one lands the design draws as usual). Its design's place then doesn't
+/// count for bounds or hit testing, only the sheet.
+pub fn draws_tile(doc: &Document, n: &Node) -> bool {
+    has_stack(n) && frame(doc, n).is_some_and(|f| f.cell.is_some()) && has_result(n.id)
+}
+
+/// Layer `n`'s sheet in its own space: where [`frame`] puts it, and while the latest result is
+/// stale also where that one was cut (it still draws there).
+fn own_sheet(f: &Frame, n: &Node) -> Rect {
+    match latest_sheet(n.id) {
+        Some(s) if s.is_finite() && s != f.sheet => f.sheet.union(s),
+        _ => f.sheet,
+    }
 }
 
 /// Whether layer `n` has a result computed from what `doc` holds now.
@@ -363,7 +500,7 @@ pub fn parent_sheet(doc: &Document, n: &Node) -> Option<Rect> {
         return None;
     }
     let f = frame(doc, n)?;
-    Some(figcraft_geom::transform_rect_bbox(n.transform, f.sheet))
+    Some(figcraft_geom::transform_rect_bbox(n.transform, own_sheet(&f, n)))
 }
 
 /// The sheet of stencil layer `id` on its page.
@@ -373,7 +510,7 @@ pub fn world_sheet(doc: &Document, id: NodeId) -> Option<Rect> {
         return None;
     }
     let f = frame(doc, n)?;
-    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), f.sheet))
+    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), own_sheet(&f, n)))
 }
 
 /// Whether page point `p` lies on stencil layer `id`'s sheet.

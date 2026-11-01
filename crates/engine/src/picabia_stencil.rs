@@ -7,26 +7,29 @@
 //!   text as glyph outlines, primitives, transforms and booleans applied; frame clips and masks
 //!   applied), including the copies the rows above the stencil make and the copies of stacks on
 //!   layers inside it. Gradients cut as their mean colour and images are left out, with warnings.
-//! - [`compute_now`]: gather, `figcraft_stencil::compute`, and keep the result in
+//! - [`compute_now`]: gather, `figcraft_stencil::compute_repeat` (with the stack's repeat in the
+//!   layer's space), and keep the result in
 //!   `figcraft_render::picabia::stencil`'s store with a snapshot of its inputs.
 //! - [`refresh`] (the canvas, every frame): recompute what's stale off the UI thread (native: one
 //!   worker thread per layer; wasm: on the UI thread once the layer has stopped changing for
 //!   [`SETTLE`]), drawing the latest result meanwhile. [`busy`] says a result is still coming.
 //! - [`ensure`]: compute what's stale now (exports, headless renders, commands).
-//! - [`info`] / [`info_json`]: the swatch list, stats, warnings and islands
-//!   (`modifier.stencilInfo` and the Design panel); the tie bars for the canvas markers.
+//! - [`info`] / [`info_json`]: the swatch list, stats, warnings, islands and problems
+//!   (`modifier.stencilInfo` and the Design panel); the tie bars, problems, registration holes
+//!   and repeat cell for the canvas markers.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use figcraft_color::{Paint as Fill, PaintKind};
 use figcraft_doc::{BoolOp, Document, Node, NodeId, NodeKind};
-use figcraft_geom::Affine;
-use figcraft_geom::kurbo::BezPath;
+use figcraft_geom::kurbo::{BezPath, PathEl};
+use figcraft_geom::{Affine, Point};
+pub use figcraft_modifiers::Repeat;
 use figcraft_render::FillRule;
 use figcraft_render::picabia::stencil::{self as store, Frame, StencilShape};
-pub use figcraft_stencil::Island;
 use figcraft_stencil::{ColourInfo, Paint, Stats};
+pub use figcraft_stencil::{Island, Problem, ProblemKind};
 use serde_json::{Value, json};
 
 /// Deepest nesting gathered below the stencil layer.
@@ -293,14 +296,28 @@ pub struct Info {
     pub colours: Vec<ColourInfo>,
     pub warnings: Vec<String>,
     pub stats: Stats,
-    /// The sheet's physical size, mm.
+    /// The whole design's sheet (its bounds plus the margin), mm.
     pub sheet_mm: (f64, f64),
+    /// With tile output: the tile's sheet (the repeat cell's bounds plus the margin), mm; what is
+    /// drawn and exported.
+    pub tile_mm: Option<(f64, f64)>,
     /// Shapes gathered from the design.
     pub paints: usize,
     /// Every paper island of the cut sheet (layer space), outermost first.
     pub islands: Vec<Island>,
     /// The tie bars (layer space; already part of the paper), for the canvas markers.
     pub ties: BezPath,
+    /// What still breaks a cutting limit (layer space), at most `figcraft_stencil::MAX_PROBLEMS`
+    /// ([`Stats::problems_by_kind`] counts them all).
+    pub problems: Vec<Problem>,
+    /// The registration holes' centres (layer space).
+    pub hoshi: Vec<Point>,
+    /// The lattice the islands and ties are repeat-aware along (layer space); `None` when there's
+    /// no repeat or the stencil ignores it (see the warnings).
+    pub repeat: Option<Repeat>,
+    /// The repeat cell the panel and canvas show (layer space; the tile's cell with tile output),
+    /// its four corners. `Some` exactly when [`Info::repeat`] is.
+    pub cell: Option<[Point; 4]>,
 }
 
 /// Gather and compute layer `id`'s stencil now and keep it for the renderer. `None`: not a
@@ -310,19 +327,30 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
     let inputs = store::inputs(doc, id)?;
     let (frame, g) = gather(doc, n)?;
     let mut warnings = g.warnings;
-    let (shape, info) = match figcraft_stencil::compute(&g.paints, &frame.params, frame.layer_bounds) {
+    let design_sheet = |mpu: f64| {
+        let m = frame.params.margin_mm / mpu;
+        let s = frame.layer_bounds.abs().inflate(m, m);
+        (s.width() * mpu, s.height() * mpu)
+    };
+    let (shape, info) = match figcraft_stencil::compute_repeat(&g.paints, &frame.params, frame.layer_bounds, frame.repeat) {
         Ok(out) => {
             warnings.extend(out.warnings);
             let mpu = out.mm_per_unit;
+            let cell = out.cell.as_ref().and_then(corners);
             let info = Info {
                 modifier: frame.modifier.clone(),
                 colours: out.colours,
                 warnings,
                 stats: out.stats,
-                sheet_mm: (out.sheet.width() * mpu, out.sheet.height() * mpu),
+                sheet_mm: design_sheet(mpu),
+                tile_mm: out.tile.as_ref().map(|t| (t.sheet.width() * mpu, t.sheet.height() * mpu)),
                 paints: g.paints.len(),
                 islands: out.islands,
                 ties: out.ties,
+                problems: out.problems,
+                hoshi: out.hoshi,
+                repeat: if cell.is_some() { frame.repeat } else { None },
+                cell,
             };
             (StencilShape { cut: out.cut, paper: out.paper, sheet: out.sheet, extra: None }, info)
         }
@@ -334,10 +362,15 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
                 colours: Vec::new(),
                 warnings,
                 stats: Stats::default(),
-                sheet_mm: (sheet.width() * frame.mm_per_unit, sheet.height() * frame.mm_per_unit),
+                sheet_mm: design_sheet(frame.mm_per_unit),
+                tile_mm: None,
                 paints: g.paints.len(),
                 islands: Vec::new(),
                 ties: BezPath::new(),
+                problems: Vec::new(),
+                hoshi: Vec::new(),
+                repeat: None,
+                cell: None,
             };
             let paper = figcraft_geom::kurbo::Shape::to_path(&sheet, 0.1);
             (StencilShape { cut: BezPath::new(), paper, sheet, extra: None }, info)
@@ -347,6 +380,45 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
     let extra: Arc<dyn Any + Send + Sync> = info.clone();
     store::store(id, inputs, StencilShape { extra: Some(extra), ..shape });
     Some(info)
+}
+
+/// The four corners of a repeat cell's outline (a closed quadrilateral).
+fn corners(p: &BezPath) -> Option<[Point; 4]> {
+    let pts: Vec<Point> = p
+        .elements()
+        .iter()
+        .filter_map(|e| match e {
+            PathEl::MoveTo(q) | PathEl::LineTo(q) => Some(*q),
+            _ => None,
+        })
+        .collect();
+    let pts = match pts.as_slice() {
+        [a, .., z] if pts.len() == 5 && a == z => pts.get(..4)?,
+        _ => pts.as_slice(),
+    };
+    match pts {
+        [a, b, c, d] => Some([*a, *b, *c, *d]),
+        _ => None,
+    }
+}
+
+/// Every stencil material preset (`custom` has none) as `modifier.stencilInfo` lists them.
+pub fn materials_json() -> Value {
+    let rows: Vec<Value> = figcraft_modifiers::StencilMaterial::ALL
+        .iter()
+        .filter_map(|m| {
+            let l = m.limits()?;
+            Some(json!({
+                "id": m.id(),
+                "minCutWidthMm": l.min_cut_width_mm,
+                "minBridgeMm": l.min_bridge_mm,
+                "tieWidthMm": l.tie_width_mm,
+                "minCornerAngle": l.min_corner_angle,
+                "kerfMm": l.kerf_mm,
+            }))
+        })
+        .collect();
+    Value::Array(rows)
 }
 
 /// Layer `n`'s latest stencil info: `true` when computed from what `doc` holds now. `None` when
@@ -374,18 +446,36 @@ pub fn info_json(info: &Info) -> Value {
             "ties": info.stats.ties,
             "untied": info.stats.untied,
             "patternHeld": info.stats.pattern_held,
+            "repeatIslands": info.stats.repeat_islands,
+            "problems": ProblemKind::ALL.iter().map(|k| (k.id().to_string(), json!(info.stats.problems_by_kind.get(*k)))).collect::<serde_json::Map<_, _>>(),
         },
         "islands": info.islands.iter().map(island_json).collect::<Vec<_>>(),
+        "problems": info.problems.iter().map(problem_json).collect::<Vec<_>>(),
+        "hoshi": info.hoshi.iter().map(|p| json!({"x": num(p.x), "y": num(p.y)})).collect::<Vec<_>>(),
+        "repeat": info.repeat.map_or(Value::Null, |r| json!({"ax": num(r.a.x), "ay": num(r.a.y), "bx": num(r.b.x), "by": num(r.b.y)})),
+        "cell": info.cell.map_or(Value::Null, |c| Value::Array(c.iter().map(|p| json!({"x": num(p.x), "y": num(p.y)})).collect())),
+        "tile": info.tile_mm.map_or(Value::Null, |(w, h)| json!({"w": num(w), "h": num(h)})),
         "sheetMm": {"w": info.sheet_mm.0, "h": info.sheet_mm.1},
+        "materials": materials_json(),
         "shapes": info.paints,
     })
+}
+
+/// A number for JSON (what isn't finite reads 0).
+fn num(v: f64) -> Value {
+    if v.is_finite() { json!(v) } else { json!(0.0) }
+}
+
+/// One problem as `modifier.stencilInfo` lists it: its kind and bounds in the layer's space.
+fn problem_json(p: &Problem) -> Value {
+    let b = p.bounds;
+    json!({"kind": p.kind.id(), "x": num(b.x0), "y": num(b.y0), "w": num(b.width()), "h": num(b.height())})
 }
 
 /// One island as `modifier.stencilInfo` lists it: its bounds in the layer's space, the ties
 /// holding it, whether a tie pattern holds it and how deep it sits (0: in a cut-out of the sheet).
 fn island_json(i: &Island) -> Value {
     let b = i.bounds;
-    let num = |v: f64| if v.is_finite() { json!(v) } else { json!(0.0) };
     json!({"x": num(b.x0), "y": num(b.y0), "w": num(b.width()), "h": num(b.height()), "tied": i.tied, "patternHeld": i.pattern_held, "depth": i.nested_depth})
 }
 

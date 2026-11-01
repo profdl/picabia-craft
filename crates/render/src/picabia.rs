@@ -81,8 +81,12 @@ pub fn parent_bbox(doc: &Document, n: &Node, r: Rect) -> Rect {
         Some(ts) => ts.iter().map(|t| figcraft_geom::transform_rect_bbox(*t * n.transform, r)).fold(one, |a, b| a.union(b)),
         None => one,
     };
-    // A stencil layer draws its sheet.
-    stencil::parent_sheet(doc, n).map_or(copies, |s| copies.union(s))
+    // A stencil layer draws its sheet (only that when it draws one repeat tile).
+    match stencil::parent_sheet(doc, n) {
+        Some(s) if stencil::draws_tile(doc, n) => s,
+        Some(s) => copies.union(s),
+        None => copies,
+    }
 }
 
 /// Whether `id` or one of its ancestors has modifier data.
@@ -165,6 +169,14 @@ fn walk(doc: &Document, root: NodeId, f: &mut dyn FnMut(NodeId, &Node)) {
 /// Copy-aware [`Document::world_render_bounds`]: also everything the copies of `id`'s descendants
 /// paint and, when `own`, the copies of `id` itself.
 pub fn render_bounds(doc: &Document, id: NodeId, own: bool) -> Option<Rect> {
+    // A stencil drawing one repeat tile draws only that.
+    if own
+        && let Some(n) = doc.node(id)
+        && stencil::draws_tile(doc, n)
+        && let Some(s) = stencil::world_sheet(doc, id)
+    {
+        return Some(s);
+    }
     let base = doc.world_render_bounds(id)?;
     let extra = copies_render_bounds(doc, id, own, 0);
     // A stack without an identity copy (copy to shape, mirror without the original) doesn't draw
@@ -194,8 +206,12 @@ fn copies_render_bounds(doc: &Document, id: NodeId, own: bool, depth: usize) -> 
     if !own {
         return extra;
     }
-    // A stencil layer draws its sheet (copies of it included: they're in the sheet).
+    // A stencil layer draws its sheet (copies of it included: they're in the sheet); one drawing
+    // a repeat tile draws only that.
     let sheet = stencil::world_sheet(doc, id);
+    if sheet.is_some() && stencil::draws_tile(doc, n) {
+        return sheet;
+    }
     let copies = page_copies(doc, id);
     if copies.is_empty() {
         return union_some(extra, sheet);
@@ -283,6 +299,12 @@ pub fn hit_with_copies(doc: &Document, root: NodeId, p: Point, tol: f64, result:
 /// `p` (the sheet hides the design: a click anywhere on it hits the layer).
 fn stencil_hit(doc: &Document, root: NodeId, p: Point, normal: Option<NodeId>) -> Option<NodeId> {
     let mut best = normal;
+    // A stencil drawing one repeat tile hides its design off the tile: nothing of it is hit there.
+    if let Some(b) = best
+        && tile_hides(doc, b, p)
+    {
+        best = None;
+    }
     walk(doc, root, &mut |id, n| {
         if id == root || !stencil::is_stencil(n) || !clips_allow(doc, root, id, p) || !stencil::sheet_contains(doc, id, p) {
             return;
@@ -296,6 +318,25 @@ fn stencil_hit(doc: &Document, root: NodeId, p: Point, normal: Option<NodeId>) -
         };
     });
     best
+}
+
+/// Whether layer `id` is (or is inside) a stencil drawing one repeat tile and page point `p` is
+/// off that tile's sheet.
+fn tile_hides(doc: &Document, id: NodeId, p: Point) -> bool {
+    let mut cur = Some(id);
+    let mut steps = 0usize;
+    while let Some(c) = cur {
+        steps += 1;
+        if steps > MAX_WALK_DEPTH + 1 {
+            return false;
+        }
+        let Some(n) = doc.node(c) else { return false };
+        if stencil::is_stencil(n) && stencil::draws_tile(doc, n) && !stencil::sheet_contains(doc, c, p) {
+            return true;
+        }
+        cur = n.parent;
+    }
+    false
 }
 
 /// [`hit_with_copies`] in outline mode: copies are hit on their outlines too
