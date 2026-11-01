@@ -287,7 +287,8 @@ pub fn compute_within(doc: &Document, n: &Node, frame: &GenFrame, p: &ImageTrace
     let mut warnings = Vec::new();
     let (tw, th) = traced.size;
     if r.scaled || traced.downscaled {
-        warnings.push(format!("the image is traced at {tw} × {th} px, scaled down to stay within {} megapixels", vt::MAX_TRACE_PIXELS >> 20));
+        let mp = vt::MAX_TRACE_PIXELS >> 20;
+        warnings.push(format!("the image is traced at {tw} × {th} px, scaled down to stay within {mp} megapixel{}", if mp == 1 { "" } else { "s" }));
     }
     if tw.max(th) > LARGE_TRACE_SIDE && p.mode != TraceMode::Logo {
         warnings.push(format!(

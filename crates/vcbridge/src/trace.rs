@@ -1,8 +1,8 @@
 //! Image Trace over an RGBA8 raster, by VectorCraft's tracer.
 //!
 //! Budgets (so a huge photo cannot freeze or exhaust memory): an input over [`MAX_TRACE_PIXELS`]
-//! (16 megapixels natively, 4 in the browser) is first box-filtered down, aspect kept, and the
-//! result says so ([`Traced::downscaled`], paths are in the *traced* size's pixel space, see
+//! (16 megapixels natively, 1 in the browser, where the trace runs on the UI thread) is first
+//! box-filtered down, aspect kept, and the result says so ([`Traced::downscaled`], paths are in the *traced* size's pixel space, see
 //! [`Traced::size`] and [`Traced::source_size`]); a trace with more than [`MAX_ANCHORS`] anchors
 //! (8 million natively, 2 million in the browser) is refused as [`BridgeError::TooComplex`].
 
@@ -16,8 +16,10 @@ use crate::path::from_vc;
 #[cfg(not(target_arch = "wasm32"))]
 pub const MAX_TRACE_PIXELS: u64 = 16 << 20;
 /// Most pixels traced at once; a larger raster is box-filtered down first.
+/// In the browser the trace runs on the UI thread: 1 MP keeps a trace near a second (a web worker
+/// would lift this).
 #[cfg(target_arch = "wasm32")]
-pub const MAX_TRACE_PIXELS: u64 = 4 << 20;
+pub const MAX_TRACE_PIXELS: u64 = 1 << 20;
 
 /// Most anchors a trace may make before it is refused.
 #[cfg(not(target_arch = "wasm32"))]
