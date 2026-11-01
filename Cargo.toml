@@ -37,6 +37,8 @@ figcraft-plugin = { path = "crates/plugin" }
 figcraft-modifiers = { path = "crates/modifiers" }
 # PICABIA: the stencil geometry crate (L3).
 figcraft-stencil = { path = "crates/stencil" }
+# PICABIA: the GRBL laser link crate (L3): protocol, streamer, simulator, serial transport.
+figcraft-grbl = { path = "crates/grbl" }
 # PICABIA: vendored VectorCraft crates (geometry, path operations, Image Trace); see vendor/vectorcraft/README.md.
 vectorcraft-geom = { path = "vendor/vectorcraft/geom" }
 vectorcraft-pathops = { path = "vendor/vectorcraft/pathops" }

@@ -20,6 +20,8 @@ const TABLE: &[(&str, u8)] = &[
     ("format", 3),
     // PICABIA: stencil geometry (visible regions, clean-up, sheet) on pathops + modifiers.
     ("stencil", 3),
+    // PICABIA: the GRBL laser link (protocol, simulator, serial port); no FigCraft deps.
+    ("grbl", 3),
     // PICABIA: adapter to the vendored VectorCraft crates (paths, Pathfinder, Image Trace).
     ("vcbridge", 3),
     ("svg", 4),
