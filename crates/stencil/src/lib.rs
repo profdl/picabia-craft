@@ -59,6 +59,7 @@ pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
 pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, Tile, compute, compute_repeat};
 pub use laser::{
     Contour, LaserInput, LaserJob, LaserParams, LaserSheet, MAX_LABEL_LINES, MAX_SHEET_MM, MAX_SHEET_POINTS, MAX_SHEETS, Polyline, laser_job,
+    order_contours,
 };
 pub use laser_card::{BRIDGES_MM, CARD_H_MM, CARD_W_MM, CORNERS_DEG, GAUGE_MM, HOLES_MM, SLITS_MM, test_card};
 pub use laser_font::{MAX_TEXT_CHARS, font_has, text_polylines};

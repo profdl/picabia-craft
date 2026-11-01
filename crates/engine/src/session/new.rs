@@ -31,6 +31,7 @@ impl Session {
             events: Arc::new(events::EventLog::default()),
             pending_events: Vec::new(),
             agent: None,
+            picabia_laser: crate::picabia_laser_link::LaserLink::default(), // PICABIA: the laser link.
         }
     }
 

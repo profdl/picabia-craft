@@ -108,6 +108,11 @@ pub struct Prefs {
     /// `modifier.stencilTestCard`), as their camelCase params; null until the first export.
     #[serde(skip_serializing_if = "Value::is_null")]
     pub picabia_laser: Value,
+    /// PICABIA: the laser machine profile (`laser.profile`; bed, S max, rapid, air, per-material
+    /// operation settings), as camelCase JSON; null until first changed (the defaults: the
+    /// owner's X-Carve).
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub picabia_machine: Value,
 }
 
 /// Recently run actions kept for the Actions palette (newest first).
@@ -146,7 +151,8 @@ impl Default for Prefs {
             home_order: "desc".into(),
             view: BTreeMap::new(),
             recent_actions: Vec::new(),
-            picabia_laser: Value::Null, // PICABIA: laser export settings.
+            picabia_laser: Value::Null,   // PICABIA: laser export settings.
+            picabia_machine: Value::Null, // PICABIA: laser machine profile.
         }
     }
 }

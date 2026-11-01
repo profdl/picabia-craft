@@ -118,7 +118,10 @@ impl Session {
                     }
                 }
             }
-            Err(_) => {
+            Err(e) => {
+                if matches!(e, EngineError::Internal { .. }) {
+                    self.laser_emergency_stop(); // PICABIA: a panicking command stops a running laser job.
+                }
                 // Roll back any partial edit — also during an interaction, where `before` is the
                 // interaction's last valid preview: restore it and leave the gesture itself (its
                 // own snapshot) alone.

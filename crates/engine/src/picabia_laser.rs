@@ -18,12 +18,12 @@ use crate::params::{get, string, targets};
 use crate::{EngineError, Result, Session, bad};
 
 const EXPORT: &str = "modifier.stencilExport";
-const TEST_CARD: &str = "modifier.stencilTestCard";
+pub(crate) const TEST_CARD: &str = "modifier.stencilTestCard";
 
 /// Where the sheets go: a file path, base64 data, only their description (a dry run: the
 /// dialog's summary), or (none of those) the dialog.
 #[derive(PartialEq)]
-enum Out {
+pub(crate) enum Out {
     Path(String),
     Data,
     Summary,
@@ -31,7 +31,7 @@ enum Out {
 }
 
 /// `dryRun: true` wins, then `path` (a non-empty string), then `data: true`; none: the dialog.
-fn out_of(cmd: &str, p: &Value) -> Result<Out> {
+pub(crate) fn out_of(cmd: &str, p: &Value) -> Result<Out> {
     match get(p, "dryRun") {
         None | Some(Value::Bool(false)) => {}
         Some(Value::Bool(true)) => return Ok(Out::Summary),
@@ -51,7 +51,7 @@ fn out_of(cmd: &str, p: &Value) -> Result<Out> {
 
 /// The settings a command uses: defaults, then the remembered ones, then `kerf` (the material's;
 /// `None` keeps the remembered kerf), then the command's own params. Clamped.
-fn settings(s: &Session, kerf: Option<f64>, p: &Value) -> LaserParams {
+pub(crate) fn settings(s: &Session, kerf: Option<f64>, p: &Value) -> LaserParams {
     let mut lp = LaserParams::default();
     lp.apply_json(&s.prefs.picabia_laser);
     if let Some(k) = kerf {
@@ -62,7 +62,7 @@ fn settings(s: &Session, kerf: Option<f64>, p: &Value) -> LaserParams {
 }
 
 /// The stencil layer a command acts on: `id`/`ids` or the selection, its first layer.
-fn stencil_layer(cmd: &str, s: &Session, p: &Value) -> Result<NodeId> {
+pub(crate) fn stencil_layer(cmd: &str, s: &Session, p: &Value) -> Result<NodeId> {
     let id = targets(s, p).first().copied().ok_or_else(|| EngineError::Disabled(cmd.into(), "select a stencil layer".into()))?;
     let n = s.doc()?.get(id)?;
     if !store::is_stencil(n) {
@@ -77,7 +77,7 @@ fn stencil_params(s: &Session, n: &Node) -> Option<Stencil> {
 }
 
 /// A material's name as it is engraved and shown: "Paper", "Film", "Card", "Custom".
-fn material_name(m: StencilMaterial) -> &'static str {
+pub(crate) fn material_name(m: StencilMaterial) -> &'static str {
     match m {
         StencilMaterial::Paper => "Paper",
         StencilMaterial::Film => "Film",
@@ -96,7 +96,7 @@ fn mm(v: f64) -> String {
 }
 
 /// `name` as a file name: path separators and characters file systems refuse become `-`.
-fn file_safe(name: &str) -> String {
+pub(crate) fn file_safe(name: &str) -> String {
     let s: String = name
         .trim()
         .chars()
@@ -159,23 +159,32 @@ fn emit(cmd: &str, sheets: &[LaserSheet], lp: &LaserParams, out: &Out, base: &st
     Ok(files)
 }
 
-fn finite(v: f64) -> f64 {
+pub(crate) fn finite(v: f64) -> f64 {
     if v.is_finite() { v } else { 0.0 }
 }
 
-/// `modifier.stencilExport`: a stencil layer's drawn cut (the tile with tile output) as
-/// kerf-compensated laser sheets.
-pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
-    let out = out_of(EXPORT, p)?;
-    let id = stencil_layer(EXPORT, s, p)?;
+/// A stencil layer's laser sheets (for the SVG and the G-code export, and `laser.start`).
+pub(crate) struct StencilSheets {
+    pub sheets: Vec<LaserSheet>,
+    pub warnings: Vec<String>,
+    /// The layer's name made safe for a file name.
+    pub base: String,
+}
+
+/// Stencil layer `id`'s material and kerf (`None`: custom, keep the remembered kerf).
+pub(crate) fn stencil_material(cmd: &str, s: &Session, id: NodeId) -> Result<(StencilMaterial, Option<f64>)> {
     let doc = s.doc()?;
     let n = doc.get(id)?;
-    let frame = store::frame(doc, n).ok_or_else(|| EngineError::Disabled(EXPORT.into(), format!("layer {id} has no size to cut")))?;
-    let lp = settings(s, frame.params.material.limits().map(|l| l.kerf_mm), p);
-    if matches!(out, Out::Dialog) {
-        s.request_ui("dialog.stencilExport", json!({"id": id, "params": lp.to_json()}));
-        return Ok(json!({"dialog": true}));
-    }
+    let frame = store::frame(doc, n).ok_or_else(|| EngineError::Disabled(cmd.into(), format!("layer {id} has no size to cut")))?;
+    Ok((frame.params.material, frame.params.material.limits().map(|l| l.kerf_mm)))
+}
+
+/// Stencil layer `id`'s drawn cut (the tile with tile output) as kerf-compensated laser sheets
+/// with `lp`. Errors: no size, nothing to cut, a refused job.
+pub(crate) fn stencil_sheets(cmd: &str, s: &Session, id: NodeId, lp: &LaserParams) -> Result<StencilSheets> {
+    let doc = s.doc()?;
+    let n = doc.get(id)?;
+    let frame = store::frame(doc, n).ok_or_else(|| EngineError::Disabled(cmd.into(), format!("layer {id} has no size to cut")))?;
     // The fresh result when there is one, else computed now (and kept for the canvas).
     let fresh = match (crate::picabia_stencil::info(doc, n), store::lookup(doc, n)) {
         (Some((info, true)), Some((shape, true))) => Some((info, shape.cut.clone(), shape.sheet)),
@@ -183,10 +192,10 @@ pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let (info, cut, sheet) = fresh
         .or_else(|| crate::picabia_stencil::compute_cut_now(doc, id))
-        .ok_or_else(|| EngineError::Other(format!("{EXPORT}: layer {id}'s stencil couldn't be computed")))?;
+        .ok_or_else(|| EngineError::Other(format!("{cmd}: layer {id}'s stencil couldn't be computed")))?;
     if cut.elements().is_empty() {
         let why = info.warnings.first().map(|w| format!(" ({w})")).unwrap_or_default();
-        return Err(EngineError::Disabled(EXPORT.into(), format!("layer {id}'s stencil has nothing to cut{why}")));
+        return Err(EngineError::Disabled(cmd.into(), format!("layer {id}'s stencil has nothing to cut{why}")));
     }
     let size = match info.tile_mm {
         Some(_) => "Repeat tile".to_string(),
@@ -203,12 +212,27 @@ pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
         label_lines,
         repeat_cell: info.cell,
     };
-    let job = figcraft_stencil::laser_job(&input, &lp);
+    let job = figcraft_stencil::laser_job(&input, lp);
     if job.sheets.is_empty() {
         let why = if job.warnings.is_empty() { "the laser job was refused".to_string() } else { job.warnings.join("; ") };
-        return Err(EngineError::Disabled(EXPORT.into(), why));
+        return Err(EngineError::Disabled(cmd.into(), why));
     }
-    let base = format!("{} laser", file_safe(&n.name));
+    Ok(StencilSheets { sheets: job.sheets, warnings: job.warnings, base: file_safe(&n.name) })
+}
+
+/// `modifier.stencilExport`: a stencil layer's drawn cut (the tile with tile output) as
+/// kerf-compensated laser sheets.
+pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
+    let out = out_of(EXPORT, p)?;
+    let id = stencil_layer(EXPORT, s, p)?;
+    let (_, kerf) = stencil_material(EXPORT, s, id)?;
+    let lp = settings(s, kerf, p);
+    if matches!(out, Out::Dialog) {
+        s.request_ui("dialog.stencilExport", json!({"id": id, "params": lp.to_json()}));
+        return Ok(json!({"dialog": true}));
+    }
+    let job = stencil_sheets(EXPORT, s, id, &lp)?;
+    let base = format!("{} laser", job.base);
     let files = emit(EXPORT, &job.sheets, &lp, &out, &base)?;
     let params = lp.to_json();
     // Remembered for the next export; a dry run (the dialog's summary) changes nothing.
@@ -219,7 +243,7 @@ pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// The material `p` names (`material`), else the selected stencil's, else paper.
-fn card_material(p: &Value, stencil: Option<&Stencil>) -> Result<StencilMaterial> {
+pub(crate) fn card_material(p: &Value, stencil: Option<&Stencil>) -> Result<StencilMaterial> {
     match get(p, "material") {
         None => Ok(stencil.map_or(StencilMaterial::Paper, |st| st.material)),
         Some(_) => {
@@ -232,10 +256,20 @@ fn card_material(p: &Value, stencil: Option<&Stencil>) -> Result<StencilMaterial
     }
 }
 
-/// `modifier.stencilTestCard`: the card that measures a material's kerf and cutting limits.
-pub fn test_card(s: &mut Session, p: &Value) -> Result<Value> {
-    let out = out_of(TEST_CARD, p)?;
-    // The selected (or named) stencil layer, when there is one: its material and limits.
+/// What the test card (or the power ladder) is made for: the selected stencil (when one is),
+/// the material, the laser settings and the card's limits (`None` for the ladder of a custom
+/// material without a stencil: the ladder doesn't use them).
+pub(crate) struct CardSetup {
+    pub stencil: Option<NodeId>,
+    pub material: StencilMaterial,
+    pub lp: LaserParams,
+    pub limits: Option<MaterialLimits>,
+}
+
+/// The card's settings: the material `p` names, else the selected (or named) stencil's, else
+/// paper; the laser settings layered as for the export. `need_limits`: a custom material without
+/// a selected stencil is refused (the card is drawn at the stencil's limits).
+pub(crate) fn card_setup(cmd: &str, s: &Session, p: &Value, need_limits: bool) -> Result<CardSetup> {
     let picked = targets(s, p).first().copied();
     let stencil = match picked {
         Some(id) => {
@@ -246,27 +280,80 @@ pub fn test_card(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let material = card_material(p, stencil.as_ref().map(|(_, st)| st))?;
     let lp = settings(s, material.limits().map(|l| l.kerf_mm), p);
-    let limits = match material.limits() {
-        Some(l) => MaterialLimits { kerf_mm: lp.kerf_mm, ..l },
-        None => {
-            let Some((_, st)) = &stencil else {
-                return Err(EngineError::Disabled(TEST_CARD.into(), "a custom material's card needs a selected stencil layer (its limits)".into()));
-            };
-            MaterialLimits {
-                min_cut_width_mm: st.min_cut_width_mm,
-                min_bridge_mm: st.min_bridge_mm,
-                tie_width_mm: st.tie_width_mm,
-                min_corner_angle: st.min_corner_angle,
-                kerf_mm: lp.kerf_mm,
-            }
+    let limits = match (material.limits(), &stencil) {
+        (Some(l), _) => Some(MaterialLimits { kerf_mm: lp.kerf_mm, ..l }),
+        (None, Some((_, st))) => Some(MaterialLimits {
+            min_cut_width_mm: st.min_cut_width_mm,
+            min_bridge_mm: st.min_bridge_mm,
+            tie_width_mm: st.tie_width_mm,
+            min_corner_angle: st.min_corner_angle,
+            kerf_mm: lp.kerf_mm,
+        }),
+        (None, None) if need_limits => {
+            return Err(EngineError::Disabled(cmd.into(), "a custom material's card needs a selected stencil layer (its limits)".into()));
         }
+        (None, None) => None,
     };
+    Ok(CardSetup { stencil: stencil.map(|(id, _)| id), material, lp, limits })
+}
+
+/// The test card's sheet for `setup` (`None` without limits: see [`card_setup`]).
+pub(crate) fn card_sheet(setup: &CardSetup) -> Option<LaserSheet> {
+    setup.limits.map(|l| figcraft_stencil::test_card(&l, material_name(setup.material), setup.lp.kerf_mm))
+}
+
+/// `kind`: the test card (false, the default) or the power ladder (true).
+pub(crate) fn card_kind(cmd: &str, p: &Value) -> Result<bool> {
+    match get(p, "kind") {
+        None => Ok(false),
+        Some(Value::String(k)) if k.trim().eq_ignore_ascii_case("card") => Ok(false),
+        Some(Value::String(k)) if k.trim().eq_ignore_ascii_case("powerLadder") => Ok(true),
+        Some(_) => Err(bad(cmd, "`kind` must be card or powerLadder")),
+    }
+}
+
+/// `format`: G-code (true) or SVG (false). Default: SVG for the card, G-code for the ladder.
+fn card_format(p: &Value, ladder: bool) -> Result<bool> {
+    match get(p, "format") {
+        None => Ok(ladder),
+        Some(Value::String(f)) if f.trim().eq_ignore_ascii_case("svg") => Ok(false),
+        Some(Value::String(f)) if f.trim().eq_ignore_ascii_case("gcode") => Ok(true),
+        Some(_) => Err(bad(TEST_CARD, "`format` must be svg or gcode")),
+    }
+}
+
+/// `modifier.stencilTestCard`: the card that measures a material's kerf and cutting limits, or
+/// (`kind: powerLadder`, G-code only) the power ladder that finds its power and speed.
+pub fn test_card(s: &mut Session, p: &Value) -> Result<Value> {
+    let out = out_of(TEST_CARD, p)?;
+    let ladder = card_kind(TEST_CARD, p)?;
+    let gcode = card_format(p, ladder)?;
+    if ladder && !gcode {
+        return Err(EngineError::Disabled(
+            TEST_CARD.into(),
+            "the power ladder cuts each square at its own power and speed, which an SVG can't carry: export it as G-code (format: gcode)".into(),
+        ));
+    }
+    let setup = card_setup(TEST_CARD, s, p, !ladder)?;
     if matches!(out, Out::Dialog) {
-        let id = stencil.as_ref().map_or(Value::Null, |(id, _)| json!(id));
-        s.request_ui("dialog.stencilTestCard", json!({"id": id, "material": material.id(), "params": lp.to_json()}));
+        let id = setup.stencil.map_or(Value::Null, |id| json!(id));
+        let mut data = json!({"id": id, "material": setup.material.id(), "params": setup.lp.to_json()});
+        if gcode || get(p, "format").is_some() || get(p, "kind").is_some() {
+            data["format"] = json!(if gcode { "gcode" } else { "svg" });
+            data["kind"] = json!(if ladder { "powerLadder" } else { "card" });
+        }
+        if gcode {
+            data["gcode"] = crate::picabia_laser_gcode::card_gcode_params(s, &setup, p).to_json();
+        }
+        s.request_ui("dialog.stencilTestCard", data);
         return Ok(json!({"dialog": true}));
     }
-    let card = figcraft_stencil::test_card(&limits, material_name(material), lp.kerf_mm);
+    if gcode {
+        return crate::picabia_laser_gcode::card_gcode(s, p, &out, &setup, ladder);
+    }
+    let card = card_sheet(&setup).ok_or_else(|| EngineError::Disabled(TEST_CARD.into(), "the card needs the material's limits".into()))?;
+    let lp = setup.lp;
+    let material = setup.material;
     let base = format!("Test card {}", material.id());
     let files = emit(TEST_CARD, std::slice::from_ref(&card), &lp, &out, &base)?;
     let params = lp.to_json();

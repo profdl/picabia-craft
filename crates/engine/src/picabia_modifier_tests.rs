@@ -259,7 +259,7 @@ fn modifier_commands_survive_junk() {
         json!({"data": "x", "path": {"x": 1}, "kerfMm": "inf", "engraveColour": "#zzzzzz", "material": "\u{0}"}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
-    assert_eq!(ids.len(), 17, "{ids:?}");
+    assert_eq!(ids.len(), 18, "{ids:?}");
     for cmd in ids {
         for j in &junk {
             for damaged in [false, true] {

@@ -336,6 +336,15 @@ pub(crate) fn bounds(c: &[Point]) -> Rect {
     c.iter().fold(Rect::from_points(first, first), |b, &p| b.union_pt(p))
 }
 
+/// Closed outlines (mm, any order) ready to cut: each cleaned (see [`clean_contour`]; one with
+/// no area is dropped), duplicates dropped, then put in cut order: the deepest contours first,
+/// nearest neighbour within each depth, the largest outermost contour last. For laser-cutting a
+/// design that isn't a stencil (PICABIA: `laser.gcode`).
+pub fn order_contours(contours: Vec<Contour>) -> Vec<Contour> {
+    let cleaned = dedup(contours.into_iter().filter_map(|c| clean_contour(&c)).collect());
+    order(cleaned).0
+}
+
 /// Greedy nearest-neighbour order above this many contours per depth is replaced by rows.
 const MAX_GREEDY: usize = 5000;
 

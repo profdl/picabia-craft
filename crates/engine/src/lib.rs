@@ -106,6 +106,9 @@ mod picabia_bind; // PICABIA: variable bindings on modifier params.
 pub mod picabia_generate; // PICABIA: generated layers (imageTrace, pathfinder): compute registry, apply, info.
 pub mod picabia_jobs; // PICABIA: the scheduler for stencil sheets and generator results.
 pub mod picabia_laser; // PICABIA: laser export of stencil layers and the test card.
+pub mod picabia_laser_design; // PICABIA: laser-cut any layers (laser.gcode, design jobs).
+pub mod picabia_laser_gcode; // PICABIA: G-code export, the machine profile, laser jobs.
+pub mod picabia_laser_link; // PICABIA: the laser link (laser.* commands, worker thread, arming).
 pub mod picabia_pathfinder; // PICABIA: the pathfinder generator.
 pub mod picabia_stencil; // PICABIA: stencil layers (gather, compute, cache, refresh).
 pub mod picabia_trace; // PICABIA: the imageTrace generator.
@@ -161,6 +164,8 @@ pub struct Session {
     /// The AI agent the running command is for ([`Session::execute_as`]), as comments are signed
     /// (`"Claude (agent)"`); `None` for the user.
     pub agent: Option<String>,
+    /// PICABIA: the laser link (`laser.*`): the port's worker thread and the arming.
+    pub picabia_laser: picabia_laser_link::LaserLink,
 }
 
 impl Default for Session {
@@ -415,6 +420,10 @@ mod picabia_binding_tests; // PICABIA: modifier binding and expression tests.
 mod picabia_canvas_tests; // PICABIA: modifier copies on the canvas and in exports.
 #[cfg(test)]
 mod picabia_generate_tests; // PICABIA: generator framework tests.
+#[cfg(test)]
+mod picabia_laser_gcode_tests; // PICABIA: G-code export, test card and ladder G-code, machine profile.
+#[cfg(test)]
+mod picabia_laser_link_tests; // PICABIA: the laser link against the simulated GRBL.
 #[cfg(test)]
 mod picabia_laser_tests; // PICABIA: laser export and test card commands.
 #[cfg(test)]

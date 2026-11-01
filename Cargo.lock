@@ -1789,6 +1789,7 @@ dependencies = [
  "figcraft-doc",
  "figcraft-format",
  "figcraft-geom",
+ "figcraft-grbl",
  "figcraft-layout",
  "figcraft-modifiers",
  "figcraft-pathops",

@@ -121,6 +121,7 @@ fn registry() -> &'static Registry {
         list.extend(crate::board_table::specs());
         list.extend(crate::board_templates::specs());
         list.extend(modifier::specs()); // PICABIA: modifier stack commands.
+        list.extend(crate::picabia_laser_link::specs()); // PICABIA: the laser link (laser.*).
         let mut index = HashMap::new();
         for (i, s) in list.iter().enumerate() {
             if index.insert(s.id, i).is_some() {
