@@ -35,7 +35,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "modifier.add",
             "Add modifier",
-            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed; stencil (ends the stack; rows below it are ignored): colourMode (threshold|pick), cutColours [\"#rrggbb\"], threshold (0-1), invert, widthMm, marginMm, minCutAreaMm2, minCutWidthMm, minBridgeMm, toleranceMm (mm), preview (paper|cloth), paperColour, pasteColour, clothColour, tieMode (ties|gauze|pattern), tieWidthMm (mm), tiesPerIsland (1-8), tieSpread, tieAngle (degrees or null), tieSeed, patternType (grid|horizontal|vertical), patternWidthMm, patternSpacingMm (mm), patternAngle (degrees), patternWhere (everywhere|islands)}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
+            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed; stencil (ends the stack; rows below it are ignored): colourMode (threshold|pick), cutColours [\"#rrggbb\"], threshold (0-1), invert, widthMm, marginMm, minCutAreaMm2, minCutWidthMm, minBridgeMm, toleranceMm (mm), preview (paper|cloth), paperColour, pasteColour, clothColour, tieMode (ties|gauze|pattern), tieWidthMm (mm), tiesPerIsland (1-8), tieSpread, tieAngle (degrees or null), tieSeed, patternType (grid|horizontal|vertical), patternWidthMm, patternSpacingMm (mm), patternAngle (degrees), patternWhere (everywhere|islands), material (paper|film|card|custom; a preset fills minCutWidthMm, minBridgeMm, tieWidthMm, minCornerAngle unless the same props set them; setting one of those off the preset makes it custom), limitMode (fix|flag), minCornerAngle (degrees, 0-179), hoshi, hoshiDiameterMm (mm, 0.2-20), repeat (auto|off: use the repeat of the last wallpaper or gridArray row above), output (sheet|tile; tile needs a repeat)}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
             true,
             add
         ),
@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "modifier.set",
             "Set modifier",
-            "{ids?, modifier? (id) | index?, props {..: params to change, camelCase; enabled too; <field>Expr: a per-copy expression on transformEach/randomize amounts (i, n, t, value; \"\" clears)}}",
+            "{ids?, modifier? (id) | index?, props {..: params to change, camelCase; enabled too; a stencil material preset fills its limits, as modifier.add; <field>Expr: a per-copy expression on transformEach/randomize amounts (i, n, t, value; \"\" clears)}}",
             true,
             set
         ),

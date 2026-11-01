@@ -7,7 +7,8 @@
 //! Duplicate carrying variable bindings; the stencil's grouped settings (colour mode, swatch list
 //! with cut toggles, size, clean-up, ties, preview colours with FigCraft's swatch and picker): the
 //! Ties group's modes (ties, a tie pattern with fallback ties, gauze), its optional direction, and
-//! the stats line and warning for islands.
+//! the stats line and warning for islands; the sheet material (a preset fills the limits), output
+//! (a tile only with a repeat above), repeat, limit mode, sharpest corner and registration holes.
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Modifiers, PointerButton, Pos2, pos2};
@@ -686,7 +687,11 @@ fn stencil_settings_are_grouped_under_small_labels() {
     let drawn = texts(&flat(&u.frame_output(vec![]).shapes));
     let at = |label: &str| drawn.iter().position(|t| t == label).unwrap_or_else(|| panic!("{label:?} is drawn"));
     assert!(
-        at("Colours") < at("Size") && at("Size") < at("Clean-up") && at("Clean-up") < at("Ties") && at("Ties") < at("Preview"),
+        at("Colours") < at("Size")
+            && at("Size") < at("Clean-up")
+            && at("Clean-up") < at("Ties")
+            && at("Ties") < at("Registration")
+            && at("Registration") < at("Preview"),
         "in order: {drawn:?}"
     );
     assert!(at("Preview") < at("Paper"), "the paper colour is named under Preview");
@@ -752,6 +757,8 @@ fn a_swatch_toggle_writes_cut_colours_in_one_step() {
         }
     }
     let steps = undo_steps(&u);
+    // The swatch list sits just over the size.
+    centred(&mut u, Id::unique(("mod", "widthMm", 0)).with("lead"));
     let blue = labelled(&mut u, "Cut out #1F3A8A");
     assert_eq!(blue.len(), 1, "one cut toggle per colour, named by it");
     click(&mut u, blue[0]);
@@ -942,4 +949,111 @@ fn untied_islands_are_warned_of_under_the_row() {
     assert!(drawn.iter().any(|d| d == "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut"), "{drawn:?}");
     assert!(!drawn.iter().any(|d| d.contains("would fall out")), "{drawn:?}");
     assert!(!drawn.iter().any(|d| d.contains("left untied")), "{drawn:?}");
+}
+
+/// Pick `option` from the dropdown of modifier row `index` showing `current`, with the field
+/// `near` (a number of that row) brought into view first.
+fn pick(u: &mut Ui, near: &'static str, index: usize, current: &str, option: &str) {
+    centred(u, Id::unique(("mod", near, index)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(u, text_center(&shapes, current));
+    click(u, text_center(&menu, option));
+}
+
+/// Whether the AccessKit node labelled `label` is disabled, and its description.
+fn menu_node(u: &mut Ui, label: &str) -> (bool, Option<String>) {
+    let out = u.frame_output(vec![]);
+    let nodes = out.platform_output.accesskit_update.unwrap().nodes;
+    let (_, n) = nodes.iter().find(|(_, n)| n.label() == Some(label)).unwrap_or_else(|| panic!("no {label:?}"));
+    (n.is_disabled(), n.description().map(str::to_string))
+}
+
+#[test]
+fn a_material_preset_fills_the_limits_in_one_step() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    let steps = undo_steps(&u);
+    pick(&mut u, "marginMm", 0, "Cut from paper", "Cut from film");
+    let m = stack(&mut u, r)[0].clone();
+    assert_eq!(
+        (&m["material"], &m["minCutWidthMm"], &m["minBridgeMm"], &m["tieWidthMm"], &m["minCornerAngle"]),
+        (&json!("film"), &json!(0.2), &json!(0.4), &json!(0.6), &json!(20.0))
+    );
+    assert_eq!(undo_steps(&u), steps + 1, "one undo step");
+    pick(&mut u, "marginMm", 0, "Cut from film", "Cut from card");
+    assert_eq!(stack(&mut u, r)[0]["minBridgeMm"], json!(1.0));
+    // A limit typed off the preset makes the material custom.
+    type_into(&mut u, "minCutWidthMm", "0.7");
+    assert_eq!(stack(&mut u, r)[0]["material"], json!("custom"));
+    centred(&mut u, Id::unique(("mod", "marginMm", 0)).with("lead"));
+    assert!(texts(&flat(&u.frame_output(vec![]).shapes)).iter().any(|t| t == "Custom limits"));
+}
+
+#[test]
+fn a_tile_needs_a_repeat_above() {
+    let drawn = |u: &mut Ui| texts(&flat(&u.frame_output(vec![]).shapes));
+    // No lattice row: no Repeat choice, and Tile can't be picked (why, as its description).
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    centred(&mut u, Id::unique(("mod", "marginMm", 0)).with("lead"));
+    assert!(drawn(&mut u).iter().any(|t| t == "The whole sheet"));
+    assert!(!drawn(&mut u).iter().any(|t| t == "Follow the repeat above"), "no repeat to follow");
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    let menu = click(&mut u, text_center(&shapes, "The whole sheet"));
+    assert_eq!(menu_node(&mut u, "One repeat tile"), (true, Some("A tile needs a Wallpaper or Grid array row above the stencil".into())));
+    click(&mut u, text_center(&menu, "One repeat tile"));
+    assert_eq!(stack(&mut u, r)[0]["output"], json!("sheet"), "Tile is disabled");
+    // Under a grid array: the Repeat choice, and a tile.
+    let (mut u, r) = setup(&["gridArray", "stencil"]);
+    open_settings(&mut u, 1);
+    pick(&mut u, "marginMm", 1, "The whole sheet", "One repeat tile");
+    assert_eq!(stack(&mut u, r)[1]["output"], json!("tile"));
+    pick(&mut u, "marginMm", 1, "Follow the repeat above", "Ignore the repeat");
+    assert_eq!(stack(&mut u, r)[1]["repeat"], json!("off"));
+    // The repeat ignored: Tile can't be picked again (Sheet still can).
+    centred(&mut u, Id::unique(("mod", "marginMm", 1)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    click(&mut u, text_center(&shapes, "One repeat tile"));
+    assert!(!menu_node(&mut u, "The whole sheet").0, "Sheet still can");
+    let (off, why) = menu_node(&mut u, "One repeat tile");
+    assert!(off && why.as_deref() == Some("A tile needs the stencil to follow the repeat above"), "{why:?}");
+    // A per-copy row breaks the lattice.
+    let (mut u, _) = setup(&["gridArray", "randomize", "stencil"]);
+    open_settings(&mut u, 2);
+    centred(&mut u, Id::unique(("mod", "marginMm", 2)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    click(&mut u, text_center(&shapes, "The whole sheet"));
+    let (off, why) = menu_node(&mut u, "One repeat tile");
+    assert!(off && why.is_some_and(|w| w.contains("Randomize")));
+}
+
+#[test]
+fn limits_and_the_sharpest_corner_set_their_params() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    pick(&mut u, "toleranceMm", 0, "Fix what's too fine", "Only flag what's too fine");
+    assert_eq!(stack(&mut u, r)[0]["limitMode"], json!("flag"));
+    let steps = undo_steps(&u);
+    type_into(&mut u, "minCornerAngle", "45");
+    assert_eq!(stack(&mut u, r)[0]["minCornerAngle"], json!(45.0));
+    assert_eq!(undo_steps(&u), steps + 1);
+    type_into(&mut u, "minCornerAngle", "200");
+    assert_eq!(stack(&mut u, r)[0]["minCornerAngle"], json!(figcraft_modifiers::MAX_CORNER_ANGLE));
+}
+
+#[test]
+fn registration_holes_show_their_diameter_while_on() {
+    let (mut u, r) = setup(&["stencil"]);
+    open_settings(&mut u, 0);
+    assert_eq!(stack(&mut u, r)[0]["hoshi"], json!(true));
+    assert!(has_field(&mut u, "hoshiDiameterMm", 0));
+    type_into(&mut u, "hoshiDiameterMm", "3");
+    assert_eq!(stack(&mut u, r)[0]["hoshiDiameterMm"], json!(3.0));
+    type_into(&mut u, "hoshiDiameterMm", "50");
+    assert_eq!(stack(&mut u, r)[0]["hoshiDiameterMm"], json!(figcraft_modifiers::MAX_HOSHI_DIAMETER_MM));
+    centred(&mut u, Id::unique(("mod", "hoshiDiameterMm", 0)).with("lead"));
+    let shapes = flat(&u.frame_output(vec![]).shapes);
+    click(&mut u, text_center(&shapes, "Registration holes"));
+    assert_eq!(stack(&mut u, r)[0]["hoshi"], json!(false));
+    assert!(!has_field(&mut u, "hoshiDiameterMm", 0), "off: no diameter");
 }

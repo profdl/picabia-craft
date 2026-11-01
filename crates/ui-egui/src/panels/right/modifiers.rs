@@ -175,6 +175,25 @@ const PATTERN_TYPES: &[(&str, &str)] =
 /// Where a stencil's tie lattice goes: (value written in `patternWhere`, label).
 const PATTERN_WHERE: &[(&str, &str)] = &[("everywhere", tr_noop("Everywhere")), ("islands", tr_noop("Only around islands"))];
 
+/// Stencil sheet materials: (value written in `material`, label). A preset fills the cutting
+/// limits (the model's `set_props`), so picking one is one `modifier.set` of `material` alone.
+const MATERIALS: &[(&str, &str)] = &[
+    ("paper", tr_noop("Cut from paper")),
+    ("film", tr_noop("Cut from film")),
+    ("card", tr_noop("Cut from card")),
+    ("custom", tr_noop("Custom limits")),
+];
+
+/// What a stencil cuts: (value written in `output`, label).
+const OUTPUTS: &[(&str, &str)] = &[("sheet", tr_noop("The whole sheet")), ("tile", tr_noop("One repeat tile"))];
+
+/// Whether a stencil uses the repeat of a lattice row above: (value written in `repeat`, label).
+const REPEATS: &[(&str, &str)] = &[("auto", tr_noop("Follow the repeat above")), ("off", tr_noop("Ignore the repeat"))];
+
+/// What a stencil's clean-up does with what breaks its limits: (value written in `limitMode`,
+/// label).
+const LIMIT_MODES: &[(&str, &str)] = &[("fix", tr_noop("Fix what's too fine")), ("flag", tr_noop("Only flag what's too fine"))];
+
 /// Small grey labels that group a kind's settings (`widgets::sublabels`, as the Design panel labels
 /// "Position" and "Rotation"): (kind, the first parameter of the row they go over, label).
 const HEADINGS: &[(&str, &str, &str)] = &[
@@ -182,6 +201,7 @@ const HEADINGS: &[(&str, &str, &str)] = &[
     ("stencil", "widthMm", tr_noop("Size")),
     ("stencil", "minCutAreaMm2", tr_noop("Clean-up")),
     ("stencil", "tieMode", tr_noop("Ties")),
+    ("stencil", "hoshi", tr_noop("Registration")),
     ("stencil", "preview", tr_noop("Preview")),
 ];
 
@@ -273,11 +293,16 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[Field::CutColours { param: "cutColours" }],
             &[Field::Check { param: "invert", label: tr_noop("Invert (cut the other colours)") }],
             &[mm("widthMm", FieldLead::Raw("W"), "mm", 10_000.0), mm("marginMm", text(tr_noop("Margin")), "mm", 1000.0)],
+            &[Field::Choice { param: "material", options: MATERIALS, translate: true }],
+            &[Field::Choice { param: "output", options: OUTPUTS, translate: true }],
+            &[Field::Choice { param: "repeat", options: REPEATS, translate: true }],
             // One to a row: their names don't fit half a row.
             &[mm("minCutAreaMm2", text(tr_noop("Smallest cut")), "mm²", 10_000.0)],
             &[mm("minCutWidthMm", text(tr_noop("Thinnest cut")), "mm", 100.0)],
             &[mm("minBridgeMm", text(tr_noop("Thinnest paper")), "mm", 100.0)],
             &[mm("toleranceMm", text(tr_noop("Smoothing")), "mm", 10.0)],
+            &[Field::Choice { param: "limitMode", options: LIMIT_MODES, translate: true }],
+            &[deg("minCornerAngle", text(tr_noop("Sharpest corner")), 0.0, figcraft_modifiers::MAX_CORNER_ANGLE)],
             &[Field::Choice { param: "tieMode", options: TIE_MODES, translate: true }],
             &[Field::Choice { param: "patternType", options: PATTERN_TYPES, translate: true }],
             &[mm_in("patternWidthMm", text(tr_noop("Tie size")), figcraft_modifiers::MIN_TIE_WIDTH_MM, figcraft_modifiers::MAX_TIE_WIDTH_MM)],
@@ -289,6 +314,13 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[Field::AnyAngle { param: "tieAngle", lead: text(tr_noop("Direction")) }],
             &[int("tieSeed", text(tr_noop("Seed")), 0.0, SEED_MAX)],
             &[Field::Check { param: "tieSpread", label: tr_noop("Spread the ties around each island") }],
+            &[Field::Check { param: "hoshi", label: tr_noop("Registration holes") }],
+            &[mm_in(
+                "hoshiDiameterMm",
+                text(tr_noop("Diameter")),
+                figcraft_modifiers::MIN_HOSHI_DIAMETER_MM,
+                figcraft_modifiers::MAX_HOSHI_DIAMETER_MM,
+            )],
             &[Field::Choice { param: "preview", options: STENCIL_PREVIEWS, translate: true }],
             &[Field::Colour { param: "paperColour", label: tr_noop("Paper") }],
             &[Field::Colour { param: "pasteColour", label: tr_noop("Paste") }, Field::Colour { param: "clothColour", label: tr_noop("Cloth") }],
@@ -326,6 +358,12 @@ struct RowView {
     /// A stencil row's result on the first layer (`modifier.stencilInfo`); `None` for other kinds
     /// and before the engine has drawn it.
     stencil: Option<Arc<StencilInfo>>,
+    /// Whether an enabled `wallpaper` or `gridArray` row is above this one (a stencil's Repeat
+    /// choice is shown only then).
+    lattice_above: bool,
+    /// Why a stencil row can't cut one repeat tile (a catalog key; the Tile choice is disabled
+    /// with it as its tooltip); `None` when the evaluated stack has a repeat (`Output::repeat`).
+    tile_problem: Option<&'static str>,
 }
 
 /// What the section shows for the selection.
@@ -354,6 +392,7 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
     if stacks.iter().any(|(_, s)| kinds(s) != want) {
         return View::Mixed;
     }
+    let lattice = |m: &figcraft_modifiers::Modifier| m.enabled && matches!(m.kind, ModifierKind::Wallpaper(_) | ModifierKind::GridArray(_));
     let rows = want
         .iter()
         .enumerate()
@@ -363,6 +402,8 @@ fn view(doc: &Document, sel: &[NodeId]) -> View {
             RowView {
                 target_problem: target_problem(doc, &mods),
                 stencil: None,
+                lattice_above: stacks.iter().any(|(_, s)| s.iter().take(i).any(lattice)),
+                tile_problem: None,
                 kind: kind.clone(),
                 enabled: mods.iter().all(|(_, m)| m.enabled),
                 id: mods.first().map(|(_, m)| m.id.clone()).unwrap_or_default(),
@@ -443,15 +484,13 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
     };
     // Warnings of the first layer's evaluation (copy-to-shape targets resolved in the document):
     // under their rows, or under the list.
-    let warnings = sel
-        .first()
-        .and_then(|i| doc.node(*i))
-        .and_then(|n| figcraft_modifiers::evaluate_node_in_doc(doc, n))
-        .map(|o| o.warnings.clone())
-        .unwrap_or_default();
+    let evaluated = sel.first().and_then(|i| doc.node(*i)).and_then(|n| figcraft_modifiers::evaluate_node_in_doc(doc, n));
+    let warnings = evaluated.as_ref().map(|o| o.warnings.clone()).unwrap_or_default();
+    let has_repeat = evaluated.as_ref().is_some_and(|o| o.repeat.is_some());
     if let Some(first) = sel.first() {
         for r in rows.iter_mut().filter(|r| r.kind == "stencil") {
             r.stencil = stencil_info(app, ui, *first);
+            r.tile_problem = (!has_repeat).then(|| tile_problem(r));
         }
     }
     let mut drag = ListDrag::in_order(ui, LIST);
@@ -728,6 +767,39 @@ pub(crate) fn untied_warning(stats: &StencilStats, gauze: bool) -> Option<String
     (!gauze && stats.untied > 0).then(|| trn("{n} islands have no tie and would fall out", stats.untied, &[]))
 }
 
+/// Why a stencil row can't cut one repeat tile, when its evaluated stack has no repeat: no lattice
+/// row above, the repeat turned off, or rows that break the lattice.
+fn tile_problem(r: &RowView) -> &'static str {
+    if !r.lattice_above {
+        tr_noop("A tile needs a Wallpaper or Grid array row above the stencil")
+    } else if r.params.iter().any(|(_, p)| p.get("repeat").and_then(Value::as_str) == Some("off")) {
+        tr_noop("A tile needs the stencil to follow the repeat above")
+    } else {
+        tr_noop("A tile needs copies that keep the repeat: no Transform each, Randomize or other array after it")
+    }
+}
+
+/// Why option `value` of choice `param` of row `r` can't be picked (a catalog key), if it can't:
+/// a stencil's Tile output without a repeat.
+fn unavailable(r: &RowView, param: &str, value: &str) -> Option<&'static str> {
+    match (r.kind.as_str(), param, value) {
+        ("stencil", "output", "tile") => r.tile_problem,
+        _ => None,
+    }
+}
+
+/// A menu row that can't be picked: its label dimmed, `why` as its tooltip.
+fn disabled_menu_item(ui: &mut Ui, label: &str, why: &str) {
+    let t = Tokens::get(ui.ctx());
+    let text = ui.painter().layout_no_wrap(label.to_owned(), regular(11.5), t.text_tertiary);
+    let w = ui.available_width().max((text.size().x + 16.0).ceil());
+    let (r, resp) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
+    crate::a11y::menu_item(&resp, label, why, None);
+    crate::a11y::disabled(&resp);
+    ui.painter().galley(pos2(r.min.x + 8.0, r.center().y - text.size().y / 2.0), text, t.text_tertiary);
+    resp.on_hover_text(why);
+}
+
 /// Whether field `f` of row `r` does anything for the row's current choices (wallpaper and
 /// stencil have fields that depend on another).
 fn applies(r: &RowView, f: &Field) -> bool {
@@ -748,7 +820,8 @@ fn common_str<'a>(params: &'a [(NodeId, Map<String, Value>)], param: &str) -> Op
 /// A stencil's conditional fields: the threshold only when it cuts by lightness, the swatch list
 /// only when it cuts the colours picked, the paper colour for the paper preview and the paste and
 /// cloth colours for the cloth one, the tie settings unless the islands are held by gauze, the
-/// lattice's settings with a tie pattern.
+/// lattice's settings with a tie pattern, the repeat choice only under a wallpaper or grid row and
+/// the registration holes' diameter while they're on.
 /// Layers that differ show both.
 fn stencil_applies(r: &RowView, f: &Field) -> bool {
     let mode = common_str(&r.params, "colourMode");
@@ -758,6 +831,8 @@ fn stencil_applies(r: &RowView, f: &Field) -> bool {
         "cutColours" => mode.is_none_or(|m| m == "pick"),
         "tieWidthMm" | "tiesPerIsland" | "tieAngle" | "tieSeed" | "tieSpread" => !gauze(r),
         "patternType" | "patternWidthMm" | "patternSpacingMm" | "patternAngle" | "patternWhere" => tie_mode(r).is_none_or(|m| m == "pattern"),
+        "repeat" => r.lattice_above,
+        "hoshiDiameterMm" => r.params.iter().any(|(_, p)| p.get("hoshi").and_then(Value::as_bool).unwrap_or(false)),
         "paperColour" => preview != Some("cloth"),
         "pasteColour" | "clothColour" => preview != Some("paper"),
         _ => true,
@@ -882,7 +957,9 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
                 let resp = widgets::dropdown(ui, label, ui.available_width().min(half * 2.0 + widgets::GUTTER), None);
                 menu_popup(&resp).show(|ui| {
                     for (value, l) in *options {
-                        if menu_item(ui, tl(l), "") {
+                        if let Some(why) = unavailable(r, param, value) {
+                            disabled_menu_item(ui, tl(l), tr(why));
+                        } else if menu_item(ui, tl(l), "") {
                             set(app, json!(value));
                             ui.close();
                         }
