@@ -226,7 +226,7 @@ fn main() -> eframe::Result {
     figcraft_ui_egui::i18n::set(&session.prefs.language, figcraft_ui_egui::Services::system_language(&svc).as_deref());
     let mut fig = FigApp::new(session, Box::new(svc));
     figcraft_ui_egui::picabia_hide::hide(&mut fig); // PICABIA: no prototyping, Dev Mode, boards or live sessions
-    fig.set_startup_update_check(true);
+    fig.set_startup_update_check(false); // PICABIA: FigCraft's release feed would replace Picabia
     fig.automation_roots = roots;
     fig.ui.home = false;
     // Files named on the command line are the user's too: their missing fonts are listed.

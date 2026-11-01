@@ -1,7 +1,8 @@
 //! PICABIA: Picabia leaves FigCraft's prototyping, Dev Mode, boards and live sessions out of the
 //! interface: the menus, the Actions palette, shortcuts, the Keyboard shortcuts panel, the
 //! toolbar's modes, the right panel's top bar (people, Present, Share) and its Prototype tab, and
-//! the home screen (New board, Join with a code, Online, their Getting started tips). Each surface
+//! the home screen (New board, Join with a code, Online, their Getting started tips), and Check for
+//! updates in the help button's menu. Each surface
 //! is one marked seam (see `docs/picabia/SEAMS.md`).
 //!
 //! The commands stay in the engine, so the CLI, MCP and control channel still run them (agents can
@@ -16,8 +17,11 @@ use figcraft_engine::keymap::Group;
 const PREFIXES: &[&str] = &["proto.", "dev.", "collab.", "board."];
 
 /// Single commands the interface leaves out: the panels and toggles of the hidden features, New
-/// board and the board-only tools.
+/// board, the board-only tools, and Check for updates (it checks FigCraft's releases, which would
+/// replace Picabia; Picabia follows FigCraft by merging upstream instead).
 const IDS: &[&str] = &[
+    "help.checkForUpdates",
+    "app.checkForUpdates",
     "view.prototype",
     "view.designPrototype",
     "view.devMode",

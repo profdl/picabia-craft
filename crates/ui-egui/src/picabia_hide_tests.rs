@@ -31,7 +31,7 @@ fn palette_keys(u: &Ui, q: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_hidden_commands_are_the_four_features_only() {
+fn the_hidden_commands_are_the_four_features_and_updates_only() {
     for id in [
         "proto.present",
         "proto.preview",
@@ -46,6 +46,8 @@ fn the_hidden_commands_are_the_four_features_only() {
         "file.newBoard",
         "board.sticky",
         "tool.sticky",
+        "help.checkForUpdates",
+        "app.checkForUpdates",
     ] {
         assert!(super::hidden_id(id), "{id} hidden");
     }
