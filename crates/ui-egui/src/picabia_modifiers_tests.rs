@@ -7,13 +7,15 @@
 //! Duplicate carrying variable bindings; the stencil's grouped settings (colour mode, swatch list
 //! with cut toggles, size, clean-up, ties, preview colours with FigCraft's swatch and picker): the
 //! Ties group's modes (ties, a tie pattern with fallback ties, gauze), its optional direction, and
-//! the stats line and warning for islands; the sheet material (a preset fills the limits), output
+//! the stats line and the problem rows (one per kind, each click showing its next marker); the sheet material (a preset fills the limits), output
 //! (a tile only with a repeat above), repeat, limit mode, sharpest corner and registration holes.
 
 use egui::accesskit::Role;
 use egui::{Event, Id, Modifiers, PointerButton, Pos2, pos2};
 use figcraft_doc::NodeId;
 use figcraft_engine::Session;
+use figcraft_engine::picabia_stencil::ProblemKind;
+use figcraft_geom::Rect;
 use serde_json::{Value, json};
 
 use super::{FIELDS, KIND_MENU, LIST, MOD_OPEN, StencilColour, StencilInfo, cache_stencil_info, fields_of, known, shared_targets};
@@ -732,6 +734,7 @@ fn info(colours: &[(&str, bool, f64)]) -> StencilInfo {
         warnings: vec!["Image fills are skipped".into()],
         stats: Some(stats(0, 0, 0, 0)),
         sheet: Some((330.0, 245.5)),
+        ..StencilInfo::default()
     }
 }
 
@@ -911,7 +914,7 @@ fn the_tie_mode_shows_the_ties_the_pattern_or_neither() {
 
 #[test]
 fn the_stats_line_counts_islands_and_how_they_are_held() {
-    use super::{stats_line, untied_warning};
+    use super::{problem_list, stats_line};
     let line = |s, gauze| stats_line(&s, gauze);
     assert_eq!(line(stats(0, 0, 0, 0), false), "4 pieces, 2 specks dropped, 812.5 mm cut");
     assert_eq!(line(stats(2, 4, 0, 0), false), "4 pieces, 2 islands tied with 4 ties, 2 specks dropped, 812.5 mm cut");
@@ -919,9 +922,11 @@ fn the_stats_line_counts_islands_and_how_they_are_held() {
     assert_eq!(line(stats(3, 0, 3, 0), true), "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut");
     assert_eq!(line(stats(3, 0, 0, 3), false), "4 pieces, 3 islands held by the pattern, 2 specks dropped, 812.5 mm cut");
     assert_eq!(line(stats(4, 2, 1, 2), false), "4 pieces, 2 islands held by the pattern, 1 island tied with 2 ties, 2 specks dropped, 812.5 mm cut");
-    assert_eq!(untied_warning(&stats(3, 2, 1, 0), false).as_deref(), Some("1 island has no tie and would fall out"));
-    assert_eq!(untied_warning(&stats(3, 0, 3, 0), true), None, "gauze holds them");
-    assert_eq!(untied_warning(&stats(3, 6, 0, 0), false), None);
+    let untied = |s, gauze| problem_list(&StencilInfo { stats: Some(s), ..StencilInfo::default() }, gauze);
+    assert_eq!(untied(stats(3, 2, 1, 0), false), vec![(ProblemKind::Untied, 1)]);
+    assert_eq!(super::problem_text(ProblemKind::Untied, 1), "1 island has no tie and would fall out");
+    assert_eq!(untied(stats(3, 0, 3, 0), true), vec![], "gauze holds them");
+    assert_eq!(untied(stats(3, 6, 0, 0), false), vec![]);
 }
 
 #[test]
@@ -949,6 +954,108 @@ fn untied_islands_are_warned_of_under_the_row() {
     assert!(drawn.iter().any(|d| d == "4 pieces, 3 islands held by the gauze, 2 specks dropped, 812.5 mm cut"), "{drawn:?}");
     assert!(!drawn.iter().any(|d| d.contains("would fall out")), "{drawn:?}");
     assert!(!drawn.iter().any(|d| d.contains("left untied")), "{drawn:?}");
+}
+
+/// A stencil result with these problems (kind, count, marked places).
+fn with_problems(problems: &[(ProblemKind, usize, &[Rect])]) -> StencilInfo {
+    let mut i = info(&[("#1f3a8a", true, 1200.0)]);
+    i.warnings.clear();
+    i.problem_counts = problems.iter().map(|(k, n, _)| (*k, *n)).collect();
+    i.problems = problems.iter().flat_map(|(k, _, places)| places.iter().map(move |b| (*k, *b))).collect();
+    i
+}
+
+fn drawn(u: &mut Ui) -> Vec<String> {
+    texts(&flat(&u.frame_output(vec![]).shapes))
+}
+
+#[test]
+fn problem_rows_show_each_kind_with_places_and_its_count() {
+    let (mut u, r) = setup(&["stencil"]);
+    let bridges = [Rect::new(10.0, 10.0, 11.0, 11.0); 3];
+    let i = with_problems(&[
+        (ProblemKind::NarrowPaper, 12, &bridges),
+        (ProblemKind::SmallCut, 0, &[]),
+        (ProblemKind::SharpCorner, 1, &[Rect::new(5.0, 5.0, 5.0, 5.0)]),
+    ]);
+    cache_stencil_info(&u.ctx, &u.app.session, r, i);
+    // Under the row, open or not.
+    to_bottom(&mut u);
+    let t = drawn(&mut u);
+    let at = |label: &str| t.iter().position(|x| x == label).unwrap_or_else(|| panic!("{label:?} is drawn: {t:?}"));
+    assert!(at("12 narrow paper bridges") < at("1 sharp corner"), "in the kinds' order: {t:?}");
+    assert!(!t.iter().any(|x| x.contains("small cut")), "no row for a kind with none: {t:?}");
+    open_settings(&mut u, 0);
+    to_bottom(&mut u);
+    let t = drawn(&mut u);
+    let at = |label: &str| t.iter().position(|x| x == label).unwrap_or_else(|| panic!("{label:?} is drawn: {t:?}"));
+    assert!(at("4 pieces, 2 specks dropped, 812.5 mm cut") < at("12 narrow paper bridges"), "below the stats line: {t:?}");
+    for (k, n, want) in
+        [(ProblemKind::NarrowCut, 2, "2 narrow cuts"), (ProblemKind::SmallHole, 1, "1 small hole"), (ProblemKind::SmallCut, 5, "5 small cuts")]
+    {
+        assert_eq!(super::problem_text(k, n), want);
+    }
+}
+
+#[test]
+fn the_untied_islands_row_is_shown_once() {
+    let (mut u, r) = setup(&["stencil"]);
+    let mut i = with_problems(&[(ProblemKind::Untied, 2, &[Rect::new(0.0, 0.0, 4.0, 4.0), Rect::new(20.0, 0.0, 24.0, 4.0)])]);
+    i.stats = Some(stats(3, 2, 2, 0));
+    i.warnings.push("2 islands couldn't be tied and would fall out".into());
+    cache_stencil_info(&u.ctx, &u.app.session, r, i);
+    to_bottom(&mut u);
+    let t = drawn(&mut u);
+    assert_eq!(t.iter().filter(|x| x.contains("would fall out")).count(), 1, "{t:?}");
+    assert!(t.iter().any(|x| x == "2 islands have no tie and would fall out"), "{t:?}");
+}
+
+#[test]
+fn clicking_a_problem_row_shows_its_markers_in_turn() {
+    let (mut u, r) = setup(&["stencil"]);
+    let places = [Rect::new(10.0, 10.0, 12.0, 12.0), Rect::new(30.0, 4.0, 34.0, 8.0)];
+    let i = with_problems(&[(ProblemKind::NarrowPaper, 2, &places), (ProblemKind::SharpCorner, 1, &[Rect::new(1.0, 1.0, 1.0, 1.0)])]);
+    cache_stencil_info(&u.ctx, &u.app.session, r, i);
+    let focus = |u: &Ui| super::problem_focus(&u.ctx).map(|f| (f.node, f.kind, f.index));
+    assert_eq!(focus(&u), None);
+    let steps = undo_steps(&u);
+    let revision = u.app.session.ds().unwrap().revision;
+    for want in [0, 1, 0] {
+        to_bottom(&mut u);
+        let at = text_center(&flat(&u.frame_output(vec![]).shapes), "2 narrow paper bridges");
+        click(&mut u, at);
+        assert_eq!(focus(&u), Some((r, ProblemKind::NarrowPaper, want)));
+        // The view centres the place, zoomed in so a tiny one is legible.
+        let v = &u.app.session.ds().unwrap().view;
+        let c = places[want].center();
+        assert!((v.cx - c.x).abs() < 1e-6 && (v.cy - c.y).abs() < 1e-6, "{want}: ({}, {})", v.cx, v.cy);
+        assert!(places[want].width().max(places[want].height()) * v.zoom >= 47.9, "{want}: zoom {}", v.zoom);
+        to_bottom(&mut u);
+        assert!(drawn(&mut u).iter().any(|x| *x == format!("{} of 2", want + 1)));
+    }
+    // UI state only: nothing in the document changed.
+    assert_eq!(undo_steps(&u), steps);
+    assert_eq!(u.app.session.ds().unwrap().revision, revision);
+    // Another kind starts at its first.
+    to_bottom(&mut u);
+    let at = text_center(&flat(&u.frame_output(vec![]).shapes), "1 sharp corner");
+    click(&mut u, at);
+    assert_eq!(focus(&u), Some((r, ProblemKind::SharpCorner, 0)));
+    to_bottom(&mut u);
+    assert!(!drawn(&mut u).iter().any(|x| x == "2 of 2" || x == "1 of 2"));
+}
+
+#[test]
+fn a_place_too_big_for_the_view_is_shown_zoomed_out() {
+    let (mut u, r) = setup(&["stencil"]);
+    let big = Rect::new(0.0, 0.0, 40_000.0, 100.0);
+    cache_stencil_info(&u.ctx, &u.app.session, r, with_problems(&[(ProblemKind::SmallHole, 1, &[big])]));
+    to_bottom(&mut u);
+    let at = text_center(&flat(&u.frame_output(vec![]).shapes), "1 small hole");
+    click(&mut u, at);
+    let v = &u.app.session.ds().unwrap().view;
+    assert!(big.width() * v.zoom <= v.vw, "fits: zoom {} in {}", v.zoom, v.vw);
+    assert!((v.cx - 20_000.0).abs() < 1e-6);
 }
 
 /// Pick `option` from the dropdown of modifier row `index` showing `current`, with the field

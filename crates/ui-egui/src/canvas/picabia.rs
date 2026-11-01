@@ -1,6 +1,7 @@
 //! Picabia: canvas outlines on a layer's modifier copies (the hover outline shows on every copy;
 //! a selected layer's copies get the faint outline boolean operands get); a selected stencil
-//! layer's tie bars and the islands no tie holds.
+//! layer's tie bars, its problems (the one a Design panel problem row shows emphasised), its
+//! registration holes and its repeat cell.
 
 use egui::{Pos2, Shape, Stroke};
 use figcraft_doc::{Document, NodeId, NodeKind};
@@ -8,6 +9,7 @@ use figcraft_geom::{Affine, Point};
 
 use super::outline::stroke;
 use crate::FigApp;
+use figcraft_engine::picabia_stencil::ProblemKind;
 
 /// The outline [`super::outline::draw_outline`] draws for layer `id`, once on each of its copies
 /// (the original left out). Nothing for a layer without a stack.
@@ -229,21 +231,97 @@ fn stencil_markers(app: &FigApp, painter: &egui::Painter, col: egui::Color32) {
                 painter.add(Shape::closed_line(p, stroke(col.gamma_multiply(0.5), 1.0)));
             }
         }
-        let gauze = store::frame(doc, n).is_some_and(|f| f.params.tie_mode == figcraft_modifiers::StencilTieMode::Gauze);
-        if gauze {
-            continue;
+        let frame = store::frame(doc, n);
+        // The repeat cell the islands and ties are judged on (the tile with tile output), faint.
+        if let Some(cell) = info.cell.filter(|c| c.iter().all(|p| p.x.is_finite() && p.y.is_finite()))
+            && budget >= 5
+        {
+            budget -= 5;
+            let [a, b, c, d] = cell.map(screen);
+            painter.add(Shape::dashed_line(&[a, b, c, d, a], stroke(col.gamma_multiply(0.45), 1.0), 6.0, 4.0));
         }
-        let loose = stroke(warn, 1.5);
-        for island in info.islands.iter().filter(|i| i.tied == 0 && !i.pattern_held) {
-            let b = island.bounds;
-            if budget < 4 || ![b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) {
+        // The registration holes, ringed just outside their edge.
+        let hole_r = frame.as_ref().map_or(0.0, |f| f.params.hoshi_diameter_mm / f.mm_per_unit.max(1e-9) / 2.0 * zoom);
+        let hole_r = if hole_r.is_finite() { (hole_r as f32 + 2.0).clamp(4.0, 200.0) } else { 4.0 };
+        for h in info.hoshi.iter().filter(|h| h.x.is_finite() && h.y.is_finite()) {
+            if budget < 16 {
+                break;
+            }
+            budget -= 16;
+            painter.circle_stroke(screen(*h), hole_r, stroke(col, 1.0));
+        }
+        let gauze = frame.is_some_and(|f| f.params.tie_mode == figcraft_modifiers::StencilTieMode::Gauze);
+        let focus = crate::panels::right::modifiers::problem_focus(painter.ctx()).filter(|f| f.node == *id);
+        // What breaks a cutting limit; islands with no tie among them (they're expected to be
+        // loose with gauze). Islands the problems don't list (an older result) are outlined from
+        // the islands themselves.
+        let mut seen = std::collections::HashMap::new();
+        let listed_untied = info.problems.iter().any(|p| p.kind == ProblemKind::Untied);
+        // Counted as the panel counts them (finite bounds only), so the focus picks the same one.
+        for p in info.problems.iter().filter(|p| [p.bounds.x0, p.bounds.y0, p.bounds.x1, p.bounds.y1].iter().all(|v| v.is_finite())) {
+            let k = seen.entry(p.kind).or_insert(0usize);
+            let index = *k;
+            *k += 1;
+            if gauze && p.kind == ProblemKind::Untied {
                 continue;
             }
-            budget -= 4;
-            let c = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1), Point::new(b.x0, b.y0)];
-            painter.add(Shape::dashed_line(&c.map(screen), loose, 4.0, 3.0));
+            let focused = focus.is_some_and(|f| f.kind == p.kind && f.index == index);
+            if !problem_marker(painter, &screen, p.bounds, warn, col, focused, &mut budget) {
+                break;
+            }
+        }
+        if gauze || listed_untied {
+            continue;
+        }
+        for island in info.islands.iter().filter(|i| i.tied == 0 && !i.pattern_held) {
+            if !problem_marker(painter, &screen, island.bounds, warn, col, false, &mut budget) {
+                break;
+            }
         }
     }
+}
+
+/// Below this many points across on screen a problem is ringed rather than boxed.
+const RING_BELOW: f32 = 14.0;
+
+/// One problem marker for `b` (layer space; `screen` maps it), in the warning colour `warn`: a
+/// ring around a place too small to box, else its bounds dashed. The focused one is drawn thicker
+/// and haloed in the selection colour `col`. False once `budget` is spent.
+fn problem_marker(
+    painter: &egui::Painter,
+    screen: &dyn Fn(Point) -> Pos2,
+    b: figcraft_geom::Rect,
+    warn: egui::Color32,
+    col: egui::Color32,
+    focused: bool,
+    budget: &mut usize,
+) -> bool {
+    if ![b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) {
+        return true;
+    }
+    if *budget < 5 {
+        return false;
+    }
+    *budget -= 5;
+    let c = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)].map(screen);
+    let r = egui::Rect::from_points(&c);
+    let width = if focused { 2.5 } else { 1.5 };
+    if r.width().max(r.height()) < RING_BELOW {
+        let radius = if focused { 10.0 } else { 6.0 };
+        if focused {
+            painter.circle_stroke(r.center(), radius + 3.0, stroke(col, 2.0));
+        }
+        painter.circle_stroke(r.center(), radius, stroke(warn, width));
+    } else {
+        let [a, b, cc, d] = c;
+        if focused {
+            painter.add(Shape::closed_line(vec![a, b, cc, d], stroke(col, 4.5)));
+            painter.add(Shape::closed_line(vec![a, b, cc, d], stroke(warn, width)));
+        } else {
+            painter.add(Shape::dashed_line(&[a, b, cc, d, a], stroke(warn, width), 4.0, 3.0));
+        }
+    }
+    true
 }
 
 #[cfg(test)]

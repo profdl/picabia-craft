@@ -1413,6 +1413,7 @@ name = "English"
 "Show only this on the canvas" = "Show only this on the canvas"
 "Show open" = "Show open"
 "Show section contents" = "Show section contents"
+"Show the next one on the canvas" = "Show the next one on the canvas"
 "Show this layer" = "Show this layer"
 "Show usage" = "Show usage"
 "Show/Hide" = "Show/Hide"
@@ -1947,6 +1948,8 @@ name = "English"
 "{n} minutes ago" = { one = "{n} minute ago", other = "{n} minutes ago" }
 "{n} months ago" = { one = "{n} month ago", other = "{n} months ago" }
 "{n} more notes omitted from this report" = { one = "{n} more note omitted from this report", other = "{n} more notes omitted from this report" }
+"{n} narrow cuts" = { one = "{n} narrow cut", other = "{n} narrow cuts" }
+"{n} narrow paper bridges" = { one = "{n} narrow paper bridge", other = "{n} narrow paper bridges" }
 "{n} of {total}" = "{n} of {total}"
 "{n} people joined" = { one = "{n} person joined", other = "{n} people joined" }
 "{n} pieces" = { one = "{n} piece", other = "{n} pieces" }
@@ -1955,6 +1958,9 @@ name = "English"
 "{n} removed" = { one = "{n} removed", other = "{n} removed" }
 "{n} replies" = { one = "{n} reply", other = "{n} replies" }
 "{n} rows" = { one = "{n} row", other = "{n} rows" }
+"{n} sharp corners" = { one = "{n} sharp corner", other = "{n} sharp corners" }
+"{n} small cuts" = { one = "{n} small cut", other = "{n} small cuts" }
+"{n} small holes" = { one = "{n} small hole", other = "{n} small holes" }
 "{n} specks dropped" = { one = "{n} speck dropped", other = "{n} specks dropped" }
 "{n} styles" = { one = "{n} style", other = "{n} styles" }
 "{n} text layers" = { one = "{n} text layer", other = "{n} text layers" }

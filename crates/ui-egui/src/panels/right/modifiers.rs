@@ -13,6 +13,7 @@ use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, 
 use figcraft_color::{Color, Paint};
 use figcraft_doc::{Document, NodeId, VariableType};
 use figcraft_engine::cmd::lists::{moved_index, removed_index};
+use figcraft_engine::picabia_stencil::ProblemKind;
 use figcraft_modifiers::ModifierKind;
 use serde_json::{Map, Value, json};
 
@@ -540,9 +541,10 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         for w in r.stencil.iter().flat_map(|s| s.warnings.iter()).filter(|w| !own.contains(&w.as_str()) && !counted.contains(w)) {
             widgets::note(ui, w, t.warning);
         }
-        // Islands no tie holds would fall out of the cut sheet.
-        if let Some(w) = r.stencil.as_ref().and_then(|s| s.stats).and_then(|s| untied_warning(&s, gauze(r))) {
-            widgets::note(ui, &w, t.warning);
+        // What still breaks a cutting limit, one row per kind (islands no tie holds among them):
+        // a click shows the next one on the canvas.
+        if let (Some(s), Some(node)) = (&r.stencil, sel.first()) {
+            problem_rows(app, ui, *node, s, gauze(r));
         }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
     }
@@ -753,7 +755,7 @@ pub(crate) fn stats_line(stats: &StencilStats, gauze: bool) -> String {
 }
 
 /// What `figcraft-stencil` warns of the islands it left loose (its exact words for these counts):
-/// the panel says it in the stats line and [`untied_warning`] instead, in the UI's language.
+/// the panel says it in the stats line and its untied [`problem_rows`] row instead, in the UI's language.
 fn island_warnings(stats: &StencilStats) -> [String; 2] {
     [
         format!("{} islands couldn't be tied and would fall out", stats.untied),
@@ -761,10 +763,133 @@ fn island_warnings(stats: &StencilStats) -> [String; 2] {
     ]
 }
 
-/// The warning for a stencil's islands no tie holds (they'd fall out of the cut sheet); `None`
-/// with gauze or when every island is tied.
-pub(crate) fn untied_warning(stats: &StencilStats, gauze: bool) -> Option<String> {
-    (!gauze && stats.untied > 0).then(|| trn("{n} islands have no tie and would fall out", stats.untied, &[]))
+/// One problem row's words for `n` places of `kind` ("12 narrow paper bridges", "1 sharp
+/// corner"), in the UI's language.
+pub(crate) fn problem_text(kind: ProblemKind, n: usize) -> String {
+    let key = match kind {
+        ProblemKind::NarrowPaper => tr_noop("{n} narrow paper bridges"),
+        ProblemKind::NarrowCut => tr_noop("{n} narrow cuts"),
+        ProblemKind::SmallCut => tr_noop("{n} small cuts"),
+        ProblemKind::SmallHole => tr_noop("{n} small holes"),
+        ProblemKind::SharpCorner => tr_noop("{n} sharp corners"),
+        ProblemKind::Untied => tr_noop("{n} islands have no tie and would fall out"),
+    };
+    trn(key, n, &[])
+}
+
+/// The problem rows a stencil shows, in [`ProblemKind::ALL`]'s order: (kind, count) of each kind
+/// with places breaking its limit. Islands no tie holds count as the stats say when the problems
+/// don't (one row for them either way); with gauze nothing falls out, so they have none.
+pub(crate) fn problem_list(info: &StencilInfo, gauze: bool) -> Vec<(ProblemKind, usize)> {
+    let untied = info.stats.map_or(0, |s| s.untied);
+    ProblemKind::ALL
+        .iter()
+        .map(|k| match k {
+            ProblemKind::Untied if gauze => (*k, 0),
+            ProblemKind::Untied => (*k, info.count(*k).max(untied)),
+            _ => (*k, info.count(*k)),
+        })
+        .filter(|(_, n)| *n > 0)
+        .collect()
+}
+
+/// The problem marker the canvas emphasises (the last one a problem row showed): layer `node`'s
+/// `index`th marked place of `kind`. UI state, kept in egui's memory, never in the document.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ProblemFocus {
+    pub(crate) node: NodeId,
+    pub(crate) kind: ProblemKind,
+    pub(crate) index: usize,
+}
+
+fn focus_id() -> Id {
+    Id::unique("picabia_problem_focus")
+}
+
+/// The focused problem marker, if a problem row was clicked.
+pub(crate) fn problem_focus(ctx: &egui::Context) -> Option<ProblemFocus> {
+    ctx.data(|d| d.get_temp::<ProblemFocus>(focus_id()))
+}
+
+/// Under a stencil row: one warning row per kind of problem, clickable when its places are
+/// marked; the focused kind shows which of them is shown ("2 of 12").
+fn problem_rows(app: &mut FigApp, ui: &mut Ui, node: NodeId, info: &StencilInfo, gauze: bool) {
+    let t = Tokens::get(ui.ctx());
+    let focus = problem_focus(ui.ctx()).filter(|f| f.node == node);
+    for (kind, n) in problem_list(info, gauze) {
+        let places: Vec<figcraft_geom::Rect> = info.problems.iter().filter(|(k, _)| *k == kind).map(|(_, b)| *b).collect();
+        let text = problem_text(kind, n);
+        let shown = focus.filter(|f| f.kind == kind && f.index < places.len()).map(|f| f.index);
+        let resp = egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(widgets::PAD as i8, 6))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    // As tall as a note's text (rows don't grow to a button's height).
+                    ui.spacing_mut().interact_size.y = 0.0;
+                    let sense = if places.is_empty() { Sense::hover() } else { Sense::click() };
+                    let resp = ui
+                        .add(egui::Label::new(egui::RichText::new(&text).font(regular(11.0)).color(t.warning)).wrap().selectable(false).sense(sense));
+                    if let Some(i) = shown {
+                        let at = trf("{n} of {total}", &[("n", &(i + 1)), ("total", &places.len())]);
+                        ui.label(egui::RichText::new(at).font(regular(11.0)).color(t.text_secondary));
+                    }
+                    resp
+                })
+                .inner
+            })
+            .inner;
+        if places.is_empty() {
+            continue;
+        }
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tr("Show the next one on the canvas"));
+        if resp.clicked() {
+            let index = match focus {
+                Some(f) if f.kind == kind => (f.index + 1) % places.len(),
+                _ => 0,
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(focus_id(), ProblemFocus { node, kind, index }));
+            if let Some(b) = places.get(index) {
+                reveal(app, node, *b);
+            }
+        }
+    }
+}
+
+/// The most a problem row zooms in to show a place: its marker this many points across.
+const REVEAL_PX: f64 = 48.0;
+
+/// How far in a problem row zooms at most: the layer fitted to the view, times this (so a tiny
+/// place still shows among its surroundings; its marker is a ring then).
+const REVEAL_DEPTH: f64 = 8.0;
+
+/// Pan the canvas to centre `bounds` (layer `node`'s space), zooming out if it doesn't fit in the
+/// view and in if it's drawn smaller than [`REVEAL_PX`], never past fitting it nor past
+/// [`REVEAL_DEPTH`] times the zoom that fits the whole layer.
+fn reveal(app: &mut FigApp, node: NodeId, bounds: figcraft_geom::Rect) {
+    let Ok(ds) = app.session.ds_mut() else { return };
+    let w = ds.doc.world_transform(node);
+    if !w.is_finite() {
+        return;
+    }
+    let b = w.transform_rect_bbox(bounds);
+    let layer = ds.doc.node(node).map(|n| w.transform_rect_bbox(figcraft_geom::Rect::new(0.0, 0.0, n.width, n.height)));
+    if ![b.x0, b.y0, b.x1, b.y1].iter().all(|v| v.is_finite()) {
+        return;
+    }
+    let v = &mut ds.view;
+    // ViewState::fit's margin.
+    let margin = 64.0;
+    let side = b.width().max(b.height()).max(1e-6);
+    let fits =
+        |r: figcraft_geom::Rect| ((v.vw - margin * 2.0).max(50.0) / r.width().max(1e-6)).min((v.vh - margin * 2.0).max(50.0) / r.height().max(1e-6));
+    let deepest = layer.map(fits).filter(|z| z.is_finite()).map_or(f64::INFINITY, |z| z * REVEAL_DEPTH);
+    let legible = (REVEAL_PX / side).min(deepest);
+    let zoom = v.zoom.max(legible).min(fits(b)).clamp(figcraft_engine::ViewState::MIN_ZOOM, figcraft_engine::ViewState::MAX_ZOOM);
+    if zoom.is_finite() {
+        v.zoom = zoom;
+    }
+    v.cx = b.center().x;
+    v.cy = b.center().y;
 }
 
 /// Why a stencil row can't cut one repeat tile, when its evaluated stack has no repeat: no lattice
@@ -1151,6 +1276,11 @@ pub(crate) struct StencilInfo {
     pub(crate) stats: Option<StencilStats>,
     /// The sheet (design plus margin), mm: (width, height).
     pub(crate) sheet: Option<(f64, f64)>,
+    /// How many places break each cutting limit (every one, past the marked ones too), in
+    /// [`ProblemKind::ALL`]'s order; kinds with none left out.
+    pub(crate) problem_counts: Vec<(ProblemKind, usize)>,
+    /// The marked places (layer space), at most `figcraft_stencil::MAX_PROBLEMS`.
+    pub(crate) problems: Vec<(ProblemKind, figcraft_geom::Rect)>,
 }
 
 /// One colour of a stencil's design.
@@ -1200,7 +1330,19 @@ impl StencilInfo {
                 pattern_held: i.stats.pattern_held,
             }),
             sheet: Some((finite(i.sheet_mm.0), finite(i.sheet_mm.1))),
+            problem_counts: ProblemKind::ALL.iter().map(|k| (*k, i.stats.problems_by_kind.get(*k))).filter(|(_, n)| *n > 0).collect(),
+            problems: i
+                .problems
+                .iter()
+                .filter(|p| [p.bounds.x0, p.bounds.y0, p.bounds.x1, p.bounds.y1].iter().all(|v| v.is_finite()))
+                .map(|p| (p.kind, p.bounds))
+                .collect(),
         }
+    }
+
+    /// How many places break `kind`'s limit.
+    pub(crate) fn count(&self, kind: ProblemKind) -> usize {
+        self.problem_counts.iter().find(|(k, _)| *k == kind).map_or(0, |(_, n)| *n)
     }
 }
 
