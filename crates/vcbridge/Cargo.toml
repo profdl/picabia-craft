@@ -1,0 +1,18 @@
+[package]
+name = "figcraft-vcbridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Picabia adapter between FigCraft's types and the vendored VectorCraft crates (paths, Pathfinder booleans, Image Trace)"
+
+[lints]
+workspace = true
+
+[dependencies]
+figcraft-geom = { workspace = true }
+figcraft-doc = { workspace = true }
+vectorcraft-geom = { workspace = true }
+vectorcraft-pathops = { workspace = true }
+vectorcraft-trace = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }

@@ -41,6 +41,8 @@ figcraft-stencil = { path = "crates/stencil" }
 vectorcraft-geom = { path = "vendor/vectorcraft/geom" }
 vectorcraft-pathops = { path = "vendor/vectorcraft/pathops" }
 vectorcraft-trace = { path = "vendor/vectorcraft/trace" }
+# PICABIA: the adapter between FigCraft's types and the vendored VectorCraft crates (L3).
+figcraft-vcbridge = { path = "crates/vcbridge" }
 
 # craft-libs crates all pin one rev (craftrules standards/shared-libraries.md): bump them together.
 # Which paths stored in a document may be followed (craft-libs).
