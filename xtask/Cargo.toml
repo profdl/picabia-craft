@@ -11,3 +11,5 @@ workspace = true
 [dependencies]
 serde_json = { workspace = true }
 figcraft-engine = { workspace = true }
+# PICABIA: hashes of the vendored VectorCraft files (vendor-check).
+sha2 = { workspace = true }

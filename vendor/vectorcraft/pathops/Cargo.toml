@@ -1,0 +1,40 @@
+[package]
+name = "vectorcraft-pathops"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# PICABIA: the integration tests are built by a Picabia harness (it leaves out prop_pathops.rs, which needs vectorcraft-testkit).
+autotests = false
+description = "VectorCraft path operations: booleans (Pathfinder), shape builder regions, offset, outline stroke, simplify"
+
+# PICABIA: VectorCraft's own workspace lint table (figcraft's differs: `unsafe_code = "forbid"` cannot
+# be overridden by the vendored trace tests, and its style allows are not needed here).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+[dependencies]
+vectorcraft-geom = { workspace = true }
+kurbo = { workspace = true }
+thiserror = { workspace = true }
+# PICABIA: VectorCraft needs linesweeper 0.5; figcraft's workspace pins 0.4 (two versions coexist).
+linesweeper = "0.5"
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+# PICABIA: harness outside the vendored directory (see vendor/vectorcraft/README.md).
+[[test]]
+name = "it"
+path = "../picabia-tests/pathops_it.rs"

@@ -18,6 +18,8 @@
 
 mod icon;
 mod layers;
+// PICABIA: vendored VectorCraft crates (hash check and sync).
+mod picabia_vendor;
 
 use std::process::{Command, ExitCode, Stdio};
 
@@ -43,6 +45,9 @@ fn main() -> ExitCode {
         "i18n-report" => i18n_report(),
         "layers" => layers::check(&root()),
         "assets" => assets(),
+        // PICABIA: vendored VectorCraft crates.
+        "vendor-check" => picabia_vendor::check(&root()),
+        "vendor-vectorcraft" => picabia_vendor::sync(&root(), &args[1..]),
         "parity" => parity(),
         "version" => version(args.get(1).map(String::as_str), args.get(2).map(String::as_str)),
         "icon" => icon::generate(&root()),
@@ -50,7 +55,9 @@ fn main() -> ExitCode {
         "plugins" => plugins(),
         "bench" => bench(args.get(1).map_or("1000,10000,50000", String::as_str)),
         _ => {
-            eprintln!("tasks: ci, test, i18n-report, layers, assets, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]");
+            eprintln!(
+                "tasks: ci, test, i18n-report, layers, assets, vendor-check, vendor-vectorcraft <commit>, parity, version [set X.Y.Z], icon, wasm, plugins, bench [SIZES]"
+            );
             task == "help"
         }
     };
@@ -64,6 +71,7 @@ fn ci() -> bool {
         && i18n_report()
         && layers::check(&root())
         && assets()
+        && picabia_vendor::check(&root()) // PICABIA: vendored VectorCraft files are unmodified
         && wasm()
 }
 
