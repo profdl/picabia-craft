@@ -1,7 +1,7 @@
 # Picabia roadmap
 
 **Stage:** P0–P7 landed (2026-10-29); first upstream merge done (`PIC-merge: upstream 96eed159..f702105e`).
-Stencil P8–P9 landed (2026-10-31). Next: stencil P10 (islands and ties), then polish (handles for
+Stencil P8–P10 landed (2026-10-31). Next: stencil P11 (repeat-aware islands, limits, materials), then polish (handles for
 the remaining kinds, per-kind undo labels) and the release packaging ids.
 
 Picabia is a thin fork of [FigCraft](https://github.com/storytold/figcraft): everything FigCraft does,
@@ -24,6 +24,7 @@ Grades are by behaviour, erring low (A: done and checked in the app; B: works, g
 | P7 | Wallpaper groups and copy to shape | B | 17 plane groups; copy to shape on points/along the outline/populate with target checks (self, ancestor, descendant, page, missing, loops), remapping on duplicate/paste/component instances, panel picker. The canvas pick-a-layer tool (instead of the dropdown) isn't built |
 | P8 | Stencil foundations: `pathops` offset/open/close, `figcraft-stencil` crate (L3), `stencil` modifier kind (terminal row) | B+ | Offset passes a seeded jagged fuzz sweep; the stencil row saves, loads and draws; Apply keeps it live. S0: the engine computes off the UI thread (wasm: on the UI thread after 300 ms idle) into a render-side store keyed by node id + exact input snapshot, and stale sheets draw meanwhile. traced.svg computes in 97 ms natively, 300 jagged shapes in 0.67 s. wasm compute time not measured |
 | P9 | Stencil core: gather, visible regions, colour modes, clean-up, sheet, canvas preview, panel | B | Gather (strokes, text, booleans, clips, masks, copies above the row); threshold/pick/invert; area filter, opening/closing, simplify; paper and dyed-cloth previews on the canvas and in PNG/SVG/PDF; `modifier.stencilInfo`, `modifier.stencilFromSelection`; panel Colours/Size/Clean-up/Preview with the swatch list. Gaps: LOD path and `render_alone`/Copy as PNG can show the design or a stale sheet; clicking a cut-out hole selects the sheet; swatches come from the first selected layer only |
+| P10 | Stencil islands and ties | B+ | Island detection (nesting, contour tree); automatic ties (shortest gap, ties per island, width, spread, direction, seed; deterministic), tied outside in, boxed-in islands may tie to an already-held neighbour; gauze mode; pattern (lattice) ties: grid/horizontal/vertical, size, spacing, angle, everywhere or only around islands, fallback ties for missed islands; panel Ties group, stats, canvas markers; traced.svg ends with zero untied islands (~0.1 s). Checked in the app by the owner. Gaps: ties layer (hand-drawn ties, no-tie zones) and text option not built; untied-island marker is a bounding box; panel hides the crate's two untied warnings by exact text |
 
 ## Known issues
 
