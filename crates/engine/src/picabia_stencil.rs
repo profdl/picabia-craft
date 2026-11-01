@@ -147,6 +147,8 @@ impl G<'_> {
         match &n.kind {
             NodeKind::Group => self.children(n, xf, clip, depth),
             NodeKind::Text(_) => self.text(n, xf, clip),
+            // A pathfinder's own boolean group: its operands are the input (not their combination).
+            NodeKind::BooleanOp { .. } if self.opts.bypass == Some(n.id) => self.children(n, xf, clip, depth),
             NodeKind::BooleanOp { .. } => {
                 if let Some((p, rule)) = figcraft_render::node_outline(doc, n) {
                     self.emit(p, rule, xf, &n.fills, clip, Src { node: n, is_stroke: false });
