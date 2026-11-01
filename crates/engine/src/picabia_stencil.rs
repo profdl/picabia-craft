@@ -428,6 +428,22 @@ pub struct Info {
 /// Gather and compute layer `id`'s stencil now and keep it for the renderer. `None`: not a
 /// stencil layer.
 pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
+    compute(doc, id, false).map(|(info, _)| info)
+}
+
+/// [`compute_now`], also returning the cut and sheet it kept (the layer's space): what laser
+/// export cuts, without reading it back from the shared store.
+pub fn compute_cut_now(doc: &Document, id: NodeId) -> Option<(Arc<Info>, BezPath, figcraft_geom::Rect)> {
+    let (info, cut) = compute(doc, id, true)?;
+    let (cut, sheet) = cut?;
+    Some((info, cut, sheet))
+}
+
+/// A copy of a computed stencil's cut and sheet (the layer's space).
+type KeptCut = Option<(BezPath, figcraft_geom::Rect)>;
+
+/// Gather, compute and store layer `id`'s stencil; with `keep_cut`, also a copy of its cut and sheet.
+fn compute(doc: &Document, id: NodeId, keep_cut: bool) -> Option<(Arc<Info>, KeptCut)> {
     // The generated layers it cuts (inside it, or its own generator above the stencil) first.
     crate::picabia_generate::prepare(doc, id, true);
     let n = doc.node(id)?;
@@ -484,9 +500,10 @@ pub fn compute_now(doc: &Document, id: NodeId) -> Option<Arc<Info>> {
         }
     };
     let info = Arc::new(info);
+    let kept = keep_cut.then(|| (shape.cut.clone(), shape.sheet));
     let extra: Arc<dyn Any + Send + Sync> = info.clone();
     store::store(id, inputs, StencilShape { extra: Some(extra), ..shape });
-    Some(info)
+    Some((info, kept))
 }
 
 /// The four corners of a repeat cell's outline (a closed quadrilateral).

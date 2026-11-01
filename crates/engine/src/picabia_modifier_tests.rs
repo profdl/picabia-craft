@@ -253,9 +253,13 @@ fn modifier_commands_survive_junk() {
         json!({"kind": "imageTrace", "props": {"preset": "outline", "fills": false, "strokes": false, "strokeWidth": 1e308, "palette": "documentLibrary"}}),
         json!({"kind": "pathfinder", "props": {"op": 7, "precision": -1e308, "outlineWidth": "inf"}, "upTo": 1e308}),
         json!({"kind": "pathfinder", "props": {"op": "outline", "precision": 1e-308}, "index": 0, "upTo": 0}),
+        // Laser export and test card settings (data mode: nothing is written).
+        json!({"data": true, "kerfMm": 1e308, "bedWidthMm": -1e308, "bedHeightMm": "NaN", "overlapMm": 1e308, "cutColour": 5, "label": "x", "material": [1]}),
+        json!({"data": true, "bedWidthMm": 10, "bedHeightMm": 10, "overlapMm": 200, "material": "custom", "scoreColour": "\u{0}"}),
+        json!({"data": "x", "path": {"x": 1}, "kerfMm": "inf", "engraveColour": "#zzzzzz", "material": "\u{0}"}),
     ];
     let ids: Vec<&str> = crate::all_commands().iter().map(|c| c.id).filter(|i| i.starts_with("modifier.")).collect();
-    assert_eq!(ids.len(), 15, "{ids:?}");
+    assert_eq!(ids.len(), 17, "{ids:?}");
     for cmd in ids {
         for j in &junk {
             for damaged in [false, true] {

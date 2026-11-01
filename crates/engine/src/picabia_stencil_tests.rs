@@ -596,9 +596,11 @@ fn tile_output_places_the_sheet_on_the_repeat_cell() {
     // The tile's sheet: (20 + 2·3) units at 5 mm; the design's sheet stays for the panel.
     assert_eq!(v["tile"], json!({"w": 130.0, "h": 130.0}), "{v}");
     assert!((v["sheetMm"]["w"].as_f64().unwrap() - 330.0).abs() < 1e-9);
-    let (shape, fresh) = store::lookup(&d, &n).unwrap();
-    assert!(fresh);
-    assert_eq!(shape.sheet, frame.sheet, "what is cut is where the frame put it");
+    // Read from the compute itself, and just before the hit tests (which draw the stored result):
+    // the store is shared by the tests running at once and keeps 64 results.
+    let (_, _, sheet) = crate::picabia_stencil::compute_cut_now(&d, g).unwrap();
+    assert_eq!(sheet, frame.sheet, "what is cut is where the frame put it");
+    assert!(store::lookup(&d, &n).is_some());
     // Bounds and hit testing follow the tile.
     let world = figcraft_render::export_bounds(&d, g).unwrap();
     assert!((world.x0 - 27.0).abs() < 1e-9 && (world.x1 - 53.0).abs() < 1e-9, "{world:?}");
