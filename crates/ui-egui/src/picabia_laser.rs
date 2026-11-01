@@ -22,7 +22,8 @@ use crate::widgets::{self, FieldEdit, Lead};
 
 /// The export command (`{id?, path?, data?, kerfMm?, ...}`).
 pub const EXPORT: &str = "modifier.stencilExport";
-/// The test card command (`{material?, kerfMm?, path?, data?, colours}`).
+/// The test card command (`{id?, material?, kerfMm?, path?, data?, colours}`; the layer's limits for
+/// a custom material).
 pub const TEST_CARD: &str = "modifier.stencilTestCard";
 
 /// Seconds the summary waits after a change before it asks the command again.
@@ -136,6 +137,8 @@ impl LaserDialog {
         d.id = data.get("id").and_then(figcraft_engine::params::id_of);
         let p = data.get("params").filter(|p| p.is_object()).unwrap_or(data);
         d.read(p);
+        // The test card's request names its material beside the params.
+        d.read(&json!({"material": data.get("material")}));
         d
     }
 
@@ -178,7 +181,7 @@ impl LaserDialog {
     /// The command's params for these settings (without `path` or `data`).
     pub fn params(&self) -> Value {
         let mut p = Map::new();
-        if let Some(id) = self.id.filter(|_| self.kind == Kind::Export) {
+        if let Some(id) = self.id {
             p.insert("id".into(), json!(id));
         }
         if self.kind == Kind::TestCard {
@@ -289,11 +292,8 @@ pub fn stencil_layer(doc: &Document, sel: &[NodeId]) -> Option<NodeId> {
 /// What a button or menu item asks for: the command and its params (no path: the command asks
 /// for the dialog).
 pub fn request(kind: Kind, node: Option<NodeId>) -> (&'static str, Value) {
-    match (kind, node) {
-        (Kind::Export, Some(id)) => (EXPORT, json!({"id": id})),
-        (Kind::Export, None) => (EXPORT, json!({})),
-        (Kind::TestCard, _) => (TEST_CARD, json!({})),
-    }
+    let p = node.map_or_else(|| json!({}), |id| json!({"id": id}));
+    (kind.command(), p)
 }
 
 /// Open the dialog a UI request asks for (seam arms in `handle_ui_requests`).
@@ -502,11 +502,12 @@ fn summary(ui: &mut Ui, s: &Summary, t: &Tokens) {
         Summary::Failed(e) => wrapped(ui, e, t.danger),
         Summary::Ready { sheets, warnings } => {
             ui.label(egui::RichText::new(trn("{n} sheets", sheets.len(), &[])).font(semibold(11.0)).color(t.text));
-            for s in sheets {
+            for s in sheets.iter() {
                 let (w, h) = (mm(s.w_mm), mm(s.h_mm));
                 let size = trf("{w} × {h} mm", &[("w", &w), ("h", &h)]);
                 let cuts = trn("{n} cuts", s.contours as usize, &[]);
-                let line = if s.name.is_empty() { format!("{size}, {cuts}") } else { format!("{}: {size}, {cuts}", s.name) };
+                // A lone sheet needs no "1 of 1".
+                let line = if s.name.is_empty() || sheets.len() == 1 { format!("{size}, {cuts}") } else { format!("{}: {size}, {cuts}", s.name) };
                 widgets::label(ui, &line, t.text_secondary);
                 if s.loose > 0 {
                     wrapped(ui, &trn("{n} pieces would fall out", s.loose as usize, &[]), t.warning);
@@ -542,6 +543,8 @@ fn save(app: &mut FigApp, kind: Kind, params: Value, name: &str) {
         if !names.is_empty() {
             app.toast(saved_text(&names));
             app.ui.picabia_laser = None;
+            // The command remembered these settings.
+            app.services.save_prefs(&app.session.prefs);
         }
         return;
     }
@@ -554,6 +557,7 @@ fn save(app: &mut FigApp, kind: Kind, params: Value, name: &str) {
         if let Some(r) = app.run(cmd, p) {
             app.toast(saved_text(&written(&r)));
             app.ui.picabia_laser = None;
+            app.services.save_prefs(&app.session.prefs);
         }
     });
 }

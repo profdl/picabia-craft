@@ -64,13 +64,16 @@ fn the_request_and_the_fields_map_to_the_commands_params() {
     // A bed of 0 × 0 is no limit.
     let d = LaserDialog::from_request(Kind::Export, &json!({"params": {"bedWidthMm": 0, "bedHeightMm": 0}}));
     assert!(d.no_limit && d.id.is_none() && d.params().get("id").is_none());
-    // The test card: material and colours, no bed, overlap, label or layer.
-    let mut d = LaserDialog::from_request(Kind::TestCard, &json!({"id": 3, "material": "film", "kerfMm": 0.05}));
+    // The test card: its layer (a custom material's limits), material and colours, no bed, overlap
+    // or label. The engine's request names the material beside the params.
+    let mut d = LaserDialog::from_request(Kind::TestCard, &json!({"id": 3, "material": "film", "params": {"kerfMm": 0.05}}));
     assert_eq!((d.material.as_str(), d.kerf_mm), ("film", 0.05));
     let p = d.params();
-    assert_eq!(p, json!({"material": "film", "cutColour": "#ff0000", "engraveColour": "#000000", "scoreColour": "#0000ff"}));
+    assert_eq!(p, json!({"id": 3, "material": "film", "cutColour": "#ff0000", "engraveColour": "#000000", "scoreColour": "#0000ff"}));
     d.kerf_set = true;
     assert_eq!(d.params()["kerfMm"], json!(0.05));
+    let d = LaserDialog::from_request(Kind::TestCard, &json!({"material": "card", "kerfMm": 0.2}));
+    assert_eq!((d.material.as_str(), d.kerf_mm), ("card", 0.2));
 }
 
 #[test]
@@ -140,7 +143,7 @@ fn the_ui_requests_open_the_dialog_and_escape_closes_it() {
     assert!(u.app.ui.picabia_laser.is_none(), "Escape closes it");
     assert_eq!(u.app.session.selection(), vec![r], "and leaves the selection alone");
 
-    ask(&mut u, "dialog.stencilTestCard", json!({"params": {"material": "card"}}));
+    ask(&mut u, "dialog.stencilTestCard", json!({"id": r, "material": "card", "params": {"kerfMm": 0.1}}));
     let d = u.app.ui.picabia_laser.as_ref().expect("the test card dialog is open");
     assert_eq!((d.kind, d.material.as_str()), (Kind::TestCard, "card"));
     let shown = drawn(&mut u);
@@ -206,23 +209,50 @@ fn click(u: &mut Ui, p: Pos2) {
 #[test]
 fn the_stencil_rows_buttons_ask_for_the_dialogs() {
     assert_eq!(request(Kind::Export, Some(NodeId(4))), (EXPORT, json!({"id": 4})));
-    assert_eq!(request(Kind::TestCard, Some(NodeId(4))), (TEST_CARD, json!({})));
+    assert_eq!(request(Kind::TestCard, Some(NodeId(4))), (TEST_CARD, json!({"id": 4})));
+    assert_eq!(request(Kind::Export, None), (EXPORT, json!({})));
     for (label, kind, cmd) in [("Export for laser…", Kind::Export, EXPORT), ("Test card…", Kind::TestCard, TEST_CARD)] {
         let (mut u, r) = stencil();
         let p = button(&mut u, label);
         click(&mut u, p);
-        if figcraft_engine::find_command(cmd).is_some() {
-            let d = u.app.ui.picabia_laser.as_ref().unwrap_or_else(|| panic!("{label} opens the dialog"));
-            assert_eq!(d.kind, kind);
-            if kind == Kind::Export {
-                assert_eq!(d.id, Some(r));
-            }
-        } else {
-            // Before the engine has the command: the click ran it (and it was refused).
-            let e = u.app.ui.last_error.clone().unwrap_or_default();
-            assert!(e.contains(cmd), "{label} ran {cmd}: {e:?}");
-        }
+        let d = u.app.ui.picabia_laser.as_ref().unwrap_or_else(|| panic!("{label} runs {cmd}, which opens the dialog"));
+        assert_eq!((d.kind, d.id), (kind, Some(r)));
     }
+}
+
+#[test]
+fn the_dialogs_settings_export_through_the_engine() {
+    let (mut u, r) = stencil();
+    // The panel's button: the engine asks for the dialog with the settings it would use.
+    let (cmd, p) = request(Kind::Export, Some(r));
+    u.app.run(cmd, p);
+    u.frame(vec![]);
+    let d = u.app.ui.picabia_laser.clone().expect("the dialog is open");
+    let Summary::Ready { sheets, .. } = &d.summary else { panic!("the dry run reads: {:?}", d.summary) };
+    assert_eq!(sheets.len(), 1, "a small stencil is one sheet");
+    assert!(sheets[0].w_mm > 0.0 && sheets[0].h_mm > 0.0);
+    // Its settings are the command's own: an export with them writes the file at its true size.
+    let dir = std::env::temp_dir().join(format!("picabia-laser-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rect laser.svg");
+    let mut p = d.params();
+    p["path"] = json!(path.to_string_lossy());
+    let out = u.app.run(EXPORT, p).expect("exported");
+    assert_eq!(super::written(&out), vec!["rect laser.svg".to_string()]);
+    let svg = std::fs::read_to_string(&path).unwrap();
+    assert!(svg.contains("mm\"") && svg.contains("viewBox"), "a true-size svg: {svg}");
+    // The test card: the material's kerf until one is typed.
+    u.app.run(TEST_CARD, json!({"id": r}));
+    u.frame(vec![]);
+    let mut d = u.app.ui.picabia_laser.clone().expect("the card dialog is open");
+    assert_eq!(d.kind, Kind::TestCard);
+    assert!(matches!(&d.summary, Summary::Ready { sheets, .. } if sheets.len() == 1), "{:?}", d.summary);
+    d.material = "card".into();
+    let mut p = d.params();
+    p["data"] = json!(true);
+    let out = u.app.run(TEST_CARD, p).expect("a card");
+    assert_eq!(out["material"], json!("card"));
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -230,7 +260,7 @@ fn the_modifiers_submenu_offers_laser_items_on_a_stencil() {
     let (mut u, r) = stencil();
     let items = crate::picabia_ui::items(&u.app);
     let laser: Vec<_> = items.iter().filter(|i| i.1 == EXPORT || i.1 == TEST_CARD).map(|i| (i.1, i.2.clone(), i.3)).collect();
-    assert_eq!(laser, vec![(EXPORT, json!({"id": r}), true), (TEST_CARD, json!({}), true)]);
+    assert_eq!(laser, vec![(EXPORT, json!({"id": r}), true), (TEST_CARD, json!({"id": r}), true)]);
     // A layer without a stencil row doesn't offer them.
     let other = id(&u.app.session.execute("shape.rectangle", &json!({"x": 100, "y": 0, "width": 40, "height": 40})).unwrap());
     u.app.session.execute("select.set", &json!({"ids": [other]})).unwrap();
