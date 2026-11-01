@@ -44,6 +44,8 @@ mod recovery_tests;
 #[cfg(test)]
 mod services_tests;
 #[cfg(test)]
+mod settings_dir_tests;
+#[cfg(test)]
 mod startup_tests;
 
 use std::sync::{Arc, Mutex};
@@ -136,7 +138,7 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     // Windows: the update helper is a copy of this program started with `--finish-update`.
     #[cfg(windows)]
-    if let Some(result) = craft_update::self_update::finish(&craft_update::suite::FIGCRAFT, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
+    if let Some(result) = craft_update::self_update::finish(&figcraft_ui_egui::UPDATE_APP, &std::env::args_os().skip(1).collect::<Vec<_>>()) {
         std::process::exit(i32::from(result.is_err()));
     }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -189,9 +191,13 @@ fn main() -> eframe::Result {
     let mut session = Session::empty();
     // Live sessions: the network threads wake the window when something arrives.
     session.live.install(Box::new(figcraft_collab_net::NetLink::new(Arc::new(wake(&ctx_slot)))));
+    // A file that won't open is said in the window too: it may have been double-clicked.
+    let mut failed_open = None;
     for f in &args.files {
         if let Err(e) = session.execute("file.open", &json!({"path": f})) {
             log::error!("{f}: {e}");
+            let name = std::path::Path::new(f).file_name().map_or_else(|| f.into(), |n| n.to_string_lossy());
+            failed_open = Some(format!("{name}: {e}"));
         }
     }
     let opened: Vec<u64> = session.docs.iter().map(|d| d.uid).collect();
@@ -232,12 +238,15 @@ fn main() -> eframe::Result {
     // Files named on the command line are the user's too: their missing fonts are listed.
     fig.ui.font_checks = opened;
     fig.note_recovered(recovered.copies);
+    if let Some(message) = failed_open {
+        fig.show_error(message);
+    }
     if let Some(link) = &args.join {
         figcraft_ui_egui::live::open_invite(&mut fig, link);
     }
     let queue: Arc<Mutex<Vec<ControlRequest>>> = Arc::new(Mutex::new(Vec::new()));
     if let Some(p) = port {
-        control_server::start(p, queue.clone(), ctx_slot.clone(), fig.session.events.clone());
+        control_server::start(p, graphics::port_wait(), queue.clone(), ctx_slot.clone(), fig.session.events.clone());
     }
     let icon = services::window_icon();
     // The app id is the Wayland app_id and the X11 window class on Linux: the desktop entry's name
@@ -261,7 +270,9 @@ fn main() -> eframe::Result {
         viewport = viewport.with_icon(icon);
     }
     let mut options = eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
-    graphics::configure(&mut options.wgpu_options);
+    let graphics = graphics::Plan::configure(&mut options.wgpu_options);
+    // Counts the frames drawn, which tells a window that failed starting up from one that ran.
+    let window = ctx_slot.clone();
     figcraft_ui_egui::windows::install(fig);
     // Registered before the event loop starts, so it catches the Finder event that launched the app
     // as well as later ones. Lives until the event loop returns; the app creator only borrows it.
@@ -272,7 +283,10 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         picabia::APP_NAME, // PICABIA: app name
         options,
-        Box::new(move |cc| {
+        Box::new(|cc| {
+            if let Some(state) = &cc.wgpu_render_state {
+                graphics.opened(&state.adapter.get_info());
+            }
             with_app(|fig| fig.services.set_egui_context(&cc.egui_ctx));
             // winit's own Quit (⌘Q) ends the process through `terminate:` without ever asking the
             // app, so unsaved changes are lost with no warning (issue #857). This menu's Quit
@@ -295,11 +309,10 @@ fn main() -> eframe::Result {
             }))
         }),
     );
-    // Say why instead of quitting silently: release builds on Windows have no console.
-    if let Err(e) = &result {
-        startup::failed(e, port.is_some());
-    }
-    result
+    let frames = window.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map_or(0, egui::Context::cumulative_frame_nr);
+    // Start again on other graphics, or say why instead of quitting silently: release builds on
+    // Windows have no console.
+    graphics.finish(result, frames, port.is_some())
 }
 
 /// With nothing to open, whether the window starts in a new file rather than on the home screen.

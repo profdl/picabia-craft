@@ -747,6 +747,65 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa8876b300ab35ba921adea3dfd70157a46249b33f95c9084ae5709785478946"
+dependencies = [
+ "clap_builder",
+ "clap_derive",
+]
+
+[[package]]
+name = "clap_builder"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec0797fb7aeb1406c84efac526901f7ec3ead2124f946b494e72879d4b54704d"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap_lex",
+ "strsim",
+]
+
+[[package]]
+name = "clap_complete"
+version = "4.5.67"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1248e420506b523e97ebd7b610656114abadbe73b04279a86768a12ce1860837"
+dependencies = [
+ "clap",
+]
+
+[[package]]
+name = "clap_derive"
+version = "4.6.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9c751b79415d4e559e3d1fcf128e09e720eb673a06d26cf6f392d37d75b66e0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "clap_lex"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
+
+[[package]]
+name = "clap_mangen"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "211d617eaa4b735c96c9e0228fcbdb5120ef623f2b8cb67ffb84c3e02dbc28a4"
+dependencies = [
+ "clap",
+ "roff",
+]
+
+[[package]]
 name = "clipboard-win"
 version = "5.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1042,6 +1101,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-settings"
+version = "0.1.0"
+source = "git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545#e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545"
+dependencies = [
+ "craft-atomic",
+ "dirs",
+ "serde",
+ "toml_edit",
+]
+
+[[package]]
 name = "craft-ui"
 version = "0.1.0"
 source = "git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545#e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545"
@@ -1064,13 +1134,14 @@ dependencies = [
 [[package]]
 name = "craft-update"
 version = "0.1.0"
-source = "git+https://github.com/storytold/craft-libs?rev=e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545#e11f9d9aebea5f6b8e74643c1ea1ed172ba5f545"
+source = "git+https://github.com/storytold/craft-libs?rev=c5a1cbfb5f9049f9270955caffb5bee5997aebf7#c5a1cbfb5f9049f9270955caffb5bee5997aebf7"
 dependencies = [
  "chrono",
  "dunce",
  "egui",
  "flate2",
  "getrandom 0.3.4",
+ "image",
  "log",
  "plist",
  "semver",
@@ -1264,6 +1335,27 @@ dependencies = [
  "block-buffer 0.12.1",
  "const-oid",
  "crypto-common 0.2.2",
+]
+
+[[package]]
+name = "dirs"
+version = "7.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d57d423b3c82e89b9a24ca3091fee61f456a26edbd28d26c65906f4bc1dcd8f"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1671,10 +1763,11 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "figcraft"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "arboard",
  "craft-menu",
+ "craft-settings",
  "craft-update",
  "craft-window",
  "eframe",
@@ -1702,8 +1795,11 @@ dependencies = [
 
 [[package]]
 name = "figcraft-cli"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
+ "clap",
+ "clap_complete",
+ "clap_mangen",
  "figcraft-doc",
  "figcraft-engine",
  "figcraft-format",
@@ -1712,17 +1808,19 @@ dependencies = [
  "figcraft-svg",
  "figcraft-text",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "figcraft-collab"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
  "figcraft-color",
  "figcraft-doc",
  "figcraft-geom",
+ "flate2",
  "imbl",
  "postcard",
  "serde",
@@ -1733,7 +1831,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-collab-net"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "figcraft-collab",
@@ -1756,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-color"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "kurbo",
  "serde",
@@ -1765,7 +1863,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-doc"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-color",
  "figcraft-geom",
@@ -1773,11 +1871,12 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "unicode-segmentation",
 ]
 
 [[package]]
 name = "figcraft-engine"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "craft-docpath",
@@ -1815,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-format"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-layout",
@@ -1832,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-geom"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "kurbo",
  "serde",
@@ -1840,14 +1939,14 @@ dependencies = [
 
 [[package]]
 name = "figcraft-grbl"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "serialport",
 ]
 
 [[package]]
 name = "figcraft-layout"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1855,7 +1954,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-mcp"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "figcraft-collab-net",
@@ -1871,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-modifiers"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1881,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-pathops"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1890,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-pdf"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-color",
  "figcraft-doc",
@@ -1907,7 +2006,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-plugin"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-color",
  "serde",
@@ -1920,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-render"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "crc32fast",
  "figcraft-color",
@@ -1940,8 +2039,9 @@ dependencies = [
 
 [[package]]
 name = "figcraft-server"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
+ "chrono",
  "crc32fast",
  "ctrlc",
  "env_logger",
@@ -1964,7 +2064,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-stencil"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -1975,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-svg"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "figcraft-color",
@@ -1991,13 +2091,14 @@ dependencies = [
 
 [[package]]
 name = "figcraft-text"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "core-text",
  "craft-font-catalog",
  "figcraft-doc",
  "figcraft-geom",
  "harfrust 0.13.3",
+ "icu_segmenter",
  "log",
  "objc2 0.6.5",
  "png",
@@ -2008,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-ui-egui"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2037,7 +2138,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-vcbridge"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-doc",
  "figcraft-geom",
@@ -2050,7 +2151,7 @@ dependencies = [
 
 [[package]]
 name = "figcraft-vectordrawable"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-color",
  "figcraft-doc",
@@ -2064,13 +2165,15 @@ dependencies = [
 
 [[package]]
 name = "figcraft-web"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "base64 0.22.1",
  "eframe",
  "egui",
  "figcraft-collab-net",
  "figcraft-engine",
+ "figcraft-format",
+ "figcraft-text",
  "figcraft-ui-egui",
  "js-sys",
  "log",
@@ -2577,6 +2680,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "heck"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2789,6 +2898,29 @@ dependencies = [
  "zerotrie",
  "zerovec",
 ]
+
+[[package]]
+name = "icu_segmenter"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82d07aafccd67af15d02512a6adf5896fbc5ed00f2e99b471d2efa14016db3db"
+dependencies = [
+ "core_maths",
+ "icu_collections",
+ "icu_locale_fallback",
+ "icu_provider",
+ "icu_segmenter_data",
+ "potential_utf",
+ "smallvec",
+ "utf8_iter",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_segmenter_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae293c039020f9ec10710af98d29ce6aa2051486638b49c9a6409f3b4a9e98ad"
 
 [[package]]
 name = "idna"
@@ -3777,6 +3909,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "orbclient"
 version = "0.3.55"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4358,6 +4496,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "redox_users"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60dc65c0ff1a7ae1294b0c67b9f14baf70b644404010370171787bfac1038fc0"
+dependencies = [
+ "libredox",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4432,6 +4580,12 @@ dependencies = [
  "untrusted",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "roff"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "323c417e1d9665a65b263ec744ba09030cfb277e9daa0b018a4ab62e57bc8189"
 
 [[package]]
 name = "roxmltree"
@@ -5041,6 +5195,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
 name = "subsetter"
 version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5337,8 +5497,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3641d5bbb5349a79e1020a242d251efbc546ad8048d133958323ce9c40a9c9c"
 dependencies = [
  "indexmap",
+ "serde_core",
+ "serde_spanned",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 
@@ -5645,7 +5808,7 @@ dependencies = [
 
 [[package]]
 name = "vectorcraft-geom"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "kurbo",
  "proptest",
@@ -5656,7 +5819,7 @@ dependencies = [
 
 [[package]]
 name = "vectorcraft-pathops"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "kurbo",
  "linesweeper 0.5.0",
@@ -5667,7 +5830,7 @@ dependencies = [
 
 [[package]]
 name = "vectorcraft-trace"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "image",
  "kurbo",
@@ -6727,7 +6890,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.12.1"
+version = "0.13.1"
 dependencies = [
  "figcraft-engine",
  "serde_json",

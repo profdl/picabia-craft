@@ -227,6 +227,8 @@ pub enum DocProp {
     Timer,
     /// A board's vote (`null`: none); the ballots are [`Entry::Ballot`]s.
     Vote,
+    /// Ended votes' results kept in the file, oldest first (whole).
+    VoteHistory,
 }
 
 /// A document-level entry, by id.
@@ -317,6 +319,16 @@ impl Change {
     /// Whether this puts or removes an image entry.
     pub(crate) fn is_image(&self) -> bool {
         matches!(self, Change::Put { entry: Entry::Image(_), .. } | Change::Remove { entry: Entry::Image(_) })
+    }
+
+    /// Whether this only changes comment threads (a thread, their order, or all of them): what a
+    /// comment link may send.
+    pub fn is_comment(&self) -> bool {
+        match self {
+            Change::Put { entry, .. } | Change::Remove { entry } => entry.list() == Some(Family::Comments),
+            Change::SetDoc { prop, .. } => matches!(prop.list(), Some(Ok(Family::Comments) | Err(Family::Comments))),
+            Change::Create { .. } | Change::Set { .. } | Change::Delete { .. } => false,
+        }
     }
 }
 

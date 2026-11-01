@@ -103,7 +103,7 @@ fn current_paint(app: &FigApp, target: &PickerTarget) -> Option<Paint> {
         }
         PickerTarget::Effect { ids, index, secondary } => doc.node(*ids.first()?)?.effects.get(*index)?.color(*secondary).map(Paint::solid),
         PickerTarget::TextRange { id, start, .. } => range_fills(doc, *id, *start)?.into_iter().next(),
-        PickerTarget::Variable { id, mode } => match doc.variables.get(id)?.values.get(mode)? {
+        PickerTarget::Variable { id, mode } => match doc.variables.get_by_id(id)?.values.get(mode)? {
             figcraft_doc::VariableValue::Color(c) => {
                 let mut p = Paint::solid(c.with_alpha(1.0));
                 p.opacity = c.a;
@@ -559,6 +559,116 @@ fn alpha_slider(ui: &mut Ui, rect: Rect, color: Color) -> Option<(f32, bool)> {
     slider_knob(ui, rect, color.a, Id::unique("cp_alpha"))
 }
 
+/// The image files the picker offers.
+const IMAGE_FILES: [&str; 7] = ["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"];
+
+fn image_pending_id() -> Id {
+    Id::unique("cp_image_pending")
+}
+
+/// Whether the Image tab of `target` shows its placeholder: chosen, with no file yet.
+fn image_pending(ctx: &egui::Context, target: &PickerTarget) -> bool {
+    ctx.data(|d| d.get_temp::<String>(image_pending_id())).is_some_and(|k| k == format!("{target:?}"))
+}
+
+/// Show the Image tab's placeholder for `target`, or (`None`) for nothing.
+fn set_image_pending(ctx: &egui::Context, target: Option<&PickerTarget>) {
+    ctx.data_mut(|d| {
+        d.remove::<String>(image_pending_id());
+        if let Some(t) = target {
+            d.insert_temp(image_pending_id(), format!("{t:?}"));
+        }
+    });
+}
+
+/// `image.replace`'s parameters for layers' paint `index`.
+fn image_params(fills: bool, index: usize, ids: &[NodeId]) -> serde_json::Value {
+    json!({"ids": ids, "target": if fills { "fill" } else { "stroke" }, "index": index})
+}
+
+/// Where a file dragged over the window would become the open picker's image, and the parameters
+/// that does it: the picker, while it shows layers' image paint or the Image tab's placeholder. A
+/// platform doesn't say where a dragged file is until it can: an unknown position is the picker's.
+pub(crate) fn image_drop_target(app: &FigApp, ctx: &egui::Context) -> Option<(Rect, serde_json::Value)> {
+    let target = app.ui.picker.as_ref()?;
+    let PickerTarget::Paint { fills, index, ids } = target else { return None };
+    if !image_pending(ctx, target) && !matches!(current_paint(app, target)?.kind, PaintKind::Image(_)) {
+        return None;
+    }
+    let rect = ctx.memory(|m| m.area_rect(window_id()))?;
+    ctx.input(|i| i.pointer.hover_pos()).is_none_or(|p| rect.contains(p)).then(|| (rect, image_params(*fills, *index, ids)))
+}
+
+/// The bytes of a picked `file`: its `path`, or its base64 `data` where there are no paths.
+fn picked_bytes(file: &serde_json::Value) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    match file["path"].as_str() {
+        Some(path) => figcraft_engine::file_access::read_capped(path, figcraft_doc::ImageData::MAX_BYTES).ok(),
+        None => base64::engine::general_purpose::STANDARD.decode(file["data"].as_str()?).ok(),
+    }
+}
+
+/// Ask for an image file for `target`: layers' paints keep their fill mode, crop and position.
+fn upload_image(app: &mut FigApp, target: &PickerTarget) {
+    let target = target.clone();
+    app.pick_file(tr("Choose image"), &IMAGE_FILES, true, move |app, file| {
+        if let PickerTarget::Paint { fills, index, ids } = &target {
+            let mut params = image_params(*fills, *index, ids);
+            for key in ["path", "data"] {
+                if let Some(v) = file.get(key) {
+                    params[key] = v.clone();
+                }
+            }
+            app.run("image.replace", params);
+            return;
+        }
+        let Some(bytes) = picked_bytes(&file) else { return };
+        let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
+        if let Some(mut paint) = current_paint(app, &target) {
+            paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
+            write(app, &target, &paint, false);
+        }
+    });
+}
+
+/// The image `hash` as a texture at most `side` pixels across, kept while it stays the one shown.
+fn image_texture(app: &FigApp, ctx: &egui::Context, hash: &str, side: f64) -> Option<egui::TextureHandle> {
+    let id = Id::unique("cp_image_texture");
+    if let Some((_, tex)) = ctx.data(|d| d.get_temp::<(String, egui::TextureHandle)>(id)).filter(|(h, _)| h == hash) {
+        return Some(tex);
+    }
+    let doc = app.session.doc().ok()?;
+    let pix = figcraft_render::images::shown(hash, doc.images.get(hash), &ImageFilters::default(), doc.color_profile, side)?;
+    let tex = ctx.load_texture("cp-image", crate::render_worker::screen_image(&pix, doc.color_profile), egui::TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, (hash.to_string(), tex.clone())));
+    Some(tex)
+}
+
+/// The asset preview: the paint's image, or checkers until there is one, and the upload button. A
+/// file dropped on it takes the image's place (`image_drop_target`).
+fn image_well(app: &mut FigApp, ui: &mut Ui, target: &PickerTarget, paint: &Paint, t: &Tokens) {
+    let w = ui.available_width();
+    let (r, _) = ui.allocate_exact_size(vec2(w, 120.0), Sense::hover());
+    let frame = r.shrink2(vec2(16.0, 0.0));
+    widgets::checker(&ui.painter().with_clip_rect(frame), frame, 8.0);
+    let ppp = f64::from(ui.ctx().pixels_per_point());
+    if let PaintKind::Image(img) = &paint.kind
+        && let Some(tex) = image_texture(app, ui.ctx(), &img.image, f64::from(frame.width()) * ppp)
+    {
+        let [tw, th] = tex.size().map(|v| v.max(1) as f32);
+        let k = (frame.width() / tw).min(frame.height() / th);
+        let shown = Rect::from_center_size(frame.center(), vec2(tw * k, th * k));
+        ui.painter().image(tex.id(), shown, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    }
+    ui.painter().rect_stroke(frame, CornerRadius::same(4), Stroke::new(1.0, t.border), StrokeKind::Inside);
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        if widgets::button(ui, tr("Upload from computer"), false, true).clicked() {
+            upload_image(app, target);
+        }
+    });
+}
+
 /// The row of paint kinds (solid, gradients, image, pattern) with `paint`'s kind selected.
 fn paint_type_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &mut Paint) {
     let kinds = [
@@ -571,6 +681,7 @@ fn paint_type_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &
         (Icon::ViewGrid, tr("Pattern")),
     ];
     let active = match &paint.kind {
+        _ if image_pending(ui.ctx(), target) => 5,
         PaintKind::Solid { .. } => 0,
         PaintKind::Gradient(g) => match g.kind {
             GradientKind::Linear => 1,
@@ -585,22 +696,12 @@ fn paint_type_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &
         ui.add_space(12.0);
         if let Some(i) = widgets::segmented(ui, &kinds, Some(active), 30.0) {
             let base = paint.preview_color();
-            let mut image_pending = false;
+            let choosing = i == 5;
+            set_image_pending(ui.ctx(), choosing.then_some(target).filter(|_| !matches!(paint.kind, PaintKind::Image(_))));
             paint.kind = match i {
                 0 => PaintKind::Solid { color: base.with_alpha(1.0) },
-                5 => {
-                    image_pending = true;
-                    let target = target.clone();
-                    app.pick_open(tr("Choose image"), &["png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"], move |app, p| {
-                        let Ok(bytes) = figcraft_engine::file_access::read(&p) else { return };
-                        let Some(hash) = app.session.doc_mut().ok().and_then(|d| figcraft_format_add(d, bytes)) else { return };
-                        if let Some(mut paint) = current_paint(app, &target) {
-                            paint.kind = Paint::image(hash, ImageScaleMode::Fill).kind;
-                            write(app, &target, &paint, false);
-                        }
-                    });
-                    paint.kind.clone()
-                }
+                // Nothing changes until there is a file: the tab shows the placeholder.
+                5 => paint.kind.clone(),
                 6 => match pattern_sources(app, target).first() {
                     Some((id, _)) => Paint::pattern(id.0).kind,
                     None => {
@@ -618,7 +719,7 @@ fn paint_type_row(ui: &mut Ui, app: &mut FigApp, target: &PickerTarget, paint: &
                     }
                 }
             };
-            if !image_pending {
+            if !choosing {
                 write(app, target, paint, false);
             }
         }
@@ -872,7 +973,11 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         PickerTarget::PluginField { plugin, .. } => crate::plugins_ui::field_window(app, ctx, plugin).map(|r| pos2(r.min.x - 248.0, r.min.y)),
         _ => None,
     };
-    let pos = beside.unwrap_or(pos2(screen.max.x - app.ui.right_width - 260.0, 140.0));
+    let open = beside.map(Open::At).unwrap_or_else(|| {
+        let top = app.ui.picker_button.map_or(140.0, |r| r.min.y);
+        let edge = app.ui.right_panel_rect.map_or(screen.max.x - app.ui.right_width, |r| r.min.x);
+        Open::Anchor(pos2(edge - 8.0, top))
+    });
     // The colour picker's own header — title 16 in, the X 8 in from the right — is the shared
     // popover's chrome now; the picker keeps its body. Its area id is [`window_id`], the one the
     // style picker looks up to tell a press in here from one outside.
@@ -881,13 +986,10 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
     // colour it just sampled — is the press, not a press outside: neither may close the picker.
     let picking = app.session.tool.pick_only || app.session.tool.picked.is_some();
     pop = pop.close_on_outside(!picking);
-    // Closing is the shared widget's: the X, Escape and a press outside it. Presses in the panel
-    // beside it keep it (swatches and fields there switch the colour it edits); the control that
-    // opened it is held too, so pressing it again reaches its own toggle.
-    let panel = Rect::from_min_max(pos2(screen.max.x - app.ui.right_width, screen.min.y), screen.max);
-    let mut held: Vec<Rect> = vec![panel];
-    held.extend(app.ui.picker_button);
-    let closed = pop.show(ctx, Open::At(pos), Hold { rects: &held, escape: false }, |ui| {
+    // Only the opening control is held out: any other sidebar or canvas press dismisses it.
+    let mut held: Vec<Rect> = app.ui.picker_button.into_iter().collect();
+    held.extend(crate::variable_ui::picker_rect(ctx));
+    let closed = pop.show(ctx, open, Hold { rects: &held, escape: false }, |ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         // The eyedropper's colour goes to this picker's paint (a stroke, an effect, a gradient stop...).
         if let Some(c) = app.session.tool.picked.take() {
@@ -916,13 +1018,22 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
             blend_row(ui, app, &target, &mut paint);
         }
         // Gradient stops.
+        let is_image = matches!(paint.kind, PaintKind::Image(_));
+        if is_image {
+            set_image_pending(ui.ctx(), None);
+        }
+        // Until a file is chosen the Image tab shows its placeholder, not the paint it will replace.
+        let placeholder = image_pending(ui.ctx(), &target);
         let mut edit_color: Option<Color> = match &paint.kind {
-            PaintKind::Solid { color } => Some(color.with_alpha(color.a * paint.opacity)),
+            PaintKind::Solid { color } if !placeholder => Some(color.with_alpha(color.a * paint.opacity)),
             _ => None,
         };
         let sel_stop_id = stop_id();
-        if let PaintKind::Gradient(g) = paint.kind.clone() {
+        if let (PaintKind::Gradient(g), false) = (paint.kind.clone(), placeholder) {
             edit_color = gradient_controls(app, ui, &target, &mut paint, g, &t, sel_stop_id);
+        }
+        if is_image || placeholder {
+            image_well(app, ui, &target, &paint, &t);
         }
         if let PaintKind::Image(img) = paint.kind.clone() {
             image_controls(app, ui, &target, &mut paint, img, &t);
@@ -1034,6 +1145,7 @@ pub fn show(app: &mut FigApp, ctx: &egui::Context) {
         ui.add_space(12.0);
     });
     if closed {
+        set_image_pending(ctx, None);
         close(app);
     } else if app.ui.picker.is_some() {
         // Kept only while the picker is open: a body that closed it (the eyedropper) doesn't leave
@@ -1059,6 +1171,7 @@ pub fn close(app: &mut FigApp) {
     app.ui.picker = None;
     app.ui.picker_popover = None;
     app.ui.picker_button = None;
+    app.ui.picker_button_id = None;
 }
 
 /// Swatches wrapped in rows inset 16 points from both sides of the picker.
@@ -1451,3 +1564,7 @@ mod tests {
         assert_eq!(u.app.session.recent_colors, vec![c]);
     }
 }
+
+#[cfg(test)]
+#[path = "colorpicker_image_tests.rs"]
+mod image_tests;

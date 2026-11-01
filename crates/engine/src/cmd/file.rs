@@ -30,10 +30,10 @@ pub use export::{
 };
 use export::{export, export_frames_pdf, export_layers, pdf_bytes};
 use load::font_report;
+pub use load::{MAX_DOCUMENT_FILE, load, load_bytes, load_path};
 #[cfg(test)]
 pub(crate) use load::{installed_family, sketch_line};
-pub use load::{load, load_bytes, load_path};
-pub(crate) use load::{load_fig, read_capped, recovered, variables_param, write};
+pub(crate) use load::{load_fig, read_capped, recovered, recovered_from, variables_param, write};
 pub use open::MAX_RECENT;
 #[cfg(test)]
 use open::append_pages;
@@ -181,11 +181,16 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.recover",
             "Recover file",
-            "{path}  open a recovery copy (written while the app runs, read back after a crash) as a document with unsaved changes and no path: saving asks where → {index}",
+            "{path | data (base64: the copy's bytes, as the browser keeps them)}  open a recovery copy (written while the app runs, read back after a crash) as a document with unsaved changes and no path: saving asks where → {index}",
             false,
             |s, p| {
-                let path = req_string("file.recover", p, "path")?;
-                s.docs.push(recovered(&path)?);
+                let ds = match string(p, "data") {
+                    Some(d) => recovered_from(
+                        &base64::engine::general_purpose::STANDARD.decode(d.trim()).map_err(|e| bad("file.recover", format!("`data`: {e}")))?,
+                    )?,
+                    None => recovered(&req_string("file.recover", p, "path")?)?,
+                };
+                s.docs.push(ds);
                 s.active = s.docs.len() - 1;
                 Ok(json!({"index": s.active}))
             }
@@ -198,7 +203,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "file.colorProfile",
             "Color profile",
-            "{profile?: srgb|displayP3, convert? (default true: convert colour values so colours keep their appearance; false: keep the values and reinterpret them)}  without `profile`, returns the current one (and the app opens the dialog). Returns {profile, changed}",
+            "{profile?: srgb|displayP3, convert? (default true: convert colour values so colours keep their appearance — a colour calculation's mix keeps its ends exact and its colours in between move slightly; false: keep the values and reinterpret them)}  without `profile`, returns the current one (and the app opens the dialog). Returns {profile, changed}",
             true,
             color_profile
         ),
@@ -321,16 +326,24 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "doc.list",
             "List documents",
-            "{}  → [{index, id, name, path, dirty, active}]: `id` names the file in a control or MCP call's `document`",
+            "{}  → [{index, id, name, path?, dirty, active}]: `id` names the file in a control or MCP call's `document`; `path` only for the user's own scripts, not AI agents or plugins",
             false,
             |s, _| {
+                // Where the files are on disk is the user's: an agent gets their names (#1117).
+                let paths = s.agent.is_none();
                 Ok(Value::Array(
-                s.docs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, d)| json!({"index": i, "id": d.uid, "name": d.doc.name, "path": d.path, "dirty": d.is_dirty(), "active": i == s.active}))
-                    .collect(),
-            ))
+                    s.docs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, d)| {
+                            let mut e = json!({"index": i, "id": d.uid, "name": d.doc.name, "dirty": d.is_dirty(), "active": i == s.active});
+                            if paths {
+                                e["path"] = json!(d.path);
+                            }
+                            e
+                        })
+                        .collect(),
+                ))
             }
         ),
         spec!("doc.home", "Home", "{}", false, |s, _| {

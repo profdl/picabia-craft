@@ -1,6 +1,6 @@
 # Picabia roadmap
 
-**Stage:** P0–P7 landed (2026-10-29); first upstream merge done (`PIC-merge: upstream 96eed159..f702105e`).
+**Stage:** P0–P7 landed (2026-10-29); latest upstream merge `PIC-merge: upstream f702105e..53259cf5` (2026-11-01; landed as a PR: `cargo xtask ci` not yet run on it, the sync run could not download crates).
 Stencil P8–P12 landed (2026-10-31): the stencil exports for the laser, and a test card measures each
 material. Laser control (P17, stencil phase P13) landed in simulation (2026-11-01): Picabia writes GRBL G-code for any design
 and streams it to the laser itself. Next: connect the X-Carve, air run, power ladder and test card, and replace the material guesses, then polish (handles for the

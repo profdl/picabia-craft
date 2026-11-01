@@ -141,3 +141,19 @@ fn to_css_round_trips_every_alpha() {
         assert_eq!(Color::parse_css(&c.to_css()).unwrap().to_rgba8(), c.to_rgba8(), "alpha {a}: {}", c.to_css());
     }
 }
+
+#[test]
+fn css_hsl_rejects_non_finite() {
+    for s in ["hsl(nan,50%,50%)", "hsl(inf,50%,50%)", "hsl(0,inf%,50%)", "hsl(0,50%,infinity%)", "hsla(120,50%,50%,nan)"] {
+        assert_eq!(Color::parse_css(s), None, "{s}");
+    }
+}
+
+#[test]
+fn css_rejects_empty_arguments() {
+    for s in ["rgb(255,,0,0)", "rgb(,1,2,3)", "rgb(1,2,3,)", "hsl(10,,50%,50%)", "rgb(1,2,,)", "oklch(0.5,,0.1,20)"] {
+        assert_eq!(Color::parse_css(s), None, "{s}");
+    }
+    assert!(Color::parse_css("rgb(255 0 0 / 50%)").is_some());
+    assert!(Color::parse_css("hsl(120deg 50% 50%)").is_some());
+}

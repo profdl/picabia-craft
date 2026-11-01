@@ -94,7 +94,7 @@ fn a_group_measures_its_childrens_copies() {
     d.reparent(r, g, None).unwrap();
     set_stack(&mut d, r, &linear(3, 40.0));
     let n = d.node(g).unwrap();
-    let local = crate::draw::local_paint_bounds(&d, n, 0, None);
+    let local = crate::draw::local_paint_bounds(&d, n, d.world_transform(n.id), 0, None);
     assert!(local.x1 >= 110.0, "{local:?}");
     assert!(crate::export_bounds(&d, g).unwrap().x1 >= 110.0);
     // A copy of the group's child far off view to the left is still drawn when the original is off view.

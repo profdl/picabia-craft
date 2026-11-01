@@ -3,6 +3,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
+use figcraft_collab::message::Access;
 use figcraft_collab_net::{Endpoint, NetLimits};
 use serde::Deserialize;
 
@@ -72,6 +73,13 @@ pub struct Config {
     pub connects_per_minute: u32,
     pub publishes_per_hour: u32,
     pub messages_per_second: u32,
+    /// The team list: everyone who reaches the server sees the files shared from it now (a link of
+    /// theirs has a join code) and opens them with this access, `"edit"`, `"comment"` or `"view"`.
+    /// Empty (the default): no team list. Only for a server just your team reaches.
+    pub team_files: String,
+    /// Where the browser build is served for this server (`https://figcraft.example.com/app/`): the
+    /// team list's browser links point there. Empty: none.
+    pub web_url: String,
 }
 
 impl Default for Config {
@@ -103,6 +111,8 @@ impl Default for Config {
             connects_per_minute: 30,
             publishes_per_hour: 10,
             messages_per_second: 200,
+            team_files: String::new(),
+            web_url: String::new(),
         }
     }
 }
@@ -147,6 +157,14 @@ impl Config {
                 client_max - 1
             ));
         }
+        if self.people() < self.max_people {
+            out.push(format!(
+                "max_people is {}: the app keeps track of at most {} people in a file, so {} are let in",
+                self.max_people,
+                self.people(),
+                self.people()
+            ));
+        }
         if !self.open_publish {
             return out;
         }
@@ -171,6 +189,32 @@ impl Config {
         out
     }
 
+    /// Most people in one file at once: `max_people`, lowered to what the app keeps track of
+    /// ([`figcraft_collab::message::MAX_PEERS`]).
+    pub fn people(&self) -> usize {
+        self.max_people.min(figcraft_collab::message::MAX_PEERS)
+    }
+
+    /// What the team list lets people do with its files (`None`: there is no team list).
+    pub fn team(&self) -> Result<Option<Access>, String> {
+        let t = self.team_files.trim();
+        if t.is_empty() {
+            return Ok(None);
+        }
+        Access::parse(t).map(Some).ok_or_else(|| "`team_files` is \"edit\", \"comment\" or \"view\" (empty: no team list)".to_string())
+    }
+
+    /// The browser build's address for the team list's links, when set: an `https://` (or
+    /// `http://`) address without a query or fragment.
+    pub fn web(&self) -> Result<String, String> {
+        let w = self.web_url.trim();
+        let web = w.starts_with("https://") || w.starts_with("http://");
+        if w.is_empty() || (web && w.len() <= 500 && !w.contains(['?', '#']) && !w.contains(char::is_whitespace) && !w.contains(char::is_control)) {
+            return Ok(w.to_string());
+        }
+        Err("`web_url` must be a web address without a query (https://figcraft.example.com/app/), at most 500 characters".into())
+    }
+
     /// The trusted proxy's address, when set.
     pub fn proxy(&self) -> Result<Option<IpAddr>, String> {
         let Some(p) = self.trusted_proxy.as_deref().map(str::trim).filter(|p| !p.is_empty()) else { return Ok(None) };
@@ -182,6 +226,8 @@ impl Config {
         self.addr()?;
         self.public()?;
         self.proxy()?;
+        self.team()?;
+        self.web()?;
         if !self.idle_days.is_finite() || !(0.0..=3650.0).contains(&self.idle_days) {
             return Err("`idle_days` must be from 0 to 3650".into());
         }
@@ -248,6 +294,9 @@ impl Config {
                 max_total_bytes: mib(self.max_total_mb),
                 max_files_per_ip: self.max_files_per_ip,
                 max_bytes_per_ip: mib(self.max_mb_per_ip),
+                // `check` refused anything else before the store is made.
+                team: self.team().ok().flatten(),
+                web: self.web().unwrap_or_default(),
                 abuse: AbuseConfig {
                     open: self.open_publish,
                     connects_per_minute: self.connects_per_minute,
@@ -284,8 +333,7 @@ impl Config {
     /// most, and those batches also at most a quarter of a file's bytes (256 KiB at least).
     fn core(&self) -> figcraft_collab::Limits {
         let bytes = |mb: u64| usize::try_from(mb.saturating_mul(1 << 20)).unwrap_or(usize::MAX);
-        let base =
-            figcraft_collab::Limits { max_peers: self.max_people, max_log_bytes: bytes(self.max_log_mb), ..figcraft_collab::Limits::default() };
+        let base = figcraft_collab::Limits { max_peers: self.people(), max_log_bytes: bytes(self.max_log_mb), ..figcraft_collab::Limits::default() };
         if !self.open_publish {
             return figcraft_collab::Limits { max_message_bytes: base.max_message_bytes.max(self.open_message()), ..base };
         }

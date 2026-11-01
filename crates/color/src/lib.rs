@@ -157,7 +157,7 @@ impl Color {
             return Self::from_hex(&t);
         }
         if let Some(inner) = t.strip_prefix("rgba(").or_else(|| t.strip_prefix("rgb(")).and_then(|r| r.strip_suffix(')')) {
-            let parts = css_args(inner);
+            let parts = css_args(inner)?;
             let num = |i: usize| -> Option<f32> {
                 let p = parts.get(i)?;
                 if let Some(pc) = p.strip_suffix('%') {
@@ -176,10 +176,13 @@ impl Color {
             return Some(Self::new(num(0)?, num(1)?, num(2)?, alpha));
         }
         if let Some(inner) = t.strip_prefix("hsla(").or_else(|| t.strip_prefix("hsl(")).and_then(|r| r.strip_suffix(')')) {
-            let parts = css_args(inner);
+            let parts = css_args(inner)?;
             let h = parts.first()?.trim_end_matches("deg").parse::<f32>().ok()?;
             let s = parts.get(1)?.trim_end_matches('%').parse::<f32>().ok()? / 100.0;
             let l = parts.get(2)?.trim_end_matches('%').parse::<f32>().ok()? / 100.0;
+            if !(h.is_finite() && s.is_finite() && l.is_finite()) {
+                return None;
+            }
             let alpha = match parts.get(3) {
                 Some(a) => parse_alpha(a)?,
                 None => 1.0,
@@ -241,14 +244,24 @@ impl Color {
     }
 }
 
-fn css_args(inner: &str) -> Vec<String> {
-    inner.replace('/', ",").split([',', ' ']).map(str::trim).filter(|p| !p.is_empty()).map(str::to_string).collect()
+/// Split CSS function arguments on `,` and `/` (each may be surrounded by spaces) and on runs of
+/// whitespace. An empty argument between two separators makes the whole list invalid.
+fn css_args(inner: &str) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for seg in inner.replace('/', ",").split(',') {
+        let before = out.len();
+        out.extend(seg.split_whitespace().map(str::to_string));
+        if out.len() == before {
+            return None;
+        }
+    }
+    Some(out)
 }
 
 /// The arguments of `lch()` / `oklch()`: lightness, chroma, hue and alpha. Percentages are of
 /// `l_full` / `c_full`; `none` is 0.
 fn css_polar(inner: &str, l_full: f32, c_full: f32) -> Option<([f32; 3], f32)> {
-    let parts = css_args(inner);
+    let parts = css_args(inner)?;
     if !(3..=4).contains(&parts.len()) {
         return None;
     }
@@ -286,7 +299,8 @@ fn css_hue(p: &str) -> Option<f32> {
 }
 
 fn parse_alpha(a: &str) -> Option<f32> {
-    if let Some(pc) = a.strip_suffix('%') { pc.parse::<f32>().ok().map(|v| v / 100.0) } else { a.parse::<f32>().ok() }
+    let v = if let Some(pc) = a.strip_suffix('%') { pc.parse::<f32>().ok().map(|v| v / 100.0) } else { a.parse::<f32>().ok() }?;
+    v.is_finite().then_some(v)
 }
 
 /// One colour stop of a gradient.
