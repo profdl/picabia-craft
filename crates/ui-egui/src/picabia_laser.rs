@@ -329,7 +329,8 @@ fn refresh(app: &mut FigApp, ctx: &Context, d: &mut LaserDialog) {
         return;
     }
     let mut dry = params.clone();
-    dry["data"] = json!(true);
+    // Only the sheets' sizes and counts: no SVG, and the remembered settings stay as they are.
+    dry["dryRun"] = json!(true);
     // Read-only and not undoable: run directly so a refusal shows in the dialog, not as a toast.
     let r = app.session.execute(d.kind.command(), &dry).map_err(|e| e.to_string());
     d.take_result(r);

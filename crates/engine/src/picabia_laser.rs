@@ -20,15 +20,23 @@ use crate::{EngineError, Result, Session, bad};
 const EXPORT: &str = "modifier.stencilExport";
 const TEST_CARD: &str = "modifier.stencilTestCard";
 
-/// Where the sheets go: a file path, base64 data, or (neither) the dialog.
+/// Where the sheets go: a file path, base64 data, only their description (a dry run: the
+/// dialog's summary), or (none of those) the dialog.
+#[derive(PartialEq)]
 enum Out {
     Path(String),
     Data,
+    Summary,
     Dialog,
 }
 
-/// `path` (a non-empty string) wins over `data: true`; neither: the dialog.
+/// `dryRun: true` wins, then `path` (a non-empty string), then `data: true`; none: the dialog.
 fn out_of(cmd: &str, p: &Value) -> Result<Out> {
+    match get(p, "dryRun") {
+        None | Some(Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => return Ok(Out::Summary),
+        Some(_) => return Err(bad(cmd, "`dryRun` must be true or false")),
+    }
     match get(p, "path") {
         None => {}
         Some(Value::String(s)) if !s.trim().is_empty() => return Ok(Out::Path(s.clone())),
@@ -123,7 +131,6 @@ fn emit(cmd: &str, sheets: &[LaserSheet], lp: &LaserParams, out: &Out, base: &st
     let n = sheets.len();
     let mut files = Vec::with_capacity(n);
     for (i, sheet) in sheets.iter().enumerate() {
-        let svg = figcraft_stencil::laser_svg(sheet, lp);
         let mut f = json!({
             "sheet": sheet.name,
             "wMm": finite(sheet.w_mm),
@@ -133,6 +140,7 @@ fn emit(cmd: &str, sheets: &[LaserSheet], lp: &LaserParams, out: &Out, base: &st
         });
         match out {
             Out::Path(path) => {
+                let svg = figcraft_stencil::laser_svg(sheet, lp);
                 let path = sheet_path(path, i + 1, n);
                 crate::file_access::write(&path, svg.as_bytes()).map_err(|e| EngineError::Other(format!("{cmd}: {e}")))?;
                 let name = std::path::Path::new(&path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(&path).to_string();
@@ -140,9 +148,11 @@ fn emit(cmd: &str, sheets: &[LaserSheet], lp: &LaserParams, out: &Out, base: &st
                 f["path"] = json!(path);
             }
             Out::Data | Out::Dialog => {
+                let svg = figcraft_stencil::laser_svg(sheet, lp);
                 f["name"] = json!(sheet_path(&format!("{base}.svg"), i + 1, n));
                 f["data"] = json!(base64::engine::general_purpose::STANDARD.encode(svg.as_bytes()));
             }
+            Out::Summary => f["name"] = json!(sheet_path(&format!("{base}.svg"), i + 1, n)),
         }
         files.push(f);
     }
@@ -201,7 +211,10 @@ pub fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let base = format!("{} laser", file_safe(&n.name));
     let files = emit(EXPORT, &job.sheets, &lp, &out, &base)?;
     let params = lp.to_json();
-    s.prefs.picabia_laser = params.clone();
+    // Remembered for the next export; a dry run (the dialog's summary) changes nothing.
+    if out != Out::Summary {
+        s.prefs.picabia_laser = params.clone();
+    }
     Ok(json!({"id": id, "files": files, "sheets": job.sheets.len(), "warnings": job.warnings, "params": params}))
 }
 
@@ -257,6 +270,9 @@ pub fn test_card(s: &mut Session, p: &Value) -> Result<Value> {
     let base = format!("Test card {}", material.id());
     let files = emit(TEST_CARD, std::slice::from_ref(&card), &lp, &out, &base)?;
     let params = lp.to_json();
-    s.prefs.picabia_laser = params.clone();
+    // Remembered for the next export; a dry run (the dialog's summary) changes nothing.
+    if out != Out::Summary {
+        s.prefs.picabia_laser = params.clone();
+    }
     Ok(json!({"files": files, "sheets": 1, "warnings": [], "material": material.id(), "params": params}))
 }

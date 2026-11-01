@@ -89,6 +89,23 @@ fn data_mode_returns_the_files_as_base64() {
 }
 
 #[test]
+fn a_dry_run_describes_the_sheets_and_remembers_nothing() {
+    let mut s = Session::new();
+    let g = stencil(&mut s, json!({}));
+    let before = s.prefs.picabia_laser.clone();
+    for cmd in ["modifier.stencilExport", "modifier.stencilTestCard"] {
+        let r = ex(&mut s, cmd, json!({"id": g, "dryRun": true, "data": true, "kerfMm": 0.3}));
+        let f = &r["files"][0];
+        assert!(f["wMm"].as_f64().unwrap() > 0.0 && f["name"].is_string(), "{r}");
+        assert!(f.get("data").is_none() && f.get("path").is_none(), "{r}");
+        assert_eq!(r["params"]["kerfMm"], 0.3);
+    }
+    assert_eq!(s.prefs.picabia_laser, before, "dry runs leave the remembered settings alone");
+    assert!(s.ui_requests.iter().all(|u| !u.kind.starts_with("dialog.stencil")));
+    assert!(s.execute("modifier.stencilExport", &json!({"id": g, "dryRun": 1})).is_err());
+}
+
+#[test]
 fn without_path_or_data_it_only_asks_for_the_dialog() {
     let mut s = Session::new();
     let g = stencil(&mut s, json!({"material": "card"}));
