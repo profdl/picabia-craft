@@ -132,6 +132,7 @@ pub fn guard(app: &mut FigApp, ctx: &Context, f: impl FnOnce(&mut FigApp)) {
     if let Err(e) = res {
         let msg = e.downcast_ref::<&str>().map(ToString::to_string).or_else(|| e.downcast_ref::<String>().cloned()).unwrap_or_else(|| "panic".into());
         log::error!("UI panic: {msg}");
+        app.session.laser_emergency_stop(); // PICABIA: a panicking frame stops a running laser job
         app.toast(format!("Internal error (please report): {msg}"));
         ctx.request_repaint();
         app.services.emergency_save(&app.session);

@@ -20,6 +20,7 @@ pub mod menus;
 pub mod pending_open;
 pub mod picabia_hide; // PICABIA: prototyping, Dev Mode, boards and live sessions hidden
 mod picabia_laser; // PICABIA: stencil laser export and test card dialogs
+mod picabia_laser_panel; // PICABIA: the Laser window (laser.panel)
 mod picabia_ui; // PICABIA: modifier menus, layers badge, Inspect and a11y lines
 pub mod popover;
 pub mod present;
@@ -548,6 +549,8 @@ pub struct UiState {
     pub online: online::OnlineUi,
     /// PICABIA: the stencil laser export / test card dialog, when open.
     pub picabia_laser: Option<picabia_laser::LaserDialog>,
+    /// PICABIA: the Laser window (open or not: it keeps its settings).
+    pub picabia_laser_panel: picabia_laser_panel::LaserPanel,
     /// The window was asked to close with unsaved changes: the question shows.
     pub confirm_close: bool,
     /// The file a Save as started from the unsaved-changes question is saving: the window closes
@@ -674,6 +677,8 @@ impl Default for UiState {
             live: live::LiveUi::default(),
             online: online::OnlineUi::default(),
             picabia_laser: None, // PICABIA: laser dialog
+            // PICABIA: the Laser window
+            picabia_laser_panel: Default::default(),
             confirm_close: false,
             close_after_save_as: None,
             save_on_close: false,

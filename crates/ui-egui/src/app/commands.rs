@@ -192,6 +192,7 @@ impl FigApp {
                 // PICABIA: a stencil's laser export and test card dialogs.
                 "dialog.stencilExport" => crate::picabia_laser::open(self, crate::picabia_laser::Kind::Export, &r.data),
                 "dialog.stencilTestCard" => crate::picabia_laser::open(self, crate::picabia_laser::Kind::TestCard, &r.data),
+                "dialog.laserPanel" => crate::picabia_laser_panel::open(self), // PICABIA: the Laser window
                 "dialog.colorProfile" => self.ui.color_profile = self.session.doc().ok().map(|d| d.color_profile),
                 "present" => {
                     if let Some(start) = r.data.get("start").and_then(figcraft_engine::params::id_of) {

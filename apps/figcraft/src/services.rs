@@ -267,6 +267,7 @@ const STATE: &str = "state.json";
 /// preferences in `dir`, this run's recovery copies ([`Recovery::quit`](crate::recovery::Recovery::quit))
 /// and the live sessions' ends (one this app hosts tells everyone and stops; a joined one leaves).
 pub fn shutdown(app: &mut FigApp, dir: Option<&Path>, recovery: Option<crate::recovery::Recovery>) {
+    app.session.laser_shutdown(); // PICABIA: quitting stops a running laser job and closes the port
     if let Some(dir) = dir {
         write_prefs(dir, &app.session.prefs);
     }

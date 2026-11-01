@@ -214,6 +214,7 @@ impl FigApp {
         self.poll_dialog(&ctx);
         // Control requests run first so their results reflect this frame.
         crate::control::drain(self, &ctx);
+        crate::picabia_laser_panel::stop_shortcut(self, &ctx); // PICABIA: Shift+Esc stops the laser
         windows::requests(self, &ctx);
         selection_spacing::sync(self, &ctx);
         // Before any widget: the navigation keys (F6, Tab, arrows, Escape) move the keyboard.

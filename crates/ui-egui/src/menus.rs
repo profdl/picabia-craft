@@ -287,6 +287,9 @@ fn menu_level(app: &mut FigApp, ui: &mut Ui, prefix: &str) -> bool {
             if crate::picabia_ui::object_menu_after(m.id) && crate::picabia_ui::object_menu(app, ui, prefix, &t) {
                 return true; // PICABIA: Object ▸ Modifiers
             }
+            if crate::picabia_laser_panel::file_menu_after(m.id) && crate::picabia_laser_panel::file_menu(app, ui, &t) {
+                return true; // PICABIA: File ▸ Laser…
+            }
         } else if let Some(rest) = m.menu.strip_prefix(prefix).and_then(|r| r.strip_prefix('/')) {
             let sub = rest.split('/').next().unwrap_or(rest).to_string();
             if !subs.contains(&sub) {

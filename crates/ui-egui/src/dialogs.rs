@@ -399,6 +399,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     }
     color_profile_dialog(app, ctx);
     crate::picabia_laser::show(app, ctx); // PICABIA: stencil laser dialogs
+    crate::picabia_laser_panel::show(app, ctx); // PICABIA: the Laser window
     crate::plugins_ui::show(app, ctx);
     crate::live::join_dialog(app, ctx);
     crate::live::publish_dialog(app, ctx);
