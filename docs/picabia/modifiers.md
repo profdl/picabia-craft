@@ -254,6 +254,13 @@ read too; they are written lowercase).
 | `patternSpacingMm` | mm | 0.5 to 500, at least twice the width | 8 | `pattern`: centre-to-centre spacing of the bars |
 | `patternAngle` | degrees | wrapped to 0 to 360 | 0 | `pattern`: rotates the lattice (counter-clockwise on the canvas). The lattice is anchored at the sheet's top-left corner, so it stays put when the design changes |
 | `patternWhere` | choice | `everywhere`, `islands` | `everywhere` | `pattern`: across every cut-out, or only in the cut-outs that border an island. An unknown value reads as `everywhere` |
+| `material` | choice | `paper`, `film`, `card`, `custom` | `paper` | The sheet material. Setting a preset fills `minCutWidthMm`, `minBridgeMm`, `tieWidthMm` and `minCornerAngle` (unless the same edit sets them): paper 0.3 / 0.5 / 1 / 30 (the defaults), film (mylar, PET) 0.2 / 0.4 / 0.6 / 20, card 0.5 / 1 / 1.5 / 35. Changing one of those four away from the preset makes it `custom`. An unknown value reads as `paper` |
+| `limitMode` | choice | `fix`, `flag` | `fix` | `fix`: clean-up removes narrow slivers and bridges and drops small pieces. `flag`: clean-up only simplifies; every cut or bridge that breaks the limits stays and is reported. An unknown value reads as `fix` |
+| `minCornerAngle` | degrees | 0 to 179 | 30 | Paper corners sharper than this are flagged |
+| `hoshi` | on/off | | on | Registration holes (hoshi) at the corners of the sheet, or of the tile |
+| `hoshiDiameterMm` | mm | 0.2 to 20 | 1.5 | Diameter of the registration holes |
+| `repeat` | choice | `auto`, `off` | `auto` | `auto`: when the last `wallpaper` or `gridArray` row above the stencil still forms a lattice (no per-copy or array row after it), islands and ties follow the repeat. `off`: the design is one picture. An unknown value reads as `auto` |
+| `output` | choice | `sheet`, `tile` | `sheet` | `sheet`: the whole design. `tile`: one repeat cell plus margin and registration holes, for step-and-repeat printing; without a repeat it cuts the sheet, with a warning. An unknown value reads as `sheet` |
 
 Numbers outside their range are clamped when evaluating (a warning names the field); a colour that
 doesn't read takes its default. `cutColours` can't be bound to a variable.

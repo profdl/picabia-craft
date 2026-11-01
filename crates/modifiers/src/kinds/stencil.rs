@@ -6,8 +6,8 @@
 
 use super::Clamp;
 use crate::model::{
-    MAX_PATTERN_SPACING_MM, MAX_TIE_WIDTH_MM, MAX_TIES_PER_ISLAND, MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, Stencil, StencilColourMode, hex_colour,
-    parse_hex_colour,
+    MAX_CORNER_ANGLE, MAX_HOSHI_DIAMETER_MM, MAX_PATTERN_SPACING_MM, MAX_TIE_WIDTH_MM, MAX_TIES_PER_ISLAND, MIN_HOSHI_DIAMETER_MM,
+    MIN_PATTERN_SPACING_MM, MIN_TIE_WIDTH_MM, Stencil, StencilColourMode, hex_colour, parse_hex_colour,
 };
 
 /// `a` degrees in `0..360` (the same direction).
@@ -43,6 +43,8 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
         pattern_spacing_mm = 2.0 * pattern_width_mm;
     }
     let tie_width_mm = c.within("tieWidthMm", p.tie_width_mm, MIN_TIE_WIDTH_MM, MAX_TIE_WIDTH_MM, d.tie_width_mm);
+    let min_corner_angle = c.within("minCornerAngle", p.min_corner_angle, 0.0, MAX_CORNER_ANGLE, d.min_corner_angle);
+    let hoshi_diameter_mm = c.within("hoshiDiameterMm", p.hoshi_diameter_mm, MIN_HOSHI_DIAMETER_MM, MAX_HOSHI_DIAMETER_MM, d.hoshi_diameter_mm);
     let colour_mode = match p.colour_mode {
         StencilColourMode::Separate => {
             warnings.push("one stencil per colour (`separate`) isn't available yet; cutting by threshold".into());
@@ -114,6 +116,13 @@ pub(crate) fn clamped(p: &Stencil) -> (Stencil, Vec<String>) {
         pattern_spacing_mm,
         pattern_angle,
         pattern_where: p.pattern_where,
+        material: p.material,
+        limit_mode: p.limit_mode,
+        min_corner_angle,
+        hoshi: p.hoshi,
+        hoshi_diameter_mm,
+        repeat: p.repeat,
+        output: p.output,
     };
     (out, warnings)
 }
@@ -150,7 +159,9 @@ mod tests {
                 "invert": false, "widthMm": 300.0, "marginMm": 15.0, "minCutAreaMm2": 0.5, "minCutWidthMm": 0.3, "minBridgeMm": 0.5,
                 "toleranceMm": 0.05, "preview": "paper", "paperColour": "#c8a165", "pasteColour": "#1f3a8a", "clothColour": "#f4efe6",
                 "tieMode": "ties", "tieWidthMm": 1.0, "tiesPerIsland": 2, "tieSpread": true, "tieAngle": null, "tieSeed": 1,
-                "patternType": "grid", "patternWidthMm": 0.6, "patternSpacingMm": 8.0, "patternAngle": 0.0, "patternWhere": "everywhere"})
+                "patternType": "grid", "patternWidthMm": 0.6, "patternSpacingMm": 8.0, "patternAngle": 0.0, "patternWhere": "everywhere",
+                "material": "paper", "limitMode": "fix", "minCornerAngle": 30.0, "hoshi": true, "hoshiDiameterMm": 1.5, "repeat": "auto",
+                "output": "sheet"})
         );
         assert_eq!(Stencil::default().clamped(), (Stencil::default(), Vec::new()), "defaults are in range");
     }
@@ -361,6 +372,67 @@ mod tests {
         let (c, _) = Stencil { pattern_spacing_mm: 1e9, ..Stencil::default() }.clamped();
         assert_eq!(c.pattern_spacing_mm, MAX_PATTERN_SPACING_MM);
         let _ = MIN_PATTERN_SPACING_MM;
+    }
+
+    #[test]
+    fn material_limit_hoshi_repeat_and_output_fields() {
+        let p = stencil_of(json!({"kind": "stencil", "material": "film", "limitMode": "flag", "minCornerAngle": "45", "hoshi": false,
+            "hoshiDiameterMm": 3, "repeat": "off", "output": "tile"}));
+        assert_eq!(
+            (p.material, p.limit_mode, p.min_corner_angle, p.hoshi, p.hoshi_diameter_mm, p.repeat, p.output),
+            (StencilMaterial::Film, StencilLimitMode::Flag, 45.0, false, 3.0, StencilRepeat::Off, StencilOutput::Tile)
+        );
+        assert_eq!(p.clamped(), (p.clone(), Vec::new()), "in range");
+        let m = Modifier::from_value(&json!({"kind": "stencil", "material": "film", "output": "tile"})).unwrap();
+        let back = m.to_value();
+        assert_eq!((back["material"].clone(), back["output"].clone()), (json!("film"), json!("tile")));
+        assert_eq!(Modifier::from_value(&back).unwrap(), m, "round trip");
+        // Unknown choices read as the defaults.
+        let p = stencil_of(json!({"kind": "stencil", "material": "silk", "limitMode": 3, "repeat": "always", "output": "roll"}));
+        assert_eq!(
+            (p.material, p.limit_mode, p.repeat, p.output),
+            (StencilMaterial::Paper, StencilLimitMode::Fix, StencilRepeat::Auto, StencilOutput::Sheet)
+        );
+        // Clamping.
+        let (c, w) = Stencil { min_corner_angle: 200.0, hoshi_diameter_mm: 0.0, ..Stencil::default() }.clamped();
+        assert_eq!((c.min_corner_angle, c.hoshi_diameter_mm), (MAX_CORNER_ANGLE, MIN_HOSHI_DIAMETER_MM));
+        assert_eq!(w.len(), 2, "{w:?}");
+        let (c, w) = Stencil { min_corner_angle: f64::NAN, hoshi_diameter_mm: 1e9, ..Stencil::default() }.clamped();
+        assert_eq!((c.min_corner_angle, c.hoshi_diameter_mm), (30.0, MAX_HOSHI_DIAMETER_MM));
+        assert_eq!(w.len(), 2, "{w:?}");
+        let (c, _) = Stencil { min_corner_angle: -5.0, ..Stencil::default() }.clamped();
+        assert_eq!(c.min_corner_angle, 0.0);
+        assert!(Modifier::from_value(&json!({"kind": "stencil", "hoshi": 1})).is_ok_and(|m| matches!(m.kind, ModifierKind::Other { .. })));
+    }
+
+    #[test]
+    fn material_presets() {
+        let paper = StencilMaterial::Paper.limits().unwrap();
+        let d = Stencil::default();
+        assert_eq!(
+            (paper.min_cut_width_mm, paper.min_bridge_mm, paper.tie_width_mm, paper.min_corner_angle),
+            (d.min_cut_width_mm, d.min_bridge_mm, d.tie_width_mm, d.min_corner_angle),
+            "paper is exactly the defaults"
+        );
+        assert_eq!(paper.kerf_mm, 0.10);
+        let film = StencilMaterial::Film.limits().unwrap();
+        assert_eq!((film.min_cut_width_mm, film.min_bridge_mm, film.tie_width_mm, film.min_corner_angle, film.kerf_mm), (0.2, 0.4, 0.6, 20.0, 0.08));
+        let card = StencilMaterial::Card.limits().unwrap();
+        assert_eq!((card.min_cut_width_mm, card.min_bridge_mm, card.tie_width_mm, card.min_corner_angle, card.kerf_mm), (0.5, 1.0, 1.5, 35.0, 0.15));
+        assert_eq!(StencilMaterial::Custom.limits(), None);
+        for m in StencilMaterial::ALL {
+            assert_eq!(serde_json::to_value(m).unwrap(), json!(m.id()));
+            if let Some(l) = m.limits() {
+                let p = Stencil {
+                    min_cut_width_mm: l.min_cut_width_mm,
+                    min_bridge_mm: l.min_bridge_mm,
+                    tie_width_mm: l.tie_width_mm,
+                    min_corner_angle: l.min_corner_angle,
+                    ..d.clone()
+                };
+                assert_eq!(p.clamped().1, Vec::<String>::new(), "{m:?}'s preset is in range");
+            }
+        }
     }
 
     #[test]

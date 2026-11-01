@@ -440,6 +440,105 @@ pub enum StencilPatternWhere {
     Islands,
 }
 
+/// The sheet a [`Stencil`] is cut from: a preset of the four cutting limits (see
+/// [`StencilMaterial::limits`]) or `custom` (the fields as set).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilMaterial {
+    /// Kakishibu (persimmon-tannin) paper: the stencil's defaults.
+    #[default]
+    Paper,
+    /// Mylar / PET film: finer cuts and bridges hold.
+    Film,
+    /// Card: coarser cuts, wider bridges and ties.
+    Card,
+    /// No preset: the limit fields as set.
+    Custom,
+}
+
+/// The cutting limits of a [`StencilMaterial`] preset: the four [`Stencil`] fields it fills, plus
+/// the laser kerf (for export; not a field).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaterialLimits {
+    /// [`Stencil::min_cut_width_mm`].
+    pub min_cut_width_mm: f64,
+    /// [`Stencil::min_bridge_mm`].
+    pub min_bridge_mm: f64,
+    /// [`Stencil::tie_width_mm`].
+    pub tie_width_mm: f64,
+    /// [`Stencil::min_corner_angle`], degrees.
+    pub min_corner_angle: f64,
+    /// The laser's cut width in this material, mm.
+    pub kerf_mm: f64,
+}
+
+impl StencilMaterial {
+    /// Every material, presets first, in menu order.
+    pub const ALL: [StencilMaterial; 4] = [StencilMaterial::Paper, StencilMaterial::Film, StencilMaterial::Card, StencilMaterial::Custom];
+
+    /// The preset's limits; `None` for `custom`. `paper` is exactly the [`Stencil`] defaults.
+    pub fn limits(self) -> Option<MaterialLimits> {
+        let l = |min_cut_width_mm, min_bridge_mm, tie_width_mm, min_corner_angle, kerf_mm| MaterialLimits {
+            min_cut_width_mm,
+            min_bridge_mm,
+            tie_width_mm,
+            min_corner_angle,
+            kerf_mm,
+        };
+        match self {
+            StencilMaterial::Paper => Some(l(0.3, 0.5, 1.0, 30.0, 0.10)),
+            StencilMaterial::Film => Some(l(0.2, 0.4, 0.6, 20.0, 0.08)),
+            StencilMaterial::Card => Some(l(0.5, 1.0, 1.5, 35.0, 0.15)),
+            StencilMaterial::Custom => None,
+        }
+    }
+
+    /// The id written in the file (`"paper"`, `"film"`, `"card"`, `"custom"`).
+    pub fn id(self) -> &'static str {
+        match self {
+            StencilMaterial::Paper => "paper",
+            StencilMaterial::Film => "film",
+            StencilMaterial::Card => "card",
+            StencilMaterial::Custom => "custom",
+        }
+    }
+}
+
+/// What a [`Stencil`]'s clean-up does with cuts and bridges that break its limits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilLimitMode {
+    /// Clean-up fixes them: narrow slivers and bridges are opened/closed away, small pieces dropped.
+    #[default]
+    Fix,
+    /// Clean-up only simplifies: every violation stays and is reported.
+    Flag,
+}
+
+/// Whether a [`Stencil`] uses the repeat of a `wallpaper` or `gridArray` row above it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilRepeat {
+    /// Repeat-aware when the last lattice row above is a `wallpaper` or `gridArray` (and nothing
+    /// after it breaks the lattice): see [`crate::Output::repeat`].
+    #[default]
+    Auto,
+    /// Treat the design as one picture.
+    Off,
+}
+
+/// What a [`Stencil`] cuts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum StencilOutput {
+    /// The whole design on one sheet.
+    #[default]
+    Sheet,
+    /// One repeat cell plus margin and registration holes, for step-and-repeat printing. Without
+    /// a repeat it evaluates as `sheet` with a warning.
+    Tile,
+}
+
 /// `stencil`: turn the layer (everything the rows above it drew) into a laser-cut katagami stencil.
 /// **Terminal**: it adds no copies (the copies of the rows above stand), and enabled rows below it
 /// are ignored with a warning; the evaluated [`crate::Output::stencil`] carries its params (clamped)
@@ -514,6 +613,26 @@ pub struct Stencil {
     /// default.
     #[serde(deserialize_with = "lenient::choice")]
     pub pattern_where: StencilPatternWhere,
+    /// The sheet material: a preset fills `minCutWidthMm`, `minBridgeMm`, `tieWidthMm` and
+    /// `minCornerAngle` ([`Modifier::set_props`]); editing one of those away from the preset makes
+    /// it `custom`. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub material: StencilMaterial,
+    /// Fix or only flag cuts and bridges that break the limits. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub limit_mode: StencilLimitMode,
+    /// Paper corners sharper than this many degrees are flagged, 0–179.
+    pub min_corner_angle: f64,
+    /// Registration holes (hoshi) at the sheet's or tile's corners.
+    pub hoshi: bool,
+    /// The registration holes' diameter, 0.2–20 mm.
+    pub hoshi_diameter_mm: f64,
+    /// Use the repeat of a lattice row above. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub repeat: StencilRepeat,
+    /// The whole sheet or one repeat tile. Unknown values read as the default.
+    #[serde(deserialize_with = "lenient::choice")]
+    pub output: StencilOutput,
 }
 
 /// The most entries [`Stencil::cut_colours`] keeps.
@@ -528,6 +647,12 @@ pub const MAX_TIE_WIDTH_MM: f64 = 50.0;
 pub const MIN_PATTERN_SPACING_MM: f64 = 0.5;
 /// [`Stencil::pattern_spacing_mm`]'s range, mm.
 pub const MAX_PATTERN_SPACING_MM: f64 = 500.0;
+/// [`Stencil::min_corner_angle`]'s range, degrees.
+pub const MAX_CORNER_ANGLE: f64 = 179.0;
+/// [`Stencil::hoshi_diameter_mm`]'s range, mm.
+pub const MIN_HOSHI_DIAMETER_MM: f64 = 0.2;
+/// [`Stencil::hoshi_diameter_mm`]'s range, mm.
+pub const MAX_HOSHI_DIAMETER_MM: f64 = 20.0;
 /// [`Stencil::paper_colour`]'s default: kakishibu (persimmon-tannin) paper brown.
 pub const STENCIL_PAPER: &str = "#c8a165";
 /// [`Stencil::paste_colour`]'s default: indigo.
@@ -563,6 +688,13 @@ impl Default for Stencil {
             pattern_spacing_mm: 8.0,
             pattern_angle: 0.0,
             pattern_where: StencilPatternWhere::Everywhere,
+            material: StencilMaterial::Paper,
+            limit_mode: StencilLimitMode::Fix,
+            min_corner_angle: 30.0,
+            hoshi: true,
+            hoshi_diameter_mm: 1.5,
+            repeat: StencilRepeat::Auto,
+            output: StencilOutput::Sheet,
         }
     }
 }

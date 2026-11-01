@@ -1,6 +1,6 @@
 //! Evaluating a stack into instances.
 
-use figcraft_geom::{Affine, Point, Rect};
+use figcraft_geom::{Affine, Point, Rect, Vec2};
 
 use crate::kinds::{self, Ctx, Stage};
 use crate::model::{ModifierKind, Stack, Stencil};
@@ -55,6 +55,22 @@ pub struct Output {
     /// engine and renderer turn what the copies above it draw into a stencil sheet. `None` = no
     /// stencil (draw the copies as they are).
     pub stencil: Option<StencilRow>,
+    /// The translation lattice the stencil can repeat along: set only when the stack ends in an
+    /// enabled stencil row with `repeat: auto` and the last `wallpaper` or `gridArray` row above it
+    /// still forms a lattice (no per-copy or array row after it). `None` otherwise.
+    pub repeat: Option<Repeat>,
+}
+
+/// A translation lattice in the layer's parent space (like [`Instance::transform`]): the copies
+/// repeat at `origin + i·a + j·b`. A zero vector means "no repeat along it" (a grid of one column
+/// has `a` = 0, of one row `b` = 0).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Repeat {
+    /// A lattice point: the wallpaper's symmetry origin, or the grid's top-left corner (the layer
+    /// bounds' top-left).
+    pub origin: Point,
+    pub a: Vec2,
+    pub b: Vec2,
 }
 
 /// The terminal stencil row of an evaluated stack ([`Output::stencil`]).
