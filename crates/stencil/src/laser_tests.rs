@@ -311,6 +311,8 @@ fn labels_go_in_the_bottom_margin_clear_of_the_cut() {
     assert!(!s.engrave.is_empty());
     let all = s.engrave.iter().flatten().fold(Rect::from_points(s.engrave[0][0], s.engrave[0][0]), |b, &p| b.union_pt(p));
     assert!(all.y0 > 85.0 && all.y1 < 100.0 && all.x0 >= 1.5, "bottom margin from the left: {all:?}");
+    // Away from the frayable edges: 6 mm beyond the 1.5 mm padding fits in the 15 mm margin.
+    assert!(all.x0 >= 7.5 && all.y1 <= 92.6, "inset from the edges: {all:?}");
     // Off: nothing engraved.
     let job = laser_job(&inp, &LaserParams { label: false, ..LaserParams::default() });
     assert!(only(&job).engrave.is_empty());
