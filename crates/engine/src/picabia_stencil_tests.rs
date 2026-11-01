@@ -617,14 +617,13 @@ fn tile_output_places_the_sheet_on_the_repeat_cell() {
     let n = d.node(g).unwrap().clone();
     assert!(!store::is_fresh(&d, &n), "output sheet: stale");
     assert_eq!(store::frame(&d, &n).unwrap().sheet, Rect::new(-3.0, -3.0, 63.0, 63.0));
-    ensure(&d);
-    assert!(store::is_fresh(&d, &n));
+    let i = compute_now(&d, g).unwrap();
+    assert!(i.tile_mm.is_none() && i.repeat.is_some());
     set_stack(&mut d, g, json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "tieSeed": 4711, "repeat": "off"}]));
     let n = d.node(g).unwrap().clone();
     assert!(!store::is_fresh(&d, &n), "repeat off: stale");
-    ensure(&d);
-    let (i, fresh) = info(&d, &n).unwrap();
-    assert!(fresh && i.repeat.is_none() && i.stats.repeat_islands == 0);
+    let i = compute_now(&d, g).unwrap();
+    assert!(i.repeat.is_none() && i.cell.is_none() && i.stats.repeat_islands == 0);
     // Tile without a repeat: the whole sheet.
     set_stack(&mut d, g, json!([grid_row(3, 3), {"id": "s1", "kind": "stencil", "repeat": "off", "output": "tile"}]));
     let n = d.node(g).unwrap().clone();
@@ -665,4 +664,31 @@ fn the_tile_frame_matches_what_the_stencil_cuts() {
             }
         }
     }
+}
+
+#[test]
+fn svg_and_pdf_exports_write_the_tile_where_it_is_cut() {
+    let mut s = Session::new();
+    let ids: Vec<NodeId> = [(0.0, 0.0, 20.0, BLACK), (14.0, 14.0, 6.0, WHITE), (18.0, 18.0, 2.0, BLACK)]
+        .into_iter()
+        .map(|(x, y, w, hex)| {
+            let id = id_of(&ex(&mut s, "shape.rectangle", json!({"x": x, "y": y, "width": w, "height": w}))["id"]).unwrap();
+            ex(&mut s, "node.set", json!({"ids": [id], "props": {"fills": [{"type": "solid", "color": format!("#{hex}")}]}}));
+            id
+        })
+        .collect();
+    let g = id_of(&ex(&mut s, "modifier.stencilFromSelection", json!({"ids": ids, "props": {"output": "tile", "tieSeed": 99}}))["id"]).unwrap();
+    ex(&mut s, "modifier.add", json!({"ids": [g], "kind": "gridArray", "props": {"rows": 3, "cols": 3, "gapX": 0, "gapY": 0}, "index": 0}));
+    let i = ex(&mut s, "modifier.stencilInfo", json!({"id": g}));
+    assert_eq!(i["tile"], json!({"w": 130.0, "h": 130.0}), "{i}");
+    let out = ex(&mut s, "file.export", json!({"ids": [g], "format": "svg"}));
+    use base64::Engine as _;
+    let svg = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(out["data"].as_str().unwrap()).unwrap()).unwrap();
+    // The tile: the 20-unit cell plus a 3-unit margin each side, not the 66-unit sheet.
+    assert!(svg.contains("width=\"26\"") && svg.contains("height=\"26\""), "{svg}");
+    assert!(svg.contains("fill=\"#c8a165\"") && !svg.contains("fill=\"#000000\""), "{svg}");
+    let out = ex(&mut s, "file.export", json!({"ids": [g], "format": "pdf"}));
+    let pdf = base64::engine::general_purpose::STANDARD.decode(out["data"].as_str().unwrap()).unwrap();
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("/MediaBox [0 0 26 26]") || text.contains("/MediaBox[0 0 26 26]"), "the page is the tile");
 }

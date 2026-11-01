@@ -394,25 +394,11 @@ fn has_result(id: NodeId) -> bool {
     lock().iter().any(|e| e.id == id)
 }
 
-/// The sheet of layer `id`'s latest stored result (layer space).
-fn latest_sheet(id: NodeId) -> Option<Rect> {
-    lock().iter().filter(|e| e.id == id).max_by_key(|e| e.stamp).map(|e| e.shape.sheet)
-}
-
 /// Whether stencil layer `n` draws only a repeat tile: tile output with a repeat, and a result to
 /// draw (until the first one lands the design draws as usual). Its design's place then doesn't
 /// count for bounds or hit testing, only the sheet.
 pub fn draws_tile(doc: &Document, n: &Node) -> bool {
     has_stack(n) && frame(doc, n).is_some_and(|f| f.cell.is_some()) && has_result(n.id)
-}
-
-/// Layer `n`'s sheet in its own space: where [`frame`] puts it, and while the latest result is
-/// stale also where that one was cut (it still draws there).
-fn own_sheet(f: &Frame, n: &Node) -> Rect {
-    match latest_sheet(n.id) {
-        Some(s) if s.is_finite() && s != f.sheet => f.sheet.union(s),
-        _ => f.sheet,
-    }
 }
 
 /// Whether layer `n` has a result computed from what `doc` holds now.
@@ -500,7 +486,7 @@ pub fn parent_sheet(doc: &Document, n: &Node) -> Option<Rect> {
         return None;
     }
     let f = frame(doc, n)?;
-    Some(figcraft_geom::transform_rect_bbox(n.transform, own_sheet(&f, n)))
+    Some(figcraft_geom::transform_rect_bbox(n.transform, f.sheet))
 }
 
 /// The sheet of stencil layer `id` on its page.
@@ -510,7 +496,7 @@ pub fn world_sheet(doc: &Document, id: NodeId) -> Option<Rect> {
         return None;
     }
     let f = frame(doc, n)?;
-    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), own_sheet(&f, n)))
+    Some(figcraft_geom::transform_rect_bbox(doc.world_transform(id), f.sheet))
 }
 
 /// Whether page point `p` lies on stencil layer `id`'s sheet.
