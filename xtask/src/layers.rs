@@ -30,6 +30,9 @@ const TABLE: &[(&str, u8)] = &[
     ("collab-net", 6),
 ];
 
+/// PICABIA: the vendored VectorCraft crates (vendor/vectorcraft/README.md), by full package name.
+const VENDORED: &[(&str, u8)] = &[("vectorcraft-geom", 0), ("vectorcraft-pathops", 2), ("vectorcraft-trace", 2)];
+
 /// Networking crates: only L6 (`collab-net`) may use them.
 const NETWORK: &[&str] = &["tungstenite", "tokio", "tokio-tungstenite", "mio", "socket2"];
 
@@ -40,7 +43,8 @@ pub fn check(root: &std::path::Path) -> bool {
         .output();
     let Ok(out) = out else { return false };
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else { return false };
-    let layer: BTreeMap<String, u8> = TABLE.iter().map(|(n, l)| (format!("figcraft-{n}"), *l)).collect();
+    let layer: BTreeMap<String, u8> =
+        TABLE.iter().map(|(n, l)| (format!("figcraft-{n}"), *l)).chain(VENDORED.iter().map(|(n, l)| (n.to_string(), *l))).collect(); // PICABIA: + vendored
     let mut ok = true;
     for pkg in v["packages"].as_array().cloned().unwrap_or_default() {
         let name = pkg["name"].as_str().unwrap_or("").to_string();

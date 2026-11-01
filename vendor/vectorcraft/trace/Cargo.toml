@@ -1,0 +1,33 @@
+[package]
+name = "vectorcraft-trace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VectorCraft Image Trace: raster to vector tracing (quantize, boundary follow, polygon, Bezier fit)"
+
+# PICABIA: VectorCraft's own workspace lint table (figcraft's differs: `unsafe_code = "forbid"` cannot
+# be overridden by the vendored trace tests, and its style allows are not needed here).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+[dependencies]
+vectorcraft-geom = { workspace = true }
+kurbo = { workspace = true }
+image = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

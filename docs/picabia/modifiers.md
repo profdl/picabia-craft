@@ -1,6 +1,6 @@
 # Modifiers
 
-> Params as of P8 (this page follows the code).
+> Params as of P8; `imageTrace` and `pathfinder` (P13, P14) are specified ahead of the code.
 
 A **modifier stack** is a list of live, non-destructive steps attached to a layer. The layer keeps
 its own geometry; the stack describes how it is repeated and transformed. Edit the layer or any
@@ -20,6 +20,11 @@ source, and copies never take part in auto layout.
   wherever their row sits in the stack: each copy gets its own values, and `i`/`n` count all the
   copies. (Their position among the arrays doesn't change the result; their order among
   themselves does.)
+- A **generator** step (`imageTrace`, `pathfinder`) replaces what the layer draws with new
+  geometry computed from it. The copies the steps above it made are its **input** (folded into one
+  result); the steps below it act on the **result**: arrays copy it, per-instance steps vary those
+  copies, a stencil cuts it. Only the first enabled generator counts; later ones are ignored with a
+  warning. Per-instance steps above a generator vary its input copies, those below vary the result's.
 - A **stencil** step ends the stack (see `stencil` below): it adds no copies, and the enabled steps
   below it are ignored with one warning.
 - A disabled step is skipped. An empty or fully disabled stack draws the layer normally.
@@ -264,6 +269,129 @@ read too; they are written lowercase).
 
 Numbers outside their range are clamped when evaluating (a warning names the field); a colour that
 doesn't read takes its default. `cutColours` can't be bound to a variable.
+
+### imageTrace
+
+Traces a layer's image into vector shapes, live: change a field and the trace follows. It is a
+**generator** step (see Evaluation order). The tracer is VectorCraft's Image Trace (vendored
+unchanged, `vendor/vectorcraft/trace`), so the fields, presets and defaults are VectorCraft's.
+
+**Which layers.** FigCraft has no image layer: an image is an image fill on a rectangle, frame,
+ellipse or any other shape. So `imageTrace` works on **any layer with a visible image fill**. It
+traces the layer **as it draws**: the crop, scale mode, rotation and adjustments of the fill, the
+layer's shape (rounded corners, an ellipse), its other fills, its strokes and its children. Outside
+the shape counts as transparent and is never traced. A layer without a visible image fill draws as
+usual, with the warning "imageTrace needs a layer with an image fill".
+
+**Resolution.** The layer is rendered at its image's own pixel density (the densest image fill's
+pixels per layer point, clamped to 0.05 to 16), so a 4000 px photo in a 400 pt box is traced at
+4000 px. `paths`, `noise` and `strokeWidth` count those **image pixels**, as in VectorCraft. The
+rendered raster is capped at 16 megapixels natively and 4 megapixels in the browser (scaled down,
+with a warning), and the result at 8 million anchors natively and 2 million in the browser (past
+it: the warning "the trace is too detailed", and the previous result or the image stays drawn).
+
+**What it draws.** The traced paths in their palette colours, bottom first, in place of the whole
+layer: filled regions (non-zero), and for Create: Strokes, centre lines stroked `strokeWidth` wide
+(round caps and joins). The image stays in the document, untouched. An empty, fully transparent or
+fully ignored image traces to nothing (a warning says so). The stats line in the panel and
+`modifier.resultInfo` give the paths, anchors and colours.
+
+**Rows above and below.** Rows above make copies of the image; the trace is computed once and
+drawn at each copy (an array above `imageTrace` therefore looks the same as below it). Rows below
+act on the traced result: arrays copy it, a `stencil` cuts the traced vectors (photo → trace →
+stencil sheet).
+
+**Apply** bakes the rows down to the trace: the layer is replaced by a group named
+"<layer> (traced)" with one vector layer per traced path, bottom first, as VectorCraft's Expand
+makes it (no per-colour merge). Each is named by its colour (`#1f3a8a`); filled paths get a solid
+fill, stroked ones a centre-line stroke and no fill. The image is **removed**, like Expand (Undo
+brings it back). The rows below move onto the group, live.
+
+| Field | Unit | Range | Default | Meaning |
+|---|---|---|---|---|
+| `preset` | choice | `default`, `autoColor`, `highFidelityPhoto`, `lowFidelityPhoto`, `threeColors`, `sixColors`, `sixteenColors`, `shadesOfGray`, `blackAndWhiteLogo`, `sketchedArt`, `silhouettes`, `lineArt`, `technicalDrawing`, `outline`, `flatLogo`, `custom` | `default` | VectorCraft's presets. Setting one fills every field below (unless the same edit sets them); changing a field away from the preset makes it `custom`. An unknown value reads as `custom` |
+| `mode` | choice | `blackAndWhite`, `grayscale`, `color`, `logo` | `blackAndWhite` | Black and White, Grayscale, Color, Flat Logo. An unknown value reads as `blackAndWhite` |
+| `palette` | choice | `limited`, `fullTone`, `automatic` | `limited` | `color` mode: how the colours are picked. VectorCraft's `documentLibrary` reads as `limited` with a warning |
+| `colors` | count | 2 to 256 (logo: 2 to 10) | 6 | Grays (grayscale), colours (`limited`, logo) |
+| `colorDetail` | % | 0 to 100 | 50 | Colours (`fullTone`, `automatic`) |
+| `threshold` | level | 0 to 255 | 128 | Black and white: lighter pixels are white |
+| `paths` | % | 0 to 100 | 50 | How tightly the paths follow the pixels (0.78 px at 0, 0.08 px at 100) |
+| `corners` | % | 0 to 100 | 75 | More corners when higher (a corner turns more than 90 − 0.55 × `corners` degrees) |
+| `noise` | image px | 1 to 100 | 25 | Areas smaller than this many pixels merge into a neighbour |
+| `method` | choice | `abutting`, `overlapping` | `abutting` | `abutting`: each colour its own area; `overlapping`: each layer runs under the ones above it (no hairline gaps) |
+| `fills` | on/off | | on | Create: Fills |
+| `strokes` | on/off | | off | Create: Strokes (parts no wider than `strokeWidth` become stroked centre lines). Turning both off turns `fills` back on, with a warning |
+| `strokeWidth` | image px | 1 to 100 | 10 | Create: Strokes: the widest part traced as a line |
+| `snapCurvesToLines` | on/off | | off | Straighten nearly straight curves |
+| `ignoreWhite` | on/off | | off | Leave white (or `ignoreColor`) out |
+| `ignoreColor` | colour or none | | none | With `ignoreWhite`: the colour left out instead of white |
+
+Not offered yet (VectorCraft has them): Shapes, Auto Grouping, Gradients, Document Library and the
+logo colour list.
+
+### pathfinder
+
+Illustrator-style Pathfinder on a group's contents, live. It is a **generator** step: the layer
+draws the result instead of its contents. The geometry is VectorCraft's Pathfinder (vendored
+unchanged, `vendor/vectorcraft/pathops`).
+
+**Which layers.** Groups, frames and boolean groups. Anything else draws as usual with the warning
+"pathfinder works on a group, frame or boolean group".
+
+**Input.** What the layer draws, as filled shapes in paint order (back first), gathered as the
+stencil gathers its design: every visible leaf, strokes outlined into shapes of their own (so a
+stroke is a separate shape in front of its fill), text as glyph outlines, transforms, boolean
+groups inside, frame clips and masks applied, and the **copies** the modifier stacks on the
+children make. The copies the rows above `pathfinder` make are input too, so a grid array followed
+by `merge` gives one merged shape. A frame's own fill is the back-most shape. A boolean group's
+operands are the input (its own operation is not applied first). FigCraft's boolean groups already
+do `unite`, `minusFront`, `intersect` and `exclude`; they are accepted here for completeness.
+
+**Output.** Each resulting face keeps the fill of the shape it came from: for `divide`, the
+front-most shape covering it; for the others, as below. For `outline`, each edge is stroked
+`outlineWidth` wide in its shape's fill colour, with no fill, as in Illustrator. Solid fills are
+kept as they are. Gradients and image fills are drawn as their mean colour, with a warning (the
+stencil's rule; VectorCraft keeps them whole, which is a gap here). Hidden fills and layers are not
+input.
+
+| `op` | Result |
+|---|---|
+| `divide` | Every face of the arrangement, each with the front-most covering shape's fill |
+| `trim` | Each shape minus what is in front of it (hidden parts removed), same-coloured shapes not merged |
+| `merge` | As `trim`, then touching pieces of the same fill merged into one |
+| `crop` | The front-most shape crops the shapes behind it and is removed |
+| `outline` | Every edge of the arrangement as an open path, stroked in its shape's fill colour |
+| `minusBack` | The front-most shape minus everything behind it |
+| `unite` | Everything as one shape, with the front-most shape's fill |
+| `minusFront` | The back-most shape minus everything in front of it |
+| `intersect` | Where every shape overlaps, with the front-most fill |
+| `exclude` | Where an odd number of shapes overlap, with the front-most fill |
+
+**Rows below** act on the result (arrays copy it, a stencil cuts it). **Hit testing:** clicking a
+face selects the layer, as clicking a copy selects its source.
+
+**Apply** bakes the rows down to the pathfinder: the layer is replaced by a group of the same name
+holding one vector layer per face (per edge for `outline`), back first, each with its source's fill
+(or stroke, for `outline`) and named after its source layer. The original contents are removed
+(Undo brings them back); the rows below move onto the group, live.
+
+Limits: at most 5000 input shapes (the rest are left out, with a warning); an arrangement too
+complex to compute keeps the contents drawn, with a warning.
+
+| Field | Unit | Range | Default | Meaning |
+|---|---|---|---|---|
+| `op` | choice | `divide`, `trim`, `merge`, `crop`, `outline`, `minusBack`, `unite`, `minusFront`, `intersect`, `exclude` | `divide` | The operation (above). An unknown value reads as `divide` |
+| `precision` | points | 0.001 to 10 | 0.01 | How closely results follow the curves; pieces thinner than this are dropped |
+| `outlineWidth` | points | 0 to 100 | 1 | `outline`: the stroke width of the edges |
+
+### Generator status
+
+`modifier.resultInfo {id?}` gives a generator's status, computing it when it is out of date:
+`{modifier, kind, fresh, pending, warnings, stats}`, where `stats` is `{paths, anchors, colours,
+tracedPx: {w, h}}` for `imageTrace` and `{shapes (input), faces (output)}` for `pathfinder`, plus
+`colours: ["#rrggbb"]` (the result's colours, largest area first). Results are computed off the UI
+thread natively (the previous result stays drawn meanwhile) and on the UI thread once the layer
+has stopped changing for 300 ms in the browser; exports and commands compute them first.
 
 ## Variable bindings
 

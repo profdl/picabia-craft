@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask"]
+# PICABIA: vendored VectorCraft crates (vendor/vectorcraft/README.md).
+members = ["crates/*", "apps/*", "xtask", "vendor/vectorcraft/geom", "vendor/vectorcraft/pathops", "vendor/vectorcraft/trace"]
 # The plugin SDK and examples build for wasm32 in a workspace of their own (`cargo xtask plugins`).
 exclude = ["plugins"]
 # default-members = ["crates/*", "apps/figcraft", "apps/figcraft-cli", "xtask"]
@@ -36,6 +37,10 @@ figcraft-plugin = { path = "crates/plugin" }
 figcraft-modifiers = { path = "crates/modifiers" }
 # PICABIA: the stencil geometry crate (L3).
 figcraft-stencil = { path = "crates/stencil" }
+# PICABIA: vendored VectorCraft crates (geometry, path operations, Image Trace); see vendor/vectorcraft/README.md.
+vectorcraft-geom = { path = "vendor/vectorcraft/geom" }
+vectorcraft-pathops = { path = "vendor/vectorcraft/pathops" }
+vectorcraft-trace = { path = "vendor/vectorcraft/trace" }
 
 # craft-libs crates all pin one rev (craftrules standards/shared-libraries.md): bump them together.
 # Which paths stored in a document may be followed (craft-libs).

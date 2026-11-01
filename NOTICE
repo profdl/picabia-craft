@@ -17,6 +17,13 @@ Release builds made with the optional craft-fonts build input (CRAFT_FONTS_DIR) 
 listed in ATTRIBUTION.md (Inter and others, SIL Open Font License 1.1); each package carries their
 licence texts.
 
+Vendored VectorCraft crates (PICABIA)
+-------------------------------------
+vendor/vectorcraft/{geom,pathops,trace} are the VectorCraft crates vectorcraft-geom,
+vectorcraft-pathops and vectorcraft-trace (https://github.com/storytold/vectorcraft), Copyright (c)
+2026 ArtCraft Team and the VectorCraft contributors, MIT OR Apache-2.0, vendored unmodified at the
+commit pinned in vendor/vectorcraft/README.md.
+
 Rust crate dependencies keep their own licenses (MIT, Apache-2.0, BSD, ISC, Zlib, OFL for egui's
 default fonts, CDLA-Permissive-2.0 for the root certificate list webpki-roots compiles in, and
 similar permissive licenses); see each crate's metadata.
