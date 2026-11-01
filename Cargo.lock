@@ -1798,6 +1798,7 @@ dependencies = [
  "figcraft-stencil",
  "figcraft-svg",
  "figcraft-text",
+ "figcraft-vcbridge",
  "figcraft-vectordrawable",
  "image",
  "log",

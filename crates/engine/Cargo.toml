@@ -26,6 +26,7 @@ figcraft-plugin = { workspace = true }
 # PICABIA: modifier stacks (cmd/modifier.rs).
 figcraft-modifiers = { workspace = true }
 figcraft-stencil = { workspace = true } # PICABIA: stencil sheets for layers whose stack ends in a stencil row
+figcraft-vcbridge = { workspace = true } # PICABIA: imageTrace and pathfinder compute through VectorCraft's vendored code
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

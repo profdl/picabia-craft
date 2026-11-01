@@ -1,4 +1,4 @@
-//! PICABIA: the generator framework (`imageTrace`, `pathfinder` rows) with the stub computes:
+//! PICABIA: the generator framework (`imageTrace`, `pathfinder` rows):
 //! commands and `modifier.resultInfo`, drawing in place of the design, copies on both sides of the
 //! generator, the stencil reading generated results, the snapshot, files, Apply, exports and the
 //! `.fig` bake.
@@ -18,9 +18,22 @@ fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
     s.execute(cmd, &p).unwrap_or_else(|e| panic!("{cmd} {p}: {e}"))
 }
 
-/// A red 100 × 100 rectangle at (`x`, 0).
+/// A red 100 × 100 rectangle at (`x`, 0), filled with a red 100 × 100 px image too (what
+/// `imageTrace` traces: black in its default black-and-white mode).
 fn rect(s: &mut Session, x: f64) -> NodeId {
-    id_of(&ex(s, "shape.rectangle", json!({"x": x, "y": 0, "width": 100, "height": 100, "props": {"fill": "#FF0000"}}))["id"]).unwrap()
+    let id = id_of(&ex(s, "shape.rectangle", json!({"x": x, "y": 0, "width": 100, "height": 100, "props": {"fill": "#FF0000"}}))["id"]).unwrap();
+    red_image_on(s, id);
+    id
+}
+
+/// Add a red 100 × 100 px image fill to layer `id`.
+fn red_image_on(s: &mut Session, id: NodeId) {
+    let mut pix = figcraft_render::Pixmap::new(100, 100).unwrap();
+    for px in pix.data_mut().chunks_exact_mut(4) {
+        px.copy_from_slice(&[255, 0, 0, 255]);
+    }
+    let png = figcraft_render::encode_png(&pix).unwrap();
+    ex(s, "image.place", json!({"target": id, "data": base64::engine::general_purpose::STANDARD.encode(png)}));
 }
 
 /// A group of a red and a blue 40 × 40 square (at (0, 0) and (20, 20)).
@@ -64,8 +77,7 @@ fn both_kinds_add_and_report_their_result() {
     let info = ex(&mut s, "modifier.resultInfo", json!({"id": r}));
     assert_eq!(info["modifier"], json!(m));
     assert_eq!((info["kind"].clone(), info["fresh"].clone(), info["pending"].clone()), (json!("imageTrace"), json!(true), json!(false)));
-    assert_eq!(info["colours"], json!(["#808080"]), "{info}");
-    assert!(info["warnings"].as_array().unwrap().iter().any(|w| w == "image trace not built yet"), "{info}");
+    assert_eq!(info["colours"], json!(["#ff0000"]), "six colours: the image's red, {info}");
     assert!(info["stats"]["paths"].is_number());
     assert_eq!(info["id"], json!(r));
     let g = two_squares(&mut s);
@@ -90,7 +102,7 @@ fn the_result_draws_in_place_of_the_design() {
     crate::picabia_jobs::ensure(s.doc().unwrap());
     let doc = s.doc().unwrap();
     assert!(store::is_fresh(doc, doc.get(r).unwrap()));
-    assert_eq!(pixel(&s, &[r], area, 50.0, 50.0), [128, 128, 128, 255], "the stub's grey, not the red design");
+    assert_eq!(pixel(&s, &[r], area, 50.0, 50.0), [0, 0, 0, 255], "the traced black, not the red design");
     // Hidden: nothing.
     ex(&mut s, "node.set", json!({"ids": [r], "props": {"visible": false}}));
     assert_eq!(pixel(&s, &[r], area, 50.0, 50.0)[3], 0);
@@ -110,7 +122,7 @@ fn rows_below_copy_the_result_and_rows_above_are_its_input() {
     let world = figcraft_render::export_bounds(doc, r).unwrap();
     assert_eq!(world, Rect::new(0.0, 0.0, 250.0, 250.0));
     for (x, y) in [(50.0, 50.0), (200.0, 50.0), (50.0, 200.0), (200.0, 200.0)] {
-        assert_eq!(pixel(&s, &[r], world, x, y), [128, 128, 128, 255], "({x}, {y})");
+        assert_eq!(pixel(&s, &[r], world, x, y), [0, 0, 0, 255], "({x}, {y})");
     }
     assert_eq!(pixel(&s, &[r], world, 125.0, 50.0)[3], 0, "between the copies");
     // Clicking any copy of the result hits the layer; between them nothing.
@@ -161,7 +173,7 @@ fn a_stencil_below_a_generator_cuts_its_result() {
     let info = crate::picabia_stencil::compute_now(&doc, r).unwrap();
     assert!(store::is_fresh(&doc, doc.get(r).unwrap()));
     assert_eq!(info.colours.len(), 1, "{:?}", info.colours);
-    assert_eq!(info.colours[0].hex, "#808080");
+    assert_eq!(info.colours[0].hex, "#000000");
     let (_, g) = crate::picabia_stencil::gather(&doc, doc.get(r).unwrap()).unwrap();
     assert_eq!(g.paints.len(), 1);
     assert_eq!(g.sources[0].node, r);
@@ -181,12 +193,14 @@ fn a_stencil_over_a_generated_child_reads_its_result() {
     assert_eq!(g, r, "one layer takes the row itself");
     let mut s = Session::new();
     let a = rect(&mut s, 0.0);
-    let b = rect(&mut s, 200.0);
+    // A plain red rectangle (the stencil leaves images out).
+    let b =
+        id_of(&ex(&mut s, "shape.rectangle", json!({"x": 200, "y": 0, "width": 100, "height": 100, "props": {"fill": "#FF0000"}}))["id"]).unwrap();
     add(&mut s, a, "imageTrace", json!({}));
     let g = id_of(&ex(&mut s, "modifier.stencilFromSelection", json!({"ids": [a, b]}))["id"]).unwrap();
     let info = ex(&mut s, "modifier.stencilInfo", json!({"id": g}));
     let hexes: Vec<&str> = info["colours"].as_array().unwrap().iter().map(|c| c["hex"].as_str().unwrap()).collect();
-    assert!(hexes.contains(&"#808080") && hexes.contains(&"#ff0000"), "{hexes:?}");
+    assert!(hexes.contains(&"#000000") && hexes.contains(&"#ff0000"), "{hexes:?}");
     let doc = s.doc().unwrap();
     assert!(store::is_fresh(doc, doc.get(a).unwrap()), "computed first, in the stencil's job");
 }
@@ -196,13 +210,14 @@ fn a_pathfinder_over_a_traced_child_computes_the_child_first() {
     let mut s = Session::new();
     let g = two_squares(&mut s);
     let red = s.doc().unwrap().get(g).unwrap().children[0];
+    red_image_on(&mut s, red);
     add(&mut s, red, "imageTrace", json!({}));
     add(&mut s, g, "pathfinder", json!({}));
     let doc = s.doc().unwrap().clone();
     crate::picabia_generate::compute_now(&doc, g).unwrap();
     assert!(store::is_fresh(&doc, doc.get(red).unwrap()));
     let (shape, _) = store::lookup(&doc, doc.get(g).unwrap()).unwrap();
-    assert_eq!(shape.items[0].rgba, [0.5, 0.5, 0.5, 1.0], "the traced child's result, not its red");
+    assert_eq!(shape.items[0].rgba, [0.0, 0.0, 0.0, 1.0], "the traced child's result, not its red");
     assert_eq!(shape.items[1].rgba, [0.0, 0.0, 1.0, 1.0]);
 }
 
@@ -297,7 +312,7 @@ fn apply_replaces_the_layer_by_its_result_in_one_undo_step() {
     assert_eq!(g.children.len(), 2, "one vector per item");
     let v = doc.get(g.children[1]).unwrap();
     assert!(matches!(v.kind, NodeKind::Vector { .. }), "{:?}", v.kind);
-    assert_eq!(v.name, "#808080");
+    assert_eq!(v.name, "#000000");
     assert_eq!(doc.world_bounds(v.id).unwrap(), Rect::new(150.0, 0.0, 250.0, 100.0));
     // The rows below moved onto the group, live.
     let l = ex(&mut s, "modifier.list", json!({"id": gid}));
@@ -345,14 +360,14 @@ fn svg_and_pdf_exports_write_the_result() {
     add(&mut s, r, "linearArray", json!({"count": 2, "offsetX": 150}));
     let out = ex(&mut s, "file.export", json!({"ids": [r], "format": "svg"}));
     let svg = String::from_utf8(decode(&out)).unwrap();
-    assert_eq!(svg.matches("fill=\"#808080\"").count(), 2, "{svg}");
+    assert_eq!(svg.matches("fill=\"#000000\"").count(), 2, "{svg}");
     assert!(!svg.contains("#ff0000") && !svg.contains("#FF0000"), "not the design: {svg}");
     assert!(svg.contains("width=\"250\""), "{svg}");
     let out = ex(&mut s, "file.export", json!({"ids": [r], "format": "pdf"}));
     assert!(!decode(&out).is_empty());
     let out = ex(&mut s, "file.export", json!({"ids": [r], "format": "png"}));
     let png = image::load_from_memory(&decode(&out)).unwrap().to_rgba8();
-    assert_eq!(png.get_pixel(200, 50).0, [128, 128, 128, 255]);
+    assert_eq!(png.get_pixel(200, 50).0, [0, 0, 0, 255]);
 }
 
 #[test]
