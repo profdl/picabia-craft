@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+pub use crate::generator::{ImageTrace, Pathfinder, PathfinderOp, TraceMethod, TraceMode, TracePalette, TracePreset, preset_fields};
 use crate::{MAX_STACK_LEN, ModError, STACK_VERSION, lenient};
 
 /// The kinds this build can add, as `(kind id, label)`, in menu order.
@@ -22,6 +23,8 @@ pub const KINDS: &[(&str, &str)] = &[
     ("wallpaper", "Wallpaper"),
     ("copyToShape", "Copy to shape"),
     ("stencil", "Stencil"),
+    ("imageTrace", "Image trace"),
+    ("pathfinder", "Pathfinder"),
 ];
 
 /// The label of kind id `kind` ("Linear array"), or `None` for a kind this build doesn't know.
@@ -126,6 +129,10 @@ pub enum ModifierKind {
     CopyToShape(CopyToShape),
     /// Terminal: the stack ends here (see [`Stencil`]).
     Stencil(Stencil),
+    /// A generator: traces the layer's image (see [`ImageTrace`]).
+    ImageTrace(ImageTrace),
+    /// A generator: Pathfinder on the layer's contents (see [`Pathfinder`]).
+    Pathfinder(Pathfinder),
     /// A kind this build doesn't know, or a known kind whose params don't read (`error` says
     /// why). Kept on a round trip, ignored when evaluating.
     Other {
@@ -866,8 +873,16 @@ impl ModifierKind {
             ModifierKind::Wallpaper(_) => "wallpaper",
             ModifierKind::CopyToShape(_) => "copyToShape",
             ModifierKind::Stencil(_) => "stencil",
+            ModifierKind::ImageTrace(_) => "imageTrace",
+            ModifierKind::Pathfinder(_) => "pathfinder",
             ModifierKind::Other { kind, .. } => kind,
         }
+    }
+
+    /// Whether this is a generator kind (`imageTrace`, `pathfinder`): it replaces what the layer
+    /// draws (see [`crate::evaluate`]).
+    pub fn is_generator(&self) -> bool {
+        matches!(self, ModifierKind::ImageTrace(_) | ModifierKind::Pathfinder(_))
     }
 
     /// The default parameters of kind id `kind`, or `None` for a kind this build doesn't know.
@@ -882,6 +897,8 @@ impl ModifierKind {
             "wallpaper" => ModifierKind::Wallpaper(Wallpaper::default()),
             "copyToShape" => ModifierKind::CopyToShape(CopyToShape::default()),
             "stencil" => ModifierKind::Stencil(Stencil::default()),
+            "imageTrace" => ModifierKind::ImageTrace(ImageTrace::default()),
+            "pathfinder" => ModifierKind::Pathfinder(Pathfinder::default()),
             _ => return None,
         })
     }
@@ -898,6 +915,8 @@ impl ModifierKind {
             ModifierKind::Wallpaper(p) => params_of(p),
             ModifierKind::CopyToShape(p) => params_of(p),
             ModifierKind::Stencil(p) => params_of(p),
+            ModifierKind::ImageTrace(p) => params_of(p),
+            ModifierKind::Pathfinder(p) => params_of(p),
             ModifierKind::Other { .. } => Map::new(),
         }
     }
@@ -918,6 +937,8 @@ impl ModifierKind {
             "wallpaper" => wrap(read(rest), ModifierKind::Wallpaper),
             "copyToShape" => wrap(read(rest), ModifierKind::CopyToShape),
             "stencil" => wrap(read(rest), ModifierKind::Stencil),
+            "imageTrace" => wrap(read(rest), ModifierKind::ImageTrace),
+            "pathfinder" => wrap(read(rest), ModifierKind::Pathfinder),
             _ => return (ModifierKind::Other { kind: kind.to_string(), error: None }, rest.clone()),
         };
         r.unwrap_or_else(|e| (ModifierKind::Other { kind: kind.to_string(), error: Some(e) }, rest.clone()))
@@ -933,6 +954,12 @@ impl Stack {
             ModifierKind::Stencil(p) => Some((m.id.as_str(), p)),
             _ => None,
         })
+    }
+
+    /// The stack's generator row: the first enabled `imageTrace` or `pathfinder` modifier, as
+    /// `(index in the stack, modifier)`. Later generators are ignored when evaluating.
+    pub fn generator(&self) -> Option<(usize, &Modifier)> {
+        self.modifiers.iter().enumerate().find(|(_, m)| m.enabled && m.kind.is_generator())
     }
 
     /// The targets of the enabled `copyToShape` modifiers, as `(modifier id, target)`, in stack
@@ -991,7 +1018,8 @@ impl Modifier {
     ///
     /// A stencil's `material` preset fills its four limit fields unless `props` sets them too, and
     /// setting one of those fields (without `material`) off the current preset makes the material
-    /// `custom` ([`StencilMaterial::limits`]), so each edit is one undo step.
+    /// `custom` ([`StencilMaterial::limits`]), so each edit is one undo step. An image trace's
+    /// `preset` fills its fields the same way ([`preset_fields`]).
     pub fn set_props(&mut self, props: &Map<String, Value>) -> Result<(), ModError> {
         if let ModifierKind::Other { kind, .. } = &self.kind {
             return Err(ModError::Invalid(format!("can't edit a `{kind}` modifier (unknown kind)")));
@@ -1024,6 +1052,9 @@ impl Modifier {
             (mut kind, _) => {
                 if let (ModifierKind::Stencil(old), ModifierKind::Stencil(new)) = (&self.kind, &mut kind) {
                     crate::kinds::stencil_apply_material(old, new, props);
+                }
+                if let (ModifierKind::ImageTrace(old), ModifierKind::ImageTrace(new)) = (&self.kind, &mut kind) {
+                    crate::generator::apply_preset(old, new, props);
                 }
                 self.kind = kind;
                 self.enabled = enabled;

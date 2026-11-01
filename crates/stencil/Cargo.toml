@@ -13,3 +13,4 @@ figcraft-geom = { workspace = true }
 figcraft-doc = { workspace = true }
 figcraft-pathops = { workspace = true }
 figcraft-modifiers = { workspace = true }
+serde_json = { workspace = true }

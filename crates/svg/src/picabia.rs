@@ -23,7 +23,7 @@ impl W<'_> {
         if !n.visible || n.is_mask || !xf.is_finite() || xf.determinant().abs() < 1e-12 {
             return false;
         }
-        if self.stencil(n, xf) {
+        if self.stencil(n, xf) || self.generated(n, xf) {
             return true;
         }
         let inv = xf.inverse();
@@ -57,6 +57,46 @@ impl W<'_> {
             let el = format!("<path transform=\"{}\" d=\"{}\" fill=\"#{r:02x}{g:02x}{b:02x}\"{rule}{opacity}/>", matrix(at), crate::path_d(&f.path));
             let clip = clip_attr(&self.clip);
             self.body.push_str(&crate::clipped(&clip, el));
+        }
+        true
+    }
+
+    /// A generated layer (a generator row with a computed result) as the canvas shows it: the
+    /// result's paths at every copy of the result, fills with their fill rule, strokes with their
+    /// width, cap and join. `false`: not one.
+    fn generated(&mut self, n: &figcraft_doc::Node, xf: Affine) -> bool {
+        use figcraft_render::picabia::generated::{self, GenPaint};
+        let Some(d) = generated::drawn(self.doc, n) else { return false };
+        let opacity = f64::from(n.opacity.clamp(0.0, 1.0));
+        for t in &d.copies {
+            let at = xf * *t * n.transform;
+            if !at.is_finite() {
+                continue;
+            }
+            for it in &d.shape.items {
+                let [r, g, b, a] = it.rgba.map(|c| f64::from(c.clamp(0.0, 1.0)));
+                let hex = format!("#{:02x}{:02x}{:02x}", (r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8);
+                let alpha = a * opacity;
+                let paint = match it.paint {
+                    GenPaint::Fill { even_odd } => {
+                        let rule = if even_odd { " fill-rule=\"evenodd\"" } else { "" };
+                        let op = if alpha < 1.0 { format!(" fill-opacity=\"{}\"", crate::num(alpha)) } else { String::new() };
+                        format!("fill=\"{hex}\"{rule}{op}")
+                    }
+                    GenPaint::Stroke { width, cap, join } => {
+                        let op = if alpha < 1.0 { format!(" stroke-opacity=\"{}\"", crate::num(alpha)) } else { String::new() };
+                        format!(
+                            "fill=\"none\" stroke=\"{hex}\" stroke-width=\"{}\" stroke-linecap=\"{}\" stroke-linejoin=\"{}\"{op}",
+                            crate::num(if width.is_finite() { width.max(0.0) } else { 0.0 }),
+                            generated::svg_cap(cap),
+                            generated::svg_join(join)
+                        )
+                    }
+                };
+                let el = format!("<path transform=\"{}\" d=\"{}\" {paint}/>", matrix(at), crate::path_d(&it.path));
+                let clip = clip_attr(&self.clip);
+                self.body.push_str(&crate::clipped(&clip, el));
+            }
         }
         true
     }

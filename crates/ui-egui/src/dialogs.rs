@@ -168,6 +168,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     }
     let u = &mut app.ui;
     let open = u.color_profile.is_some()
+        || u.picabia_laser.is_some() // PICABIA: laser dialog
         || u.menu_input.is_some()
         || u.find.is_some()
         || u.batch_rename.is_some()
@@ -183,6 +184,7 @@ pub fn keys(app: &mut FigApp, ctx: &Context) {
     }
     if u.menu_input.take().is_some()
         || u.color_profile.take().is_some()
+        || u.picabia_laser.take().is_some() // PICABIA: laser dialog
         || u.find.take().is_some()
         || u.batch_rename.take().is_some()
         || u.import_report.take().is_some()
@@ -396,6 +398,7 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
         export_dialog(app, ctx);
     }
     color_profile_dialog(app, ctx);
+    crate::picabia_laser::show(app, ctx); // PICABIA: stencil laser dialogs
     crate::plugins_ui::show(app, ctx);
     crate::live::join_dialog(app, ctx);
     crate::live::publish_dialog(app, ctx);

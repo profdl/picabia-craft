@@ -16,7 +16,7 @@ use std::time::Instant;
 use figcraft_geom::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape, Vec2};
 use figcraft_geom::split_subpaths;
 use figcraft_modifiers::{Repeat, Stencil, StencilLimitMode, StencilTieMode};
-use figcraft_stencil::{Paint, compute, compute_repeat, mm_per_unit, visible_regions};
+use figcraft_stencil::{LaserInput, LaserParams, Paint, compute, compute_repeat, laser_job, laser_svg, mm_per_unit, test_card, visible_regions};
 
 const SVG: &str = include_str!("fixtures/traced.svg");
 const BOUNDS: Rect = Rect::new(0.0, 0.0, 920.0, 752.0);
@@ -226,4 +226,65 @@ fn timing() {
     eprintln!("  grid out: {:?} {:?}", out.stats, out.warnings);
     let (paints, _) = fixture::design(300, 42);
     report("synthetic 300", &paints, fixture::BOUNDS);
+}
+
+/// The traced design's stencil as a laser job input (the engine builds the same).
+fn laser_input(p: &Stencil) -> LaserInput {
+    let out = compute(&traced(), p, BOUNDS).unwrap();
+    LaserInput {
+        cut: out.cut,
+        sheet: out.sheet,
+        mm_per_unit: mm_per_unit(p.width_mm, BOUNDS).unwrap(),
+        hoshi: out.hoshi,
+        hoshi_d_mm: p.hoshi_diameter_mm,
+        label_lines: vec!["traced".into(), "Sheet 330 × 275 mm".to_string(), "paper".into()],
+        repeat_cell: None,
+    }
+}
+
+#[test]
+fn the_traced_stencil_exports_for_the_laser() {
+    let p = Stencil::default();
+    let input = laser_input(&p);
+    let job = laser_job(&input, &LaserParams::default());
+    assert_eq!(job.sheets.len(), 1, "330 mm sheet fits a 600 × 400 bed: {:?}", job.warnings);
+    let s = &job.sheets[0];
+    assert_eq!(s.loose_pieces, 0, "ties hold every island: {:?}", job.warnings);
+    assert!(!s.engrave.is_empty(), "labelled: {:?}", job.warnings);
+    assert!(s.cut.len() > 10);
+    let svg = laser_svg(s, &LaserParams::default());
+    assert!(svg.contains(&format!("width=\"{}mm\"", (s.w_mm * 1000.0).round() / 1000.0)));
+    // Split on a small bed: every piece fits it.
+    let small = LaserParams { bed_w_mm: 200.0, bed_h_mm: 200.0, ..LaserParams::default() };
+    let job = laser_job(&input, &small);
+    assert!(job.sheets.len() >= 4, "{:?}", job.warnings);
+    assert!(job.sheets.iter().all(|s| s.w_mm <= 200.0 && s.h_mm <= 200.0));
+    // Optional look: LASER_OUT=dir writes the SVGs.
+    if let Ok(dir) = std::env::var("LASER_OUT") {
+        let dir = std::path::Path::new(&dir);
+        std::fs::write(dir.join("traced.svg"), laser_svg(&laser_job(&input, &LaserParams::default()).sheets[0], &LaserParams::default())).unwrap();
+        for (i, s) in job.sheets.iter().enumerate() {
+            std::fs::write(dir.join(format!("traced-split-{}.svg", i + 1)), laser_svg(s, &small)).unwrap();
+        }
+        let card = test_card(&figcraft_modifiers::StencilMaterial::Paper.limits().unwrap(), "Paper", 0.1);
+        std::fs::write(dir.join("card.svg"), laser_svg(&card, &LaserParams::default())).unwrap();
+    }
+}
+
+#[test]
+#[ignore = "timing: cargo test --release -p figcraft-stencil --test traced laser_timing -- --ignored --nocapture"]
+fn laser_timing() {
+    let input = laser_input(&Stencil::default());
+    let elements = input.cut.elements().len();
+    let job = time(&format!("traced.svg laser_job, one sheet ({elements} cut elements)"), 10, || laser_job(&input, &LaserParams::default()));
+    let points: usize = job.sheets.iter().flat_map(|s| s.cut.iter()).map(Vec::len).sum();
+    eprintln!("  {} contours, {points} points, warnings {:?}", job.sheets[0].cut.len(), job.warnings);
+    time("traced.svg laser_job, kerf 0", 10, || laser_job(&input, &LaserParams { kerf_mm: 0.0, ..LaserParams::default() }));
+    let small = LaserParams { bed_w_mm: 200.0, bed_h_mm: 200.0, ..LaserParams::default() };
+    let job = time("traced.svg laser_job, 200 × 200 bed", 5, || laser_job(&input, &small));
+    eprintln!("  {} sheets", job.sheets.len());
+    let card = figcraft_modifiers::StencilMaterial::Paper.limits().unwrap();
+    time("test card", 10, || test_card(&card, "Paper", 0.1));
+    let s = &laser_job(&input, &LaserParams::default()).sheets[0];
+    time("laser_svg", 10, || laser_svg(s, &LaserParams::default()));
 }

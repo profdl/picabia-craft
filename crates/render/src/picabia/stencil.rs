@@ -18,8 +18,7 @@
 //! repaints the canvas.
 
 use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use figcraft_doc::{Document, Node, NodeId};
 use figcraft_geom::kurbo::Vec2;
@@ -28,12 +27,9 @@ use figcraft_geom::{Affine, Point, Rect};
 use figcraft_modifiers::{ModifierKind, PLUGIN_KEY, Repeat, Stencil, StencilOutput, StencilPreview, StencilTieMode};
 use tiny_skia::{FillRule, Pixmap};
 
-use super::{has_stack, instance_transforms};
+use super::has_stack;
+use super::snapshot::Store;
 
-/// The most results kept (one per stencil layer and document state; oldest dropped first).
-const MAX_ENTRIES: usize = 64;
-/// The most layers an [`Inputs`] snapshot records; a bigger subtree compares its first ones.
-const MAX_INPUT_NODES: usize = 100_000;
 /// The most lattice cells a sheet may span (`figcraft-stencil` ignores a finer repeat).
 const MAX_CELLS: f64 = 10_000.0;
 
@@ -78,7 +74,8 @@ pub fn frame(doc: &Document, n: &Node) -> Option<Frame> {
     if copies.is_empty() {
         copies.push(Affine::IDENTITY);
     }
-    let local = n.local_rect();
+    // A generated layer above the stencil: the stencil cuts its result (it lies within `content`).
+    let local = super::generated::frame(doc, n).map_or_else(|| n.local_rect(), |g| g.content);
     let layer_bounds = copies.iter().map(|c| figcraft_geom::transform_rect_bbox(*c, local)).reduce(|a, b| a.union(b))?;
     let finite = [layer_bounds.x0, layer_bounds.y0, layer_bounds.x1, layer_bounds.y1].iter().all(|v| v.is_finite());
     let w = layer_bounds.width();
@@ -196,49 +193,8 @@ pub struct StencilShape {
 
 /// What a stencil was computed from: the layer's subtree (the layer with what doesn't change the
 /// geometry left out: its place, name, opacity and the preview colours) and every copy transform
-/// in it. Compared, not hashed: a match is exact.
-#[derive(Clone, Debug)]
-pub struct Inputs {
-    root: Node,
-    nodes: Vec<Node>,
-    /// Per layer with a stack (pre-order): its copy transforms (the layer's own: in its space).
-    copies: Vec<(NodeId, Vec<Affine>)>,
-    /// The layer's repeat lattice, in its own space (it follows from the stack and the copies,
-    /// compared anyway: the result depends on it).
-    repeat: Option<Repeat>,
-    fonts: u64,
-    /// Some value doesn't equal itself (a NaN): any snapshot of the layer then counts as a match,
-    /// or it would be recomputed forever.
-    unstable: bool,
-}
-
-impl PartialEq for Inputs {
-    fn eq(&self, o: &Self) -> bool {
-        self.fonts == o.fonts
-            && self.root == o.root
-            && same_repeat(self.repeat, o.repeat)
-            && self.nodes == o.nodes
-            && self.copies.len() == o.copies.len()
-            && self.copies.iter().zip(&o.copies).all(|((a, ta), (b, tb))| a == b && same_affines(ta, tb))
-    }
-}
-
-fn same_affines(a: &[Affine], b: &[Affine]) -> bool {
-    // Copies of a moved layer come out of `N⁻¹ · T · N` with last-bit differences.
-    let close = |x: f64, y: f64| (x - y).abs() <= 1e-9 * (1.0 + x.abs().max(y.abs()));
-    a.len() == b.len() && a.iter().zip(b).all(|(p, q)| p.as_coeffs().iter().zip(q.as_coeffs()).all(|(x, y)| close(*x, y)))
-}
-
-fn same_repeat(a: Option<Repeat>, b: Option<Repeat>) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(a), Some(b)) => {
-            let t = |r: Repeat| Affine::new([r.a.x, r.a.y, r.b.x, r.b.y, r.origin.x, r.origin.y]);
-            same_affines(&[t(a)], &[t(b)])
-        }
-        _ => false,
-    }
-}
+/// in it, and its repeat lattice ([`super::snapshot`]).
+pub use super::snapshot::Inputs;
 
 /// `n` with what doesn't change its stencil's geometry reset.
 fn neutral_root(n: &Node) -> Node {
@@ -262,136 +218,43 @@ fn neutral_root(n: &Node) -> Node {
     r
 }
 
-/// The subtree below `root` (pre-order, capped), `root` left out.
-fn descendants<'a>(doc: &'a Document, root: &Node, mut f: impl FnMut(&'a Node) -> bool) {
-    let mut stack: Vec<NodeId> = root.children.iter().rev().copied().collect();
-    let mut seen = 0usize;
-    while let Some(id) = stack.pop() {
-        seen += 1;
-        if seen > MAX_INPUT_NODES {
-            return;
-        }
-        let Some(n) = doc.node(id) else { continue };
-        if !f(n) {
-            return;
-        }
-        stack.extend(n.children.iter().rev().copied());
-    }
-}
-
 /// The root's copies and repeat in its own space (as [`frame`] has them).
 fn root_copies(doc: &Document, n: &Node) -> (Vec<Affine>, Option<Repeat>) {
     frame(doc, n).map(|f| (f.copies, f.repeat)).unwrap_or_default()
 }
 
+static STORE: Store<StencilShape> = Store::new(neutral_root, root_copies);
+
 /// What layer `id`'s stencil would be computed from now.
 pub fn inputs(doc: &Document, id: NodeId) -> Option<Inputs> {
-    let n = doc.node(id)?;
-    let mut nodes = Vec::new();
-    let (own, repeat) = root_copies(doc, n);
-    let mut copies = vec![(id, own)];
-    descendants(doc, n, |c| {
-        nodes.push(c.clone());
-        if has_stack(c)
-            && let Some(ts) = instance_transforms(doc, c)
-        {
-            copies.push((c.id, ts));
-        }
-        true
-    });
-    let mut i = Inputs { root: neutral_root(n), nodes, copies, repeat, fonts: figcraft_text::layout_generation(), unstable: false };
-    let copy = i.clone();
-    i.unstable = copy != i;
-    Some(i)
-}
-
-impl Inputs {
-    /// Whether `doc`'s layer `n` still matches this snapshot (without copying the subtree).
-    fn matches(&self, doc: &Document, n: &Node) -> bool {
-        if self.unstable {
-            return true;
-        }
-        if self.fonts != figcraft_text::layout_generation() || self.root != neutral_root(n) {
-            return false;
-        }
-        let Some((_, own)) = self.copies.first() else { return false };
-        let (now, repeat) = root_copies(doc, n);
-        if !same_affines(own, &now) || !same_repeat(self.repeat, repeat) {
-            return false;
-        }
-        let (mut i, mut k, mut same) = (0usize, 1usize, true);
-        descendants(doc, n, |c| {
-            same = self.nodes.get(i) == Some(c);
-            i += 1;
-            if same
-                && has_stack(c)
-                && let Some(ts) = instance_transforms(doc, c)
-            {
-                same = self.copies.get(k).is_some_and(|(cid, stored)| *cid == c.id && same_affines(stored, &ts));
-                k += 1;
-            }
-            same
-        });
-        same && i == self.nodes.len() && k == self.copies.len()
-    }
-}
-
-struct Entry {
-    id: NodeId,
-    inputs: Arc<Inputs>,
-    shape: Arc<StencilShape>,
-    stamp: u64,
-}
-
-static STORE: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
-static GENERATION: AtomicU64 = AtomicU64::new(0);
-
-fn lock() -> MutexGuard<'static, Vec<Entry>> {
-    STORE.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    STORE.inputs(doc, id)
 }
 
 /// Bumped by every [`store`] (and [`clear`]).
 pub fn generation() -> u64 {
-    GENERATION.load(Ordering::Relaxed)
+    STORE.generation()
 }
 
 /// Keep `shape`, layer `id`'s stencil computed from `inputs`. Replaces what was kept for the same
-/// inputs; the oldest results go past [`MAX_ENTRIES`].
+/// inputs; the oldest results go past the store's cap.
 pub fn store(id: NodeId, inputs: Inputs, shape: StencilShape) {
-    let stamp = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
-    let mut s = lock();
-    s.retain(|e| !(e.id == id && *e.inputs == inputs));
-    s.push(Entry { id, inputs: Arc::new(inputs), shape: Arc::new(shape), stamp });
-    if s.len() > MAX_ENTRIES {
-        s.sort_by_key(|e| std::cmp::Reverse(e.stamp));
-        s.truncate(MAX_ENTRIES);
-    }
+    STORE.store(id, inputs, shape);
 }
 
 /// Forget every result (tests).
 pub fn clear() {
-    lock().clear();
-    GENERATION.fetch_add(1, Ordering::Relaxed);
+    STORE.clear();
 }
 
 /// Layer `n`'s stencil: the result computed from what `doc` holds now (`true`: fresh) or its
 /// latest one (`false`: stale, the engine is recomputing). `None` when none was ever computed.
 pub fn lookup(doc: &Document, n: &Node) -> Option<(Arc<StencilShape>, bool)> {
-    let mut found: Vec<(Arc<Inputs>, Arc<StencilShape>, u64)> =
-        lock().iter().filter(|e| e.id == n.id).map(|e| (e.inputs.clone(), e.shape.clone(), e.stamp)).collect();
-    found.sort_by_key(|(_, _, stamp)| std::cmp::Reverse(*stamp));
-    // Compared outside the lock: render threads share the store.
-    for (inputs, shape, _) in &found {
-        if inputs.matches(doc, n) {
-            return Some((shape.clone(), true));
-        }
-    }
-    found.into_iter().next().map(|(_, s, _)| (s, false))
+    STORE.lookup(doc, n)
 }
 
 /// Whether some result was ever stored for layer `id` (cheap: no snapshot comparison).
 fn has_result(id: NodeId) -> bool {
-    lock().iter().any(|e| e.id == id)
+    STORE.has(id)
 }
 
 /// Whether stencil layer `n` draws only a repeat tile: tile output with a repeat, and a result to

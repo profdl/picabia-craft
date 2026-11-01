@@ -28,6 +28,13 @@ use crate::list_drag::{ListDrag, move_flags, remove_flags};
 use crate::theme::{Tokens, regular};
 use crate::widgets::{self, Edit, Empty, FIELD_H, Lead, PAD_RIGHT};
 
+// Each generator kind's settings live in a file of their own (children of this module: they use
+// its fields, rows and status line).
+#[path = "modifiers_pathfinder.rs"]
+mod pathfinder;
+#[path = "modifiers_trace.rs"]
+mod trace;
+
 /// Salt of the flags that keep modifier rows' settings open (`Id::unique((MOD_OPEN, index))`).
 pub(crate) const MOD_OPEN: &str = "mod_open";
 
@@ -45,6 +52,8 @@ pub(crate) const KIND_MENU: &[(&str, &str)] = &[
     ("wallpaper", tr_noop("Wallpaper")),
     ("copyToShape", tr_noop("Copy to shape")),
     ("stencil", tr_noop("Stencil")),
+    ("imageTrace", tr_noop("Image trace")),
+    ("pathfinder", tr_noop("Pathfinder")),
 ];
 
 /// A field's label: plain text not translated ("X"), a catalog key, or an icon with its name.
@@ -178,7 +187,7 @@ const PATTERN_WHERE: &[(&str, &str)] = &[("everywhere", tr_noop("Everywhere")), 
 
 /// Stencil sheet materials: (value written in `material`, label). A preset fills the cutting
 /// limits (the model's `set_props`), so picking one is one `modifier.set` of `material` alone.
-const MATERIALS: &[(&str, &str)] = &[
+pub(crate) const MATERIALS: &[(&str, &str)] = &[
     ("paper", tr_noop("Cut from paper")),
     ("film", tr_noop("Cut from film")),
     ("card", tr_noop("Cut from card")),
@@ -327,6 +336,9 @@ pub(crate) const FIELDS: &[(&str, &[&[Field]])] = &[
             &[Field::Colour { param: "pasteColour", label: tr_noop("Paste") }, Field::Colour { param: "clothColour", label: tr_noop("Cloth") }],
         ],
     ),
+    // The generators' tables live with their settings, in their own files.
+    ("imageTrace", trace::FIELDS),
+    ("pathfinder", pathfinder::FIELDS),
 ];
 
 /// The settings rows of kind id `kind` (none for kinds this build doesn't know).
@@ -546,6 +558,10 @@ pub(super) fn modifiers(app: &mut FigApp, ui: &mut Ui, doc: &Document, sel: &[No
         if let (Some(s), Some(node)) = (&r.stencil, sel.first()) {
             problem_rows(app, ui, *node, s, gauze(r));
         }
+        // Laser export and the material test card, at the stencil's end.
+        if let (true, Some(node)) = (r.kind == "stencil", sel.first()) {
+            crate::picabia_laser::panel_buttons(app, ui, *node);
+        }
         drag.row(ui, i, header, header.with_max_y(ui.cursor().min.y.max(header.max.y)), || kind_label(&r.kind).to_string());
     }
     for w in warnings.iter().filter(|w| w.modifier.as_deref().is_none_or(|m| !rows.iter().any(|r| r.id == m))) {
@@ -639,12 +655,30 @@ fn row_menu(app: &mut FigApp, ui: &mut Ui, header: Rect, ids: &[NodeId], i: usiz
 /// rows of their own. Scrubs are live and one undo step; typed relative edits on "Mixed" apply to
 /// each layer from its own value.
 fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView) {
+    // The generator kinds draw their own settings.
+    match r.kind.as_str() {
+        "imageTrace" => return trace::body(app, ui, ids, i, r),
+        "pathfinder" => return pathfinder::body(app, ui, ids, i, r),
+        _ => {}
+    }
     let rows = fields_of(&r.kind);
     let t = Tokens::get(ui.ctx());
     if rows.is_empty() {
         widgets::note(ui, tr("This version doesn't know this kind of modifier: it is kept in the file but not drawn"), t.text_secondary);
         return;
     }
+    field_rows(app, ui, ids, i, r, rows);
+    // What the stencil came to: its pieces, its islands and how they're held, the specks
+    // clean-up dropped and the length to cut.
+    if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
+        widgets::note(ui, &stats_line(&stats, gauze(r)), t.text_secondary);
+    }
+}
+
+/// Row `i`'s settings rows `rows` (one inner slice per 32 pt row): numbers two to a row, choices
+/// and checkboxes on rows of their own, with their headings and notes.
+fn field_rows(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, rows: &[&[Field]]) {
+    let t = Tokens::get(ui.ctx());
     let half = widgets::col_width(ui.available_width());
     for fields in rows {
         // Fields the row's current choice makes meaningless are left out (wallpaper: the height
@@ -710,11 +744,6 @@ fn settings(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView
                 widgets::note(ui, &trf("Expression: {error}", &[("error", &e)]), t.danger);
             }
         }
-    }
-    // What the stencil came to: its pieces, its islands and how they're held, the specks
-    // clean-up dropped and the length to cut.
-    if let Some(stats) = r.stencil.as_ref().and_then(|s| s.stats) {
-        widgets::note(ui, &stats_line(&stats, gauze(r)), t.text_secondary);
     }
 }
 
@@ -931,6 +960,8 @@ fn applies(r: &RowView, f: &Field) -> bool {
     match r.kind.as_str() {
         "wallpaper" => wallpaper_applies(r, f),
         "stencil" => stencil_applies(r, f),
+        // The outline's stroke width only matters for the outline operation.
+        "pathfinder" => f.param() != "outlineWidth" || common_str(&r.params, "op").is_none_or(|o| o == "outline"),
         _ => true,
     }
 }
@@ -1080,8 +1111,13 @@ fn field(app: &mut FigApp, ui: &mut Ui, ids: &[NodeId], i: usize, r: &RowView, f
             };
             let control = |app: &mut FigApp, ui: &mut Ui| {
                 let resp = widgets::dropdown(ui, label, ui.available_width().min(half * 2.0 + widgets::GUTTER), None);
+                // The pathfinder's four boolean-group operations come after a divider.
+                let resp = if r.kind == "pathfinder" && param == "op" { resp.on_hover_text(tr(pathfinder::OP_TIP)) } else { resp };
                 menu_popup(&resp).show(|ui| {
                     for (value, l) in *options {
+                        if r.kind == "pathfinder" && *value == pathfinder::FIRST_BOOLEAN {
+                            ui.separator();
+                        }
                         if let Some(why) = unavailable(r, param, value) {
                             disabled_menu_item(ui, tl(l), tr(why));
                         } else if menu_item(ui, tl(l), "") {

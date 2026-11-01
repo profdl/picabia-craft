@@ -53,6 +53,7 @@ mod eval;
 pub mod expr;
 #[cfg(test)]
 mod expr_tests;
+pub mod generator;
 mod kinds;
 #[cfg(test)]
 mod kinds_tests;
@@ -69,7 +70,8 @@ mod tests;
 pub use bind::{
     BINDING_PREFIX, apply_bound_values, binding_key, binding_takes, bound_variable, field_type, is_binding_key, parse_binding_key, stale_binding_keys,
 };
-pub use eval::{Guide, Instance, Output, Repeat, StencilRow, Warning, evaluate, evaluate_with, splitmix64};
+pub use eval::{GeneratorKind, GeneratorRow, Guide, Instance, Output, Repeat, StencilRow, Warning, evaluate, evaluate_with, splitmix64};
+pub use generator::{ImageTrace, Pathfinder, PathfinderOp, TraceMethod, TraceMode, TracePalette, TracePreset, preset_fields};
 pub use model::{
     CircularArray, CopyMode, CopyToShape, GridArray, KINDS, LinearArray, MAX_CUT_COLOURS, MaterialLimits, Mirror, MirrorAxis, Modifier, ModifierKind,
     Randomize, Stack, Stencil, StencilColourMode, StencilLimitMode, StencilMaterial, StencilOutput, StencilPatternType, StencilPatternWhere,

@@ -1798,6 +1798,7 @@ dependencies = [
  "figcraft-stencil",
  "figcraft-svg",
  "figcraft-text",
+ "figcraft-vcbridge",
  "figcraft-vectordrawable",
  "image",
  "log",
@@ -1961,6 +1962,7 @@ dependencies = [
  "figcraft-geom",
  "figcraft-modifiers",
  "figcraft-pathops",
+ "serde_json",
 ]
 
 [[package]]

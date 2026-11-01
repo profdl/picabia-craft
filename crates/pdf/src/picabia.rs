@@ -21,7 +21,7 @@ impl Exporter<'_> {
         if n.is_mask || !parent_xf.is_finite() || parent_xf.determinant().abs() < 1e-12 {
             return false;
         }
-        if self.stencil(s, n, parent_xf) {
+        if self.stencil(s, n, parent_xf) || self.generated(s, n, parent_xf) {
             return true;
         }
         let inv = parent_xf.inverse();
@@ -53,6 +53,33 @@ impl Exporter<'_> {
             let rule = if f.even_odd { krilla::paint::FillRule::EvenOdd } else { krilla::paint::FillRule::NonZero };
             let frame = super::PaintFrame { size: super::PaintSize { width: 1.0, height: 1.0 }, transform: xf };
             self.fill(s, &f.path, rule, &paint, frame);
+        }
+        true
+    }
+
+    /// A generated layer (a generator row with a computed result) as the canvas shows it: the
+    /// result's paths at every copy of the result (strokes outlined at their width, cap and join).
+    /// `false`: not one.
+    fn generated(&mut self, s: &mut Surface, n: &figcraft_doc::Node, parent_xf: Affine) -> bool {
+        use figcraft_render::picabia::generated;
+        let Some(d) = generated::drawn(self.doc, n) else { return false };
+        if !n.visible {
+            return true;
+        }
+        for t in &d.copies {
+            let xf = parent_xf * *t * n.transform;
+            if !xf.is_finite() {
+                continue;
+            }
+            for it in &d.shape.items {
+                let [r, g, b, a] = it.rgba.map(|c| c.clamp(0.0, 1.0));
+                let mut paint = figcraft_color::Paint::solid(figcraft_color::Color { r, g, b, a });
+                paint.opacity = n.opacity.clamp(0.0, 1.0);
+                let (area, even_odd) = it.area();
+                let rule = if even_odd { krilla::paint::FillRule::EvenOdd } else { krilla::paint::FillRule::NonZero };
+                let frame = super::PaintFrame { size: super::PaintSize { width: 1.0, height: 1.0 }, transform: xf };
+                self.fill(s, &area, rule, &paint, frame);
+            }
         }
         true
     }

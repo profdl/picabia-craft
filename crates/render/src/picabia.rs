@@ -19,13 +19,24 @@ use figcraft_geom::{Affine, Point, Rect};
 
 pub use figcraft_modifiers::PLUGIN_KEY;
 
+pub mod generated;
+mod snapshot;
 pub mod stencil;
 
-/// What retained renders and canvas jobs compare to know text or stencils changed under them:
-/// the text layout generation (fonts arriving) mixed with [`stencil::generation`] (a stencil
-/// result arriving), so either repaints.
+/// What retained renders and canvas jobs compare to know text, stencils or generated results
+/// changed under them: the text layout generation (fonts arriving) mixed with
+/// [`stencil::generation`] and [`generated::generation`] (a result arriving), so any repaints.
 pub fn frame_generation() -> u64 {
-    figcraft_text::layout_generation().wrapping_add(stencil::generation().wrapping_mul(0x9E37_79B9_7F4A_7C15))
+    figcraft_text::layout_generation()
+        .wrapping_add(stencil::generation().wrapping_mul(0x9E37_79B9_7F4A_7C15))
+        .wrapping_add(generated::generation().wrapping_mul(0xC2B2_AE3D_27D4_EB4F))
+}
+
+/// Draw layer `n` (its parent's space mapped to `pix` by `parent_xf`) as what replaces its design,
+/// when something does: a stencil sheet (a stencil row after a generator wins), else a generator's
+/// result. `false`: draw it as usual (with its copies).
+pub(crate) fn draw_replaced(ctx: &crate::draw::Ctx, pix: &mut tiny_skia::Pixmap, n: &Node, parent_xf: Affine) -> bool {
+    stencil::draw(ctx, pix, n, parent_xf) || generated::draw(ctx, pix, n, parent_xf)
 }
 
 /// The most layer draws one top-level draw makes through nested stacks (a stacked group holding
@@ -76,6 +87,8 @@ pub fn each_copy(doc: &Document, n: &Node, mut f: impl FnMut(Affine)) -> bool {
 /// The bounding box in `n`'s parent space of `r` (in `n`'s own space) drawn by every copy of `n`:
 /// `transform_rect_bbox(n.transform, r)` for a layer without a stack.
 pub fn parent_bbox(doc: &Document, n: &Node, r: Rect) -> Rect {
+    // A generated layer draws its result, which can reach past its design.
+    let r = if has_stack(n) { generated::reach_of(doc, n, r) } else { r };
     let one = figcraft_geom::transform_rect_bbox(n.transform, r);
     let copies = match instance_transforms(doc, n) {
         Some(ts) => ts.iter().map(|t| figcraft_geom::transform_rect_bbox(*t * n.transform, r)).fold(one, |a, b| a.union(b)),
@@ -207,11 +220,12 @@ fn copies_render_bounds(doc: &Document, id: NodeId, own: bool, depth: usize) -> 
         return extra;
     }
     // A stencil layer draws its sheet (copies of it included: they're in the sheet); one drawing
-    // a repeat tile draws only that.
+    // a repeat tile draws only that. A generated layer draws its result (at every copy).
     let sheet = stencil::world_sheet(doc, id);
     if sheet.is_some() && stencil::draws_tile(doc, n) {
         return sheet;
     }
+    let sheet = union_some(sheet, generated::world_content(doc, id));
     let copies = page_copies(doc, id);
     if copies.is_empty() {
         return union_some(extra, sheet);
@@ -292,7 +306,29 @@ pub fn paints_over(doc: &Document, a: NodeId, b: NodeId) -> bool {
 /// copy). `normal` is what hit testing without copies found; the front-most of the two wins.
 pub fn hit_with_copies(doc: &Document, root: NodeId, p: Point, tol: f64, result: BoolResult, normal: Option<NodeId>) -> Option<NodeId> {
     let hit = copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_in(doc, id, q, tol, result));
+    let hit = generated_hit(doc, root, p, tol, hit);
     stencil_hit(doc, root, p, hit)
+}
+
+/// `normal` corrected for the generated layers within `root` that draw a result: a page point on
+/// the result (at any copy) hits the layer, or what was hit inside it (so deep select still
+/// reaches its layers); a hit on the design inside one where its result isn't counts for nothing.
+fn generated_hit(doc: &Document, root: NodeId, p: Point, tol: f64, normal: Option<NodeId>) -> Option<NodeId> {
+    let mut best = normal;
+    walk(doc, root, &mut |id, n| {
+        if id == root || !generated::is_generated(n) || stencil::is_stencil(n) || !clips_allow(doc, root, id, p) {
+            return;
+        }
+        let Some(on) = generated::result_contains(doc, id, p, tol) else { return };
+        let inside = |b: NodeId| b == id || doc.is_ancestor(id, b);
+        best = match best {
+            Some(b) if inside(b) => on.then_some(b),
+            None if on => Some(id),
+            Some(b) if on && paints_over(doc, id, b) => Some(id),
+            keep => keep,
+        };
+    });
+    best
 }
 
 /// The front-most of `normal` and the stencil layers within `root` whose sheet holds page point
@@ -351,6 +387,7 @@ pub fn hit_outlines_with_copies(
     normal: Option<NodeId>,
 ) -> Option<NodeId> {
     let hit = copies_hit(doc, root, p, normal, |id, q| figcraft_doc::geometry::hit_outlines(doc, id, q, tol, result, also));
+    let hit = generated_hit(doc, root, p, tol, hit);
     stencil_hit(doc, root, p, hit)
 }
 
@@ -383,8 +420,9 @@ fn copies_hit(doc: &Document, root: NodeId, p: Point, normal: Option<NodeId>, le
 pub fn copy_boxes(doc: &Document, id: NodeId) -> Vec<Rect> {
     let Some(w) = doc.world_bounds(id) else { return Vec::new() };
     let mut out: Vec<Rect> = page_copies(doc, id).into_iter().map(|c| figcraft_geom::transform_rect_bbox(c, w)).collect();
-    // A stencil layer's sheet counts as one of its copies.
+    // A stencil layer's sheet counts as one of its copies; a generated layer's result items too.
     out.extend(stencil::world_sheet(doc, id));
+    out.extend(generated::world_item_boxes(doc, id));
     out
 }
 

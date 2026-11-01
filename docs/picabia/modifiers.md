@@ -280,7 +280,10 @@ unchanged, `vendor/vectorcraft/trace`), so the fields, presets and defaults are 
 ellipse or any other shape. So `imageTrace` works on **any layer with a visible image fill**. It
 traces the layer **as it draws**: the crop, scale mode, rotation and adjustments of the fill, the
 layer's shape (rounded corners, an ellipse), its other fills, its strokes and its children. Outside
-the shape counts as transparent and is never traced. A layer without a visible image fill draws as
+the shape counts as transparent and is never traced. The layer's **own effects** (shadows, blurs,
+grain) are left out of the trace (they draw nowhere once the trace replaces the layer, and a soft
+shadow would trace as banded blobs); its opacity and blend apply to the drawn result instead. Layers
+inside it trace with their effects. A layer without a visible image fill draws as
 usual, with the warning "imageTrace needs a layer with an image fill".
 
 **Resolution.** The layer is rendered at its image's own pixel density (the densest image fill's
@@ -289,6 +292,8 @@ pixels per layer point, clamped to 0.05 to 16), so a 4000 px photo in a 400 pt b
 rendered raster is capped at 16 megapixels natively and 4 megapixels in the browser (scaled down,
 with a warning), and the result at 8 million anchors natively and 2 million in the browser (past
 it: the warning "the trace is too detailed", and the previous result or the image stays drawn).
+The anchor budget counts every input copy. A raster over 1500 px on a side (not in Flat Logo
+mode) warns that it traces more slowly, as VectorCraft does.
 
 **What it draws.** The traced paths in their palette colours, bottom first, in place of the whole
 layer: filled regions (non-zero), and for Create: Strokes, centre lines stroked `strokeWidth` wide
@@ -389,7 +394,9 @@ complex to compute keeps the contents drawn, with a warning.
 `modifier.resultInfo {id?}` gives a generator's status, computing it when it is out of date:
 `{modifier, kind, fresh, pending, warnings, stats}`, where `stats` is `{paths, anchors, colours,
 tracedPx: {w, h}}` for `imageTrace` and `{shapes (input), faces (output)}` for `pathfinder`, plus
-`colours: ["#rrggbb"]` (the result's colours, largest area first). Results are computed off the UI
+`colours: ["#rrggbb"]` (the result's colours, largest area first; at the top level of the reply,
+beside `stats`, with `items`, the number of result paths, and `drawsDesign`, true when the generator
+made no result and the layer draws as usual). Results are computed off the UI
 thread natively (the previous result stays drawn meanwhile) and on the UI thread once the layer
 has stopped changing for 300 ms in the browser; exports and commands compute them first.
 

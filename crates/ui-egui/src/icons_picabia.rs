@@ -32,6 +32,10 @@ pub enum Glyph {
     CopyToShape,
     /// Stencil: a filled sheet with a square cut-out, a diamond island held in it by two ties.
     Stencil,
+    /// Image trace: a picture frame whose filled hills end in a stepped (traced) right edge.
+    ImageTrace,
+    /// Pathfinder: two overlapping square outlines, the part they share filled.
+    Pathfinder,
 }
 
 impl Glyph {
@@ -46,6 +50,8 @@ impl Glyph {
         Glyph::Randomize,
         Glyph::Wallpaper,
         Glyph::Stencil,
+        Glyph::ImageTrace,
+        Glyph::Pathfinder,
     ];
 
     /// The glyph of modifier kind id `kind` (the section's for kinds this build doesn't know).
@@ -60,6 +66,8 @@ impl Glyph {
             "wallpaper" => Glyph::Wallpaper,
             "copyToShape" => Glyph::CopyToShape,
             "stencil" => Glyph::Stencil,
+            "imageTrace" => Glyph::ImageTrace,
+            "pathfinder" => Glyph::Pathfinder,
             _ => Glyph::Modifiers,
         }
     }
@@ -230,6 +238,23 @@ fn draw(g: &G, glyph: Glyph) {
             g.fill(vec![g.at(8.0, 6.0), g.at(10.0, 8.0), g.at(8.0, 10.0), g.at(6.0, 8.0)]);
             g.line(5.0, 8.0, 6.5, 8.0);
             g.line(9.5, 8.0, 11.0, 8.0);
+        }
+        Glyph::ImageTrace => {
+            // The frame: left, top and bottom edges; the right edge is the traced outline, in
+            // steps.
+            g.line(1.5, 1.5, 9.5, 1.5);
+            g.line(1.5, 1.5, 1.5, 14.5);
+            g.line(1.5, 14.5, 9.5, 14.5);
+            let steps = [(9.5, 1.5), (9.5, 4.5), (12.5, 4.5), (12.5, 8.0), (14.5, 8.0), (14.5, 11.5), (11.5, 11.5), (11.5, 14.5), (9.5, 14.5)];
+            g.painter.add(Shape::line(steps.iter().map(|&(x, y)| g.at(x, y)).collect(), g.stroke));
+            // A sun and a hill in the picture.
+            g.dot(5.0, 5.5, 1.5);
+            g.fill(vec![g.at(3.0, 13.0), g.at(6.5, 8.0), g.at(10.0, 13.0)]);
+        }
+        Glyph::Pathfinder => {
+            g.square(1.5, 1.5, 10.5, 10.5);
+            g.square(5.5, 5.5, 14.5, 14.5);
+            g.block(5.5, 5.5, 10.5, 10.5);
         }
     }
 }

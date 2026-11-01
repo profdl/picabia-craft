@@ -21,6 +21,11 @@
 //! A stencil row is never baked here: `upTo` stops above it, and it moves onto the group with the
 //! rows after it (it cuts the same copies there).
 //!
+//! A generator row (`imageTrace`, `pathfinder`) is: Apply bakes the rows down to it (the layer
+//! becomes the group of its result's vector layers, `crate::picabia_generate::apply`) and the rows
+//! below it move onto that group, live; with an `upTo` below the generator, the rows down to it are
+//! then applied on the group.
+//!
 //! A layer whose stack makes no copies (empty, all rows off, or one unmoved copy) is left alone;
 //! when no target has anything to apply the command is refused. Main components and layers inside
 //! instances are refused: their copies can't become free layers there.
@@ -85,6 +90,14 @@ fn apply_one(s: &mut Session, id: NodeId, up_to: Option<usize>, budget: &mut usi
         Some(at) => cut.min(at - 1),
         None => cut,
     };
+    // A generator row the cut reaches (without `upTo`, Apply stops at it): the layer becomes its
+    // result's layers, the rows below move onto the new group, and the ones `upTo` still covers
+    // are applied there.
+    if let Some(g) = crate::picabia_generate::generator_index(&stack)
+        && cut >= g
+    {
+        return apply_generated(s, id, g, if up_to.is_some() { cut } else { g }, budget);
+    }
     let baked = Stack { modifiers: stack.modifiers.get(..=cut).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let rest = Stack { modifiers: stack.modifiers.get(cut + 1..).map(<[_]>::to_vec).unwrap_or_default(), ..stack.clone() };
     let node = doc.get(id)?;
@@ -142,10 +155,32 @@ fn apply_one(s: &mut Session, id: NodeId, up_to: Option<usize>, budget: &mut usi
     Ok(Some((gid, out.instances.len())))
 }
 
+/// [`apply_one`] for a layer whose generator row `g` is at or above `cut`: the layer becomes the
+/// group of its result ([`crate::picabia_generate::apply`]), then the rows `g + 1..=cut` (now at
+/// the top of the group's stack) are applied on the group.
+fn apply_generated(s: &mut Session, id: NodeId, g: usize, cut: usize, budget: &mut usize) -> Result<Option<(NodeId, usize)>> {
+    let doc = s.doc()?;
+    let node = doc.get(id)?;
+    let parent = node.parent.ok_or_else(|| bad(CMD, format!("{id} is a page; modifiers go on layers")))?;
+    if matches!(node.kind, NodeKind::Component { .. } | NodeKind::ComponentSet { .. }) {
+        return Err(bad(CMD, format!("\"{}\" is a main component: apply its modifiers on an instance of it instead", node.name)));
+    }
+    if crate::components::owning_instance(doc, parent).is_some() {
+        return Err(bad(CMD, format!("\"{}\" is inside an instance: edit its main component, or detach the instance", node.name)));
+    }
+    let gid = crate::picabia_generate::apply(s, id, budget)?;
+    if cut > g
+        && let Some(done) = apply_one(s, gid, Some(cut - g - 1), budget)?
+    {
+        return Ok(Some(done));
+    }
+    Ok(Some((gid, 1)))
+}
+
 /// Shift the pivot-relative params of `stack` by `d` (the old pivot minus the new one), so its
 /// rows place copies as they did around the old pivot. Only a mirror's axis can follow: the other
 /// kinds either don't depend on the pivot (translations) or turn about it, which no param moves.
-fn repivot(mut stack: Stack, d: Vec2) -> Stack {
+pub(crate) fn repivot(mut stack: Stack, d: Vec2) -> Stack {
     if !(d.x.is_finite() && d.y.is_finite()) {
         return stack;
     }

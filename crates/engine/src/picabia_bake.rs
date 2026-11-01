@@ -4,6 +4,10 @@
 //! the instance transform applied, its stack taken off), in the layer's place. Inside an auto
 //! layout frame the layer stays where it is (copies never take part in auto layout) and the other
 //! copies follow it as absolutely positioned siblings. The export lists a warning saying so.
+//!
+//! A generated layer (an `imageTrace` or `pathfinder` row) is first baked as Apply bakes it: the
+//! group of its result's vector layers, with the rows below the generator on the group (whose
+//! copies are then baked like any other).
 
 use std::borrow::Cow;
 
@@ -14,9 +18,41 @@ const MAX_BAKED_LAYERS: usize = 10_000;
 /// The most copies one export makes in all.
 const MAX_BAKED_COPIES: usize = 200_000;
 
-/// `doc` with every modifier stack baked into copies (borrowed unchanged when it has none), and the
-/// export warnings that go with it.
+/// `doc` with every generated layer baked into its result's layers and every modifier stack baked
+/// into copies (borrowed unchanged when it has none), and the export warnings that go with it.
 pub fn baked(doc: &Document) -> (Cow<'_, Document>, Vec<String>) {
+    crate::picabia_jobs::ensure(doc);
+    let mut generated: Vec<(usize, NodeId)> =
+        crate::picabia_generate::generated_layers(doc).into_iter().map(|id| (doc.ancestors(id).len(), id)).collect();
+    if generated.is_empty() {
+        return baked_copies(doc);
+    }
+    // Deepest first: a pathfinder over a traced layer then holds the trace's layers.
+    generated.sort_by_key(|(depth, id)| (std::cmp::Reverse(*depth), *id));
+    let mut out = doc.clone();
+    let mut made = 0usize;
+    for (_, id) in generated {
+        if matches!(crate::picabia_generate::bake(&mut out, id), Ok(Some(_))) {
+            made += 1;
+        }
+    }
+    let (copies, mut warnings) = baked_copies(&out);
+    let copies = copies.into_owned();
+    if made > 0 {
+        warnings.insert(
+            0,
+            format!(
+                "{made} generated layer{} (image trace, pathfinder) exported as {} result's layers",
+                if made == 1 { "" } else { "s" },
+                if made == 1 { "its" } else { "their" }
+            ),
+        );
+    }
+    (Cow::Owned(copies), warnings)
+}
+
+/// [`baked`]'s copies: every modifier stack baked into copies.
+fn baked_copies(doc: &Document) -> (Cow<'_, Document>, Vec<String>) {
     // Transforms worked out on the unbaked document: copy-to-shape targets may be baked first.
     let mut stacked: Vec<(usize, NodeId, Vec<figcraft_geom::Affine>)> =
         doc.ids().filter_map(|id| Some((doc.ancestors(id).len(), id, figcraft_render::picabia::instance_transforms(doc, doc.node(id)?)?))).collect();

@@ -189,6 +189,9 @@ impl FigApp {
                     self.services.save_prefs(&self.session.prefs);
                 }
                 "dialog.saveAs" => self.save_as_dialog(),
+                // PICABIA: a stencil's laser export and test card dialogs.
+                "dialog.stencilExport" => crate::picabia_laser::open(self, crate::picabia_laser::Kind::Export, &r.data),
+                "dialog.stencilTestCard" => crate::picabia_laser::open(self, crate::picabia_laser::Kind::TestCard, &r.data),
                 "dialog.colorProfile" => self.ui.color_profile = self.session.doc().ok().map(|d| d.color_profile),
                 "present" => {
                     if let Some(start) = r.data.get("start").and_then(figcraft_engine::params::id_of) {

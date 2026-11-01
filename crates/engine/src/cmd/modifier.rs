@@ -27,15 +27,16 @@ mod targets_tests;
 pub use targets::{check_target, target_choices};
 
 pub use apply::MAX_APPLY_LAYERS;
+pub(crate) use apply::repivot;
 
-const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil";
+const KIND_LIST: &str = "linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil|imageTrace|pathfinder";
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         spec!(
             "modifier.add",
             "Add modifier",
-            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed; stencil (ends the stack; rows below it are ignored): colourMode (threshold|pick), cutColours [\"#rrggbb\"], threshold (0-1), invert, widthMm, marginMm, minCutAreaMm2, minCutWidthMm, minBridgeMm, toleranceMm (mm), preview (paper|cloth), paperColour, pasteColour, clothColour, tieMode (ties|gauze|pattern), tieWidthMm (mm), tiesPerIsland (1-8), tieSpread, tieAngle (degrees or null), tieSeed, patternType (grid|horizontal|vertical), patternWidthMm, patternSpacingMm (mm), patternAngle (degrees), patternWhere (everywhere|islands), material (paper|film|card|custom; a preset fills minCutWidthMm, minBridgeMm, tieWidthMm, minCornerAngle unless the same props set them; setting one of those off the preset makes it custom), limitMode (fix|flag), minCornerAngle (degrees, 0-179), hoshi, hoshiDiameterMm (mm, 0.2-20), repeat (auto|off: use the repeat of the last wallpaper or gridArray row above), output (sheet|tile; tile needs a repeat)}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
+            "{ids?, kind (linearArray|circularArray|gridArray|mirror|transformEach|randomize|wallpaper|copyToShape|stencil|imageTrace|pathfinder), props? {count?, offsetX?, ..: the kind's params, camelCase; points, degrees, scale factors; copyToShape: target (layer id; checked: not the layer, its ancestors or descendants, nor a layer copying back onto it), mode (points|alongPath|populate), count, scale, align, seed; stencil (ends the stack; rows below it are ignored): colourMode (threshold|pick), cutColours [\"#rrggbb\"], threshold (0-1), invert, widthMm, marginMm, minCutAreaMm2, minCutWidthMm, minBridgeMm, toleranceMm (mm), preview (paper|cloth), paperColour, pasteColour, clothColour, tieMode (ties|gauze|pattern), tieWidthMm (mm), tiesPerIsland (1-8), tieSpread, tieAngle (degrees or null), tieSeed, patternType (grid|horizontal|vertical), patternWidthMm, patternSpacingMm (mm), patternAngle (degrees), patternWhere (everywhere|islands), material (paper|film|card|custom; a preset fills minCutWidthMm, minBridgeMm, tieWidthMm, minCornerAngle unless the same props set them; setting one of those off the preset makes it custom), limitMode (fix|flag), minCornerAngle (degrees, 0-179), hoshi, hoshiDiameterMm (mm, 0.2-20), repeat (auto|off: use the repeat of the last wallpaper or gridArray row above), output (sheet|tile; tile needs a repeat); imageTrace (a generator: rows above make its input copies, rows below act on the traced result): preset (default|autoColor|highFidelityPhoto|lowFidelityPhoto|threeColors|sixColors|sixteenColors|shadesOfGray|blackAndWhiteLogo|sketchedArt|silhouettes|lineArt|technicalDrawing|outline|flatLogo|custom; fills the fields below), mode (blackAndWhite|grayscale|color|logo), palette (limited|fullTone|automatic), colors (2-256), colorDetail, threshold (0-255), paths, corners (0-100), noise (1-100 image px), method (abutting|overlapping), fills, strokes, strokeWidth (1-100 image px), snapCurvesToLines, ignoreWhite, ignoreColor (\"#rrggbb\" or null); pathfinder (a generator on a group's contents): op (divide|trim|merge|crop|outline|minusBack|unite|minusFront|intersect|exclude), precision (0.001-10 points), outlineWidth (0-100 points)}, index? (where in the stack; default the end, which runs last)} → {modifier (the new id on the first layer), added: [{id, modifier}]}",
             true,
             add
         ),
@@ -82,16 +83,23 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!(
             "modifier.apply",
             "Apply modifiers",
-            "{ids?, upTo? (index, inclusive: bake only the rows down to it; the rows after it move onto the new group and stay live)} (each layer becomes a group of real layers, one per copy, named `Name 1…n`, in its place) → {ids (the groups, selected), applied: [{id, group, copies}]}",
+            "{ids?, upTo? (index, inclusive: bake only the rows down to it; the rows after it move onto the new group and stay live)} (each layer becomes a group of real layers, one per copy, named `Name 1…n`, in its place; a stencil row stays live; a generator row (imageTrace, pathfinder) is where Apply stops without upTo: the layer becomes a group of its result's vector layers, the rows below move onto it) → {ids (the groups, selected), applied: [{id, group, copies}]}",
             true,
             apply::apply
         ),
         spec!(
             "modifier.stencilInfo",
             "Stencil info",
-            "{id?} (computes the stencil when it is out of date) → {stencil (the stencil row's id; null when the layer's stack doesn't end in one), colours: [{hex, cut, area (mm², visible)}], warnings: [..], stats: {cutPieces, droppedSpecks, filledHoles, cutLengthMm, areaCutMm2, islands, ties, untied, patternHeld}, islands: [{x, y, w, h (bounds, the layer's space), tied (tie bars holding it), patternHeld (the tie pattern holds it), depth (0: in a cut-out of the sheet)}], sheetMm: {w, h}, shapes (outlines gathered)}",
+            "{id?} (computes the stencil when it is out of date) → {stencil (the stencil row's id; null when the layer's stack doesn't end in one), colours: [{hex, cut, area (mm², visible)}], warnings: [..], stats: {cutPieces, droppedSpecks, filledHoles, cutLengthMm, areaCutMm2, islands, ties, untied, patternHeld, repeatIslands (islands per repeat cell), problems: {narrowPaper, narrowCut, smallCut, smallHole, sharpCorner, untied}}, islands: [{x, y, w, h (bounds, the layer's space), tied (tie bars holding it), patternHeld (the tie pattern holds it), depth (0: in a cut-out of the sheet)}], problems: [{kind, x, y, w, h (bounds, the layer's space)}] (at most 500), hoshi: [{x, y}] (registration hole centres), repeat: {ax, ay, bx, by} (the lattice in the layer's space; null when not repeat-aware), cell: [{x, y} x4] (the repeat cell; null when not repeat-aware), sheetMm: {w, h} (the whole design's sheet), tile: {w, h} (mm; null unless output is tile), materials: [{id, minCutWidthMm, minBridgeMm, tieWidthMm, minCornerAngle, kerfMm}] (presets), shapes (outlines gathered)}",
             false,
             stencil_info
+        ),
+        spec!(
+            "modifier.resultInfo",
+            "Generator result info",
+            "{id?} (computes the result when it is out of date) → {id, modifier (the generator row's id; null when the layer has none), kind (imageTrace|pathfinder), fresh, pending, warnings: [..], stats (imageTrace: {paths, anchors, colours, tracedPx: {w, h}}; pathfinder: {shapes, faces}), colours: [\"#rrggbb\"] (largest area first), items, drawsDesign (no result: the layer draws as usual)}",
+            false,
+            result_info
         ),
         spec!(
             "modifier.stencilFromSelection",
@@ -99,6 +107,20 @@ pub fn specs() -> Vec<CommandSpec> {
             "{ids?, props? (the stencil's params, as modifier.add)} (several layers are grouped first, as object.group; one group, frame or layer takes the row itself) → {id (the stencil layer, selected), modifier}",
             true,
             stencil_from_selection
+        ),
+        spec!(
+            "modifier.stencilExport",
+            "Export for laser…",
+            "{id?, path? (the .svg to write; several sheets: \" 1\", \" 2\".. before the extension), data? (true: return the files as base64), dryRun? (true: only describe the sheets, no SVG written or returned and the settings not remembered; the dialog's summary; neither path, data nor dryRun: only asks the UI for its dialog, dialog.stencilExport {id, params}, and returns {dialog: true}), kerfMm? (0-2; default the stencil material's kerf, custom: the remembered one), bedWidthMm?, bedHeightMm? (10-5000 mm; 0 = no limit; a bigger sheet is split into overlapping sheets), overlapMm? (0-200), cutColour?, engraveColour?, scoreColour? (\"#rrggbb\"), label? (engrave the layer name, size, material, sheet number and THIS SIDE UP)} (settings not given: the ones used last; computes the stencil when it is out of date; exports the drawn cut, one tile with tile output; mm, kerf-compensated, inner cuts first) → {id, files: [{name (file name), path | data (base64 svg), sheet (\"1 of 2\"), wMm, hMm, contours, loosePieces}], sheets, warnings: [..], params {kerfMm, bedWidthMm, bedHeightMm, overlapMm, cutColour, engraveColour, scoreColour, label} (the settings used, remembered for next time)}",
+            false,
+            crate::picabia_laser::export
+        ),
+        spec!(
+            "modifier.stencilTestCard",
+            "Laser test card…",
+            "{id?, material? (paper|film|card|custom; default the selected stencil's material, else paper; custom: the selected stencil's limits), kerfMm? (0-2; default the material's kerf, custom: the remembered one), path? (the .svg to write), data? (true: return it as base64), dryRun? (true: only describe it, no SVG and the settings not remembered; neither path, data nor dryRun: only asks the UI for its dialog, dialog.stencilTestCard {id, material, params}, and returns {dialog: true}), cutColour?, engraveColour?, scoreColour? (\"#rrggbb\")} (a 120 × 80 mm card: bridges, holes, slits, corners and a kerf gauge, marked at the material's limits) → {files: [{name, path | data, sheet (\"test card\"), wMm, hMm, contours, loosePieces}], sheets (1), warnings: [], material, params {kerfMm, bedWidthMm, bedHeightMm, overlapMm, cutColour, engraveColour, scoreColour, label} (the settings used, remembered)}",
+            false,
+            crate::picabia_laser::test_card
         ),
     ]
 }
@@ -382,6 +404,16 @@ fn stencil_info(s: &mut Session, p: &Value) -> Result<Value> {
         _ => crate::picabia_stencil::compute_now(doc, id),
     };
     let mut out = info.map_or_else(|| json!({"stencil": null}), |i| crate::picabia_stencil::info_json(&i));
+    out["id"] = json!(id);
+    Ok(out)
+}
+
+fn result_info(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "modifier.resultInfo";
+    let id = targets(s, p).first().copied().ok_or_else(|| bad(CMD, "select a layer or pass `id`"))?;
+    let doc = s.doc()?;
+    doc.get(id)?;
+    let mut out = crate::picabia_generate::result_info(doc, id);
     out["id"] = json!(id);
     Ok(out)
 }
