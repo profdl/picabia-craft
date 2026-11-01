@@ -9,7 +9,9 @@ use figcraft_doc::NodeId;
 use figcraft_engine::{Session, UiRequest};
 use serde_json::{Value, json};
 
-use super::{EXPORT, Kind, LaserDialog, Summary, TEST_CARD, hex, parse_hex, request, saved_text, summary_of, written};
+use super::{
+    DESIGN_GCODE, EXPORT, Format, Kind, LaserDialog, STENCIL_GCODE, Summary, TEST_CARD, hex, parse_hex, request, saved_text, summary_of, written,
+};
 use crate::layers_drag_tests::Ui;
 use crate::live_tests::{flat, texts};
 
@@ -269,4 +271,78 @@ fn the_modifiers_submenu_offers_laser_items_on_a_stencil() {
     u.app.session.execute("select.set", &json!({"ids": [r]})).unwrap();
     u.app.session.execute("modifier.toggle", &json!({"index": 0, "enabled": false})).unwrap();
     assert!(!crate::picabia_ui::items(&u.app).iter().any(|i| i.1 == EXPORT));
+}
+
+#[test]
+fn the_gcode_format_sends_the_material_and_operations() {
+    // modifier.stencilGcode asks for the export dialog in G-code.
+    let data = json!({"id": 7, "format": "gcode", "material": "film", "params": {"kerfMm": 0.05}, "gcode": {"cut": {"passes": 4}}});
+    let mut d = LaserDialog::from_request(Kind::Export, &data);
+    assert_eq!((d.format, d.command(), d.material.as_str(), d.ops.0[0].passes), (Format::Gcode, STENCIL_GCODE, "film", 4));
+    assert_eq!(d.extension(), "gcode");
+    // No colours in G-code, the stencil's material and the table until picked or edited.
+    let p = d.params();
+    assert!(p.get("cutColour").is_none() && p.get("material").is_none() && p.get("cut").is_none(), "{p}");
+    assert_eq!((p["id"].clone(), p["label"].clone()), (json!(7), json!(true)));
+    d.material_set = true;
+    d.ops_set = true;
+    let p = d.params();
+    assert_eq!((p["material"].clone(), p["cut"]["passes"].clone()), (json!("film"), json!(4)));
+    // SVG again: the old params.
+    d.format = Format::Svg;
+    assert_eq!(d.command(), EXPORT);
+    assert!(d.params().get("cutColour").is_some() && d.params().get("cut").is_none());
+    // The test card's power ladder is G-code only and has no kerf.
+    let mut d = LaserDialog::from_request(Kind::TestCard, &json!({"format": "gcode", "kind": "powerLadder", "material": "card"}));
+    d.kerf_set = true;
+    let p = d.params();
+    assert_eq!((p["format"].clone(), p["kind"].clone(), p["material"].clone()), (json!("gcode"), json!("powerLadder"), json!("card")));
+    assert!(p.get("kerfMm").is_none());
+    assert!(!LaserDialog::from_request(Kind::TestCard, &json!({"kind": "powerLadder"})).ladder, "an SVG card is never the ladder");
+    // The table follows the command until edited; the summary reads lines and time.
+    let mut d = LaserDialog::from_request(Kind::Design, &json!({"ids": [3, 4], "material": "paper"}));
+    assert_eq!((d.format, d.command(), d.ids.clone()), (Format::Gcode, DESIGN_GCODE, vec![NodeId(3), NodeId(4)]));
+    d.take_result(Ok(json!({"files": [{"sheet": "design", "wMm": 50, "hMm": 20, "lines": 120, "estimatedSec": 75}], "material": "card", "gcode": {"score": {"powerPct": 44}}})));
+    assert_eq!((d.material.as_str(), d.ops.0[1].power), ("card", 44.0));
+    let Summary::Ready { sheets, .. } = &d.summary else { panic!("ready") };
+    assert_eq!((sheets[0].lines, sheets[0].est_sec), (Some(120), Some(75.0)));
+    assert_eq!(d.params(), json!({"ids": [3, 4]}));
+}
+
+#[test]
+fn dialog_laser_gcode_exports_any_design() {
+    let mut s = Session::new();
+    let r = id(&s.execute("shape.rectangle", &json!({"x": 0, "y": 0, "width": 96, "height": 48})).unwrap());
+    s.execute("select.set", &json!({"ids": [r]})).unwrap();
+    let mut u = Ui::new(s);
+    u.app.run(DESIGN_GCODE, json!({}));
+    let d = u.app.ui.picabia_laser.clone().expect("laser.gcode asks for the dialog");
+    assert_eq!((d.kind, d.ids.clone()), (Kind::Design, vec![r]));
+    let shown = drawn(&mut u);
+    for label in ["Export G-code for laser", "Material", "Speed", "Power", "Passes", "Export…"] {
+        assert!(shown.iter().any(|t| t == label), "{label:?} is drawn: {shown:?}");
+    }
+    assert!(!shown.iter().any(|t| t == "Format" || t == "Kerf"), "a design has no format choice or kerf: {shown:?}");
+    let d = u.app.ui.picabia_laser.clone().unwrap();
+    let Summary::Ready { sheets, .. } = &d.summary else { panic!("{:?}", d.summary) };
+    // 96 px is an inch.
+    assert!((sheets[0].w_mm - 25.4).abs() < 0.01 && sheets[0].lines.is_some_and(|n| n > 4), "{sheets:?}");
+    let dir = std::env::temp_dir().join(format!("picabia-laser-gcode-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rect laser.gcode");
+    let mut p = d.params();
+    p["path"] = json!(path.to_string_lossy());
+    u.app.run(d.command(), p).expect("exported");
+    let g = std::fs::read_to_string(&path).unwrap();
+    assert!(g.contains("G21") && g.contains("M4") && g.trim_end().ends_with("M5"), "{g}");
+    std::fs::remove_dir_all(&dir).ok();
+    // The stencil's export dialog offers the format.
+    let (mut u, r) = stencil();
+    ask(&mut u, "dialog.stencilExport", json!({"id": r, "format": "gcode"}));
+    let shown = drawn(&mut u);
+    for label in ["Format", "SVG for LightBurn", "G-code for GRBL", "Material", "Kerf", "Passes"] {
+        assert!(shown.iter().any(|t| t == label), "{label:?} is drawn: {shown:?}");
+    }
+    let d = u.app.ui.picabia_laser.clone().unwrap();
+    assert!(matches!(&d.summary, Summary::Ready { sheets, .. } if sheets.first().is_some_and(|s| s.lines.is_some())), "{:?}", d.summary);
 }

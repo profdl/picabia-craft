@@ -155,6 +155,12 @@ impl Status {
     }
 }
 
+/// `c` as text: the theme's warning yellow is too light to read on a light panel and its success
+/// green too dark on a dark one, so text in them moves part way to the text colour there.
+pub fn readable(c: Color32, t: &Tokens) -> Color32 {
+    if (!t.dark && c == t.warning) || (t.dark && c == t.success) { c.lerp_to_gamma(t.text, 0.55) } else { c }
+}
+
 /// What the state badge says, and its colour.
 pub fn badge(st: &Status, t: &Tokens) -> (String, Color32) {
     if !st.open() {

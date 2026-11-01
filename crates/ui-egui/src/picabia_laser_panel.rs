@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 pub use job::{JobState, Source};
 pub use run::{Checklist, Confirm, stop_shortcut};
 pub use status::Status;
+pub(crate) use status::{clock, readable};
 
 use crate::FigApp;
 use crate::i18n::{self, tr, trf};
@@ -224,7 +225,7 @@ fn machine_column(ui: &mut Ui, panel: &mut LaserPanel, st: &Status, actions: &mu
     section(ui, tr("Machine"));
     machine(ui, st, actions);
     if let Some(n) = &panel.notice {
-        job::wrapped(ui, n, t.warning);
+        job::wrapped(ui, n, status::readable(t.warning, &t));
     }
     if st.connected {
         section(ui, tr("Position"));
@@ -359,11 +360,11 @@ fn machine(ui: &mut Ui, st: &Status, actions: &mut Vec<Action>) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal(|ui| {
         let (text, colour) = status::badge(st, &t);
-        let galley = ui.painter().layout_no_wrap(text, semibold(11.0), colour);
+        let galley = ui.painter().layout_no_wrap(text, semibold(11.0), status::readable(colour, &t));
         let (rect, _) = ui.allocate_exact_size(vec2(galley.size().x + 26.0, 22.0), Sense::hover());
         ui.painter().rect_filled(rect, CornerRadius::same(11), colour.gamma_multiply(0.16));
         ui.painter().circle_filled(rect.left_center() + vec2(10.0, 0.0), 4.0, colour);
-        ui.painter().galley(rect.left_center() + vec2(18.0, -galley.size().y / 2.0), galley, colour);
+        ui.painter().galley(rect.left_center() + vec2(18.0, -galley.size().y / 2.0), galley, status::readable(colour, &t));
         if let Some(p) = st.pos {
             let pos = format!("X {}  Y {}  mm", widgets::fmt_num(p[0]), widgets::fmt_num(p[1]));
             ui.label(egui::RichText::new(pos).font(egui::FontId::monospace(11.0)).color(t.text));
@@ -417,7 +418,7 @@ fn machine(ui: &mut Ui, st: &Status, actions: &mut Vec<Action>) {
         job::wrapped(ui, e, t.danger);
     }
     for w in &st.warnings {
-        job::wrapped(ui, w, t.warning);
+        job::wrapped(ui, w, status::readable(t.warning, &t));
     }
 }
 

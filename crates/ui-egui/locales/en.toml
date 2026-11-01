@@ -2169,3 +2169,8 @@ name = "English"
 "{name} and {n} more" = { one = "{name} and {n} more", other = "{name} and {n} more" }
 "{n} lines" = { one = "{n} line", other = "{n} lines" }
 "{time} elapsed" = "{time} elapsed"
+"Cuts the stencil {name}: its sheet's cuts, scores and label." = "Cuts the stencil {name}: its sheet's cuts, scores and label."
+"Export G-code for laser" = "Export G-code for laser"
+"G-code for GRBL" = "G-code for GRBL"
+"Make" = "Make"
+"SVG for LightBurn" = "SVG for LightBurn"

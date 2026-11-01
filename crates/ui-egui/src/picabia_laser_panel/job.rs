@@ -75,6 +75,8 @@ pub struct JobState {
     pub ops_set: bool,
     /// The stencil sheet to cut, 1-based.
     pub sheet: usize,
+    /// The last dry run cut a stencil layer (its sheets), not a design's outlines.
+    pub stencil: bool,
     pub summary: Summary,
     /// The dry run's params and the design's state it ran on.
     ran: Option<(Value, (usize, usize))>,
@@ -156,6 +158,7 @@ impl JobState {
                 {
                     self.ops.read(g);
                 }
+                self.stencil = v.get("id").is_some_and(|id| !id.is_null());
                 self.material_used = v.get("material").and_then(Value::as_str).map(str::to_string);
                 let sheets: Vec<Sheet> = v
                     .get("files")
@@ -245,6 +248,7 @@ pub fn selection_name(app: &FigApp) -> Option<String> {
 /// The source picker, the selection or file, the sheet, the material and the operation table;
 /// whether a setting changed. `locked`: a job is running (nothing changes under it).
 pub fn settings(app: &mut FigApp, ui: &mut Ui, j: &mut JobState, locked: bool) -> bool {
+    let stencil = j.stencil && app.session.selection().len() == 1;
     let t = Tokens::get(ui.ctx());
     let mut changed = false;
     let labels = [tr("Selection"), tr("Test card"), tr("Power ladder"), tr("G-code file")];
@@ -272,10 +276,15 @@ pub fn settings(app: &mut FigApp, ui: &mut Ui, j: &mut JobState, locked: bool) -
     ui.add_space(4.0);
     match &j.source {
         Source::Selection => match selection_name(app) {
-            Some(name) => widgets::label(ui, &trf("Cuts {name}: closed outlines are cut, open paths scored.", &[("name", &name)]), t.text_secondary),
-            None => {
-                wrapped(ui, tr("Nothing selected: select the layers to cut, or choose the test card, the power ladder or a G-code file."), t.warning)
+            Some(name) if stencil => {
+                widgets::label(ui, &trf("Cuts the stencil {name}: its sheet's cuts, scores and label.", &[("name", &name)]), t.text_secondary)
             }
+            Some(name) => widgets::label(ui, &trf("Cuts {name}: closed outlines are cut, open paths scored.", &[("name", &name)]), t.text_secondary),
+            None => wrapped(
+                ui,
+                tr("Nothing selected: select the layers to cut, or choose the test card, the power ladder or a G-code file."),
+                super::status::readable(t.warning, &t),
+            ),
         },
         Source::TestCard => widgets::label(ui, tr("The material's test card: bridges, holes, slits and a kerf gauge."), t.text_secondary),
         Source::PowerLadder => widgets::label(ui, tr("Squares at each power and speed, to find the material's settings."), t.text_secondary),
@@ -365,7 +374,7 @@ pub fn summary(ui: &mut Ui, j: &JobState) {
                 ui.label(egui::RichText::new(line).font(crate::theme::semibold(11.0)).color(t.text));
             }
             for w in warnings {
-                wrapped(ui, w, t.warning);
+                wrapped(ui, w, super::status::readable(t.warning, &t));
             }
         }
     }

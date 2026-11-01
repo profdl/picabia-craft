@@ -91,7 +91,7 @@ pub fn rows(ui: &mut Ui, st: &Status) -> Option<Value> {
         }
     });
     if p.get("checked").and_then(Value::as_bool) != Some(true) {
-        super::job::wrapped(ui, tr("These values are guesses until checked on the machine."), t.warning);
+        super::job::wrapped(ui, tr("These values are guesses until checked on the machine."), super::status::readable(t.warning, &t));
     }
     set
 }

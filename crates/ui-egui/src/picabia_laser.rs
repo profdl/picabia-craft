@@ -1,12 +1,17 @@
 //! PICABIA: the laser export and test card dialogs of a stencil (`dialog.stencilExport`,
-//! `dialog.stencilTestCard`, requested by `modifier.stencilExport` and `modifier.stencilTestCard`
-//! when they're run without a path), and the two buttons under a stencil row that ask for them.
+//! `dialog.stencilTestCard`, requested by `modifier.stencilExport`, `modifier.stencilGcode` and
+//! `modifier.stencilTestCard` when they're run without a path), the G-code export of any design
+//! (`dialog.laserGcode`, from `laser.gcode`), and the two buttons under a stencil row that ask for
+//! them.
 //!
-//! The dialog holds the settings only: kerf, bed size (or no limit), sheet overlap, the three
-//! operation colours and the label (the test card: material, kerf and colours). Its summary comes
-//! from the command itself, run with `data: true` on open and a moment after each change: sheets,
-//! their sizes in mm and what the job warns of. Export runs the command again with the path the
-//! save dialog picked (the browser: with `data: true`, each sheet a download).
+//! The dialog holds the settings only: the format (SVG for LightBurn and the like, or G-code for a
+//! GRBL laser), kerf, bed size (or no limit), sheet overlap, the three operation colours and the
+//! label (the test card: material, kerf and colours, or the power ladder); for G-code the material
+//! and the operation table (speed, power, passes; remembered per material by the command). Its
+//! summary comes from the command itself, run with `dryRun: true` on open and a moment after each
+//! change: sheets, their sizes in mm, lines and time, and what the job warns of. Export runs the
+//! command again with the path the save dialog picked (the browser: with `data: true`, each sheet
+//! a download).
 
 use std::ffi::OsStr;
 
@@ -25,6 +30,10 @@ pub const EXPORT: &str = "modifier.stencilExport";
 /// The test card command (`{id?, material?, kerfMm?, path?, data?, colours}`; the layer's limits for
 /// a custom material).
 pub const TEST_CARD: &str = "modifier.stencilTestCard";
+/// A stencil's G-code (`{id?, path?, data?, material?, cut?, score?, engrave?, kerfMm?, ...}`).
+pub const STENCIL_GCODE: &str = "modifier.stencilGcode";
+/// Any layers' G-code (`{ids?, path?, data?, material?, cut?, score?, engrave?}`).
+pub const DESIGN_GCODE: &str = "laser.gcode";
 
 /// Seconds the summary waits after a change before it asks the command again.
 const DEBOUNCE: f64 = 0.3;
@@ -37,16 +46,30 @@ pub(crate) use crate::right::modifiers::MATERIALS;
 pub enum Kind {
     /// Export for laser: the stencil's cut as one SVG per sheet.
     Export,
-    /// Laser test card: a card of bridges, holes, slits, corners and a kerf gauge.
+    /// Laser test card: a card of bridges, holes, slits, corners and a kerf gauge (or, as G-code,
+    /// the power ladder).
     TestCard,
+    /// G-code for laser of any layers (`laser.gcode`).
+    Design,
+}
+
+/// What the dialog writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Format {
+    /// SVG for LightBurn and the like (colours per operation).
+    #[default]
+    Svg,
+    /// GRBL G-code (speed, power and passes per operation).
+    Gcode,
 }
 
 impl Kind {
-    /// The command the dialog runs.
+    /// The command that asks for the dialog.
     pub fn command(self) -> &'static str {
         match self {
             Kind::Export => EXPORT,
             Kind::TestCard => TEST_CARD,
+            Kind::Design => DESIGN_GCODE,
         }
     }
 
@@ -54,6 +77,7 @@ impl Kind {
         match self {
             Kind::Export => tr("Export for laser"),
             Kind::TestCard => tr("Laser test card"),
+            Kind::Design => tr("Export G-code for laser"),
         }
     }
 }
@@ -66,6 +90,9 @@ pub struct SheetLine {
     pub h_mm: f64,
     pub contours: u64,
     pub loose: u64,
+    /// G-code: its lines and estimated time.
+    pub lines: Option<u64>,
+    pub est_sec: Option<f64>,
 }
 
 /// What the last dry run came to.
@@ -86,6 +113,16 @@ pub struct LaserDialog {
     pub kind: Kind,
     /// The stencil layer (export).
     pub id: Option<NodeId>,
+    /// The layers (G-code of a design).
+    pub ids: Vec<NodeId>,
+    pub format: Format,
+    /// The test card as G-code: the power ladder instead.
+    pub ladder: bool,
+    /// G-code: the operations, sent once edited (`ops_set`); else the material's remembered ones.
+    pub ops: crate::picabia_laser_panel::ops::Ops,
+    pub ops_set: bool,
+    /// G-code of a stencil or a design: the material was picked (else the stencil's, or paper).
+    pub material_set: bool,
     /// Kerf in mm; sent only once typed (`kerf_set`), else the material's (shown from the summary).
     pub kerf_mm: f64,
     pub kerf_set: bool,
@@ -113,6 +150,12 @@ impl LaserDialog {
         LaserDialog {
             kind,
             id: None,
+            ids: Vec::new(),
+            format: if kind == Kind::Design { Format::Gcode } else { Format::Svg },
+            ladder: false,
+            ops: Default::default(),
+            ops_set: false,
+            material_set: false,
             kerf_mm: 0.1,
             kerf_set: false,
             bed_w_mm: 600.0,
@@ -135,6 +178,14 @@ impl LaserDialog {
     pub fn from_request(kind: Kind, data: &Value) -> Self {
         let mut d = LaserDialog::new(kind);
         d.id = data.get("id").and_then(figcraft_engine::params::id_of);
+        d.ids = data.get("ids").and_then(Value::as_array).into_iter().flatten().take(10_000).filter_map(figcraft_engine::params::id_of).collect();
+        if data.get("format").and_then(Value::as_str) == Some("gcode") {
+            d.format = Format::Gcode;
+        }
+        d.ladder = d.kind == Kind::TestCard && d.format == Format::Gcode && data.get("kind").and_then(Value::as_str) == Some("powerLadder");
+        if let Some(g) = data.get("gcode") {
+            d.ops.read(g);
+        }
         let p = data.get("params").filter(|p| p.is_object()).unwrap_or(data);
         d.read(p);
         // The test card's request names its material beside the params.
@@ -178,8 +229,19 @@ impl LaserDialog {
         }
     }
 
+    /// The command the dialog runs for its format.
+    pub fn command(&self) -> &'static str {
+        match (self.kind, self.format) {
+            (Kind::Export, Format::Gcode) => STENCIL_GCODE,
+            (kind, _) => kind.command(),
+        }
+    }
+
     /// The command's params for these settings (without `path` or `data`).
     pub fn params(&self) -> Value {
+        if self.format == Format::Gcode {
+            return self.gcode_params();
+        }
         let mut p = Map::new();
         if let Some(id) = self.id {
             p.insert("id".into(), json!(id));
@@ -203,6 +265,45 @@ impl LaserDialog {
         Value::Object(p)
     }
 
+    /// The G-code command's params: the layer or layers, the stencil's sheet settings, the
+    /// material (always the test card's; a stencil's or a design's once picked) and the operations
+    /// once edited.
+    fn gcode_params(&self) -> Value {
+        let mut p = Map::new();
+        match self.kind {
+            Kind::Design => {
+                p.insert("ids".into(), json!(self.ids));
+            }
+            Kind::Export | Kind::TestCard => {
+                if let Some(id) = self.id {
+                    p.insert("id".into(), json!(id));
+                }
+            }
+        }
+        if self.kind == Kind::TestCard {
+            p.insert("format".into(), json!("gcode"));
+            p.insert("kind".into(), json!(if self.ladder { "powerLadder" } else { "card" }));
+        }
+        if self.kind == Kind::TestCard || self.material_set {
+            p.insert("material".into(), json!(self.material));
+        }
+        if self.kerf_set && !self.ladder && self.kind != Kind::Design {
+            p.insert("kerfMm".into(), json!(round3(self.kerf_mm)));
+        }
+        if self.kind == Kind::Export {
+            let (w, h) = if self.no_limit { (0.0, 0.0) } else { (self.bed_w_mm, self.bed_h_mm) };
+            p.insert("bedWidthMm".into(), json!(round3(w)));
+            p.insert("bedHeightMm".into(), json!(round3(h)));
+            p.insert("overlapMm".into(), json!(round3(self.overlap_mm)));
+            p.insert("label".into(), json!(self.label));
+        }
+        let mut v = Value::Object(p);
+        if self.ops_set {
+            self.ops.put(&mut v);
+        }
+        v
+    }
+
     /// Read a dry run's result into the summary; the kerf the command used shows until one is
     /// typed.
     pub fn take_result(&mut self, r: Result<Value, String>) {
@@ -213,20 +314,41 @@ impl LaserDialog {
                 {
                     self.kerf_mm = k.clamp(0.0, 2.0);
                 }
+                if self.format == Format::Gcode {
+                    if !self.ops_set
+                        && let Some(g) = v.get("gcode")
+                    {
+                        self.ops.read(g);
+                    }
+                    if !self.material_set
+                        && let Some(m) = v.get("material").and_then(Value::as_str).filter(|m| MATERIALS.iter().any(|(id, _)| id == m))
+                    {
+                        self.material = m.to_string();
+                    }
+                }
                 summary_of(&v)
             }
             Err(e) => Summary::Failed(e),
         };
     }
 
+    /// The file's extension.
+    pub fn extension(&self) -> &'static str {
+        match self.format {
+            Format::Svg => "svg",
+            Format::Gcode => "gcode",
+        }
+    }
+
     /// The suggested file name: the layer's name, or the card's material.
     fn file_name(&self, doc: Option<&Document>) -> String {
+        let ext = self.extension();
+        let named = |id: Option<NodeId>| id.and_then(|id| doc?.node(id)).map(|n| n.name.trim().to_string()).filter(|n| !n.is_empty());
         match self.kind {
-            Kind::Export => {
-                let name = self.id.and_then(|id| doc?.node(id)).map(|n| n.name.trim().to_string()).filter(|n| !n.is_empty());
-                format!("{} laser.svg", name.unwrap_or_else(|| "Stencil".into()))
-            }
-            Kind::TestCard => format!("Test card {}.svg", self.material),
+            Kind::Export => format!("{} laser.{ext}", named(self.id).unwrap_or_else(|| "Stencil".into())),
+            Kind::Design => format!("{} laser.{ext}", named(self.ids.first().copied()).unwrap_or_else(|| "Design".into())),
+            Kind::TestCard if self.ladder => format!("Power ladder {}.{ext}", self.material),
+            Kind::TestCard => format!("Test card {}.{ext}", self.material),
         }
     }
 
@@ -250,6 +372,8 @@ pub fn summary_of(v: &Value) -> Summary {
             h_mm: f.get("hMm").and_then(Value::as_f64).unwrap_or(0.0),
             contours: f.get("contours").and_then(Value::as_u64).unwrap_or(0),
             loose: f.get("loosePieces").and_then(Value::as_u64).unwrap_or(0),
+            lines: f.get("lines").and_then(Value::as_u64),
+            est_sec: f.get("estimatedSec").and_then(Value::as_f64).filter(|e| e.is_finite()),
         })
         .collect();
     let warnings = v.get("warnings").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).take(32).map(str::to_string).collect();
@@ -332,7 +456,7 @@ fn refresh(app: &mut FigApp, ctx: &Context, d: &mut LaserDialog) {
     // Only the sheets' sizes and counts: no SVG, and the remembered settings stay as they are.
     dry["dryRun"] = json!(true);
     // Read-only and not undoable: run directly so a refusal shows in the dialog, not as a toast.
-    let r = app.session.execute(d.kind.command(), &dry).map_err(|e| e.to_string());
+    let r = app.session.execute(d.command(), &dry).map_err(|e| e.to_string());
     d.take_result(r);
     d.ran = Some(params);
 }
@@ -350,7 +474,8 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     let (mut cancel, mut export) = (false, false);
     crate::dialogs::window(d.kind.title(), ctx).id(Id::unique("picabia_laser")).open(&mut open).show(ctx, |ui| {
         ui.set_width(360.0);
-        if let Some(name) = d.id.and_then(|id| app.session.doc().ok()?.node(id)).map(|n| n.name.clone()) {
+        if let Some(name) = d.id.or(d.ids.first().copied()).and_then(|id| app.session.doc().ok()?.node(id)).map(|n| n.name.clone()) {
+            let name = if d.ids.len() > 1 { trn("{name} and {n} more", d.ids.len() - 1, &[("name", &name)]) } else { name };
             widgets::label(ui, &name, t.text_secondary);
             ui.add_space(4.0);
         }
@@ -373,10 +498,10 @@ pub fn show(app: &mut FigApp, ctx: &Context) {
     }
     let params = d.params();
     let name = d.file_name(app.session.doc().ok());
-    let kind = d.kind;
+    let (cmd, title, ext) = (d.command(), d.kind.title(), d.extension());
     app.ui.picabia_laser = Some(d);
     if export {
-        save(app, kind, params, &name);
+        save(app, cmd, title, ext, params, &name);
     }
 }
 
@@ -404,7 +529,40 @@ fn mm_field(ui: &mut Ui, key: &str, name: &str, v: f64, lo: f64, hi: f64) -> Opt
 /// The settings rows; whether one changed.
 fn fields(ui: &mut Ui, d: &mut LaserDialog) -> bool {
     let mut changed = false;
-    if d.kind == Kind::TestCard {
+    let gcode = d.format == Format::Gcode;
+    if d.kind != Kind::Design {
+        ui.horizontal(|ui| {
+            lead(ui, tr("Format"));
+            let labels = [tr("SVG for LightBurn"), tr("G-code for GRBL")];
+            ui.allocate_ui(vec2(FIELD_W * 2.0 + 72.0, widgets::FIELD_H), |ui| {
+                if let Some(i) = widgets::segmented_text(ui, &labels, usize::from(gcode)) {
+                    let f = if i == 1 { Format::Gcode } else { Format::Svg };
+                    if f != d.format {
+                        d.format = f;
+                        // The ladder is G-code only.
+                        d.ladder &= f == Format::Gcode;
+                        changed = true;
+                    }
+                }
+            });
+        });
+    }
+    let gcode = d.format == Format::Gcode;
+    if d.kind == Kind::TestCard && gcode {
+        ui.horizontal(|ui| {
+            lead(ui, tr("Make"));
+            let labels = [tr("Test card"), tr("Power ladder")];
+            ui.allocate_ui(vec2(FIELD_W * 2.0 + 72.0, widgets::FIELD_H), |ui| {
+                if let Some(i) = widgets::segmented_text(ui, &labels, usize::from(d.ladder))
+                    && (i == 1) != d.ladder
+                {
+                    d.ladder = i == 1;
+                    changed = true;
+                }
+            });
+        });
+    }
+    if d.kind == Kind::TestCard || gcode {
         ui.horizontal(|ui| {
             lead(ui, tr("Material"));
             let shown = MATERIALS.iter().find(|(id, _)| *id == d.material).map_or("", |(_, l)| tr(l));
@@ -413,10 +571,15 @@ fn fields(ui: &mut Ui, d: &mut LaserDialog) -> bool {
             crate::right::menu_popup(&resp).show(|ui| {
                 for (id, label) in MATERIALS {
                     if crate::right::menu_item(ui, tr(label), "") {
-                        if d.material != *id {
+                        if d.material != *id || !d.material_set {
                             d.material = (*id).to_string();
-                            // The card's kerf follows the material until one is typed.
-                            d.kerf_set = false;
+                            d.material_set = true;
+                            // The card's kerf follows the material until one is typed, and the
+                            // operations the material's remembered ones until edited.
+                            if d.kind == Kind::TestCard {
+                                d.kerf_set = false;
+                            }
+                            d.ops_set = false;
                             changed = true;
                         }
                         ui.close();
@@ -425,14 +588,16 @@ fn fields(ui: &mut Ui, d: &mut LaserDialog) -> bool {
             });
         });
     }
-    ui.horizontal(|ui| {
-        lead(ui, tr("Kerf"));
-        if let Some(v) = mm_field(ui, "kerf", tr("Kerf"), d.kerf_mm, 0.0, 2.0) {
-            d.kerf_mm = v;
-            d.kerf_set = true;
-            changed = true;
-        }
-    });
+    if d.kind != Kind::Design && !(d.kind == Kind::TestCard && d.ladder) {
+        ui.horizontal(|ui| {
+            lead(ui, tr("Kerf"));
+            if let Some(v) = mm_field(ui, "kerf", tr("Kerf"), d.kerf_mm, 0.0, 2.0) {
+                d.kerf_mm = v;
+                d.kerf_set = true;
+                changed = true;
+            }
+        });
+    }
     if d.kind == Kind::Export {
         ui.horizontal(|ui| {
             lead(ui, tr("Bed"));
@@ -468,7 +633,14 @@ fn fields(ui: &mut Ui, d: &mut LaserDialog) -> bool {
         }
     }
     ui.add_space(4.0);
+    if gcode && crate::picabia_laser_panel::ops::table(ui, "export", &mut d.ops) {
+        d.ops_set = true;
+        changed = true;
+    }
     for (key, label, c) in [("cut", tr("Cut"), &mut d.cut), ("engrave", tr("Engrave"), &mut d.engrave), ("score", tr("Score"), &mut d.score)] {
+        if gcode {
+            break;
+        }
         ui.horizontal(|ui| {
             lead(ui, label);
             if egui::color_picker::color_edit_button_srgb(ui, c).changed() {
@@ -506,16 +678,22 @@ fn summary(ui: &mut Ui, s: &Summary, t: &Tokens) {
             for s in sheets.iter() {
                 let (w, h) = (mm(s.w_mm), mm(s.h_mm));
                 let size = trf("{w} × {h} mm", &[("w", &w), ("h", &h)]);
-                let cuts = trn("{n} cuts", s.contours as usize, &[]);
+                let cuts = match (s.lines, s.est_sec) {
+                    (Some(n), Some(e)) => {
+                        format!("{}, {}", trn("{n} lines", n as usize, &[]), trf("about {time}", &[("time", &crate::picabia_laser_panel::clock(e))]))
+                    }
+                    (Some(n), None) => trn("{n} lines", n as usize, &[]),
+                    _ => trn("{n} cuts", s.contours as usize, &[]),
+                };
                 // A lone sheet needs no "1 of 1".
                 let line = if s.name.is_empty() || sheets.len() == 1 { format!("{size}, {cuts}") } else { format!("{}: {size}, {cuts}", s.name) };
                 widgets::label(ui, &line, t.text_secondary);
                 if s.loose > 0 {
-                    wrapped(ui, &trn("{n} pieces would fall out", s.loose as usize, &[]), t.warning);
+                    wrapped(ui, &trn("{n} pieces would fall out", s.loose as usize, &[]), crate::picabia_laser_panel::readable(t.warning, t));
                 }
             }
             for w in warnings {
-                wrapped(ui, w, t.warning);
+                wrapped(ui, w, crate::picabia_laser_panel::readable(t.warning, t));
             }
         }
     }
@@ -528,15 +706,14 @@ fn wrapped(ui: &mut Ui, text: &str, color: egui::Color32) {
 
 /// Export: a save dialog for the first sheet's file (more sheets take " 1", " 2"... beside it);
 /// in the browser each sheet downloads.
-fn save(app: &mut FigApp, kind: Kind, params: Value, name: &str) {
-    let cmd = kind.command();
+fn save(app: &mut FigApp, cmd: &'static str, title: &str, ext: &'static str, params: Value, name: &str) {
     if app.services.downloads() {
         let mut p = params;
         p["data"] = json!(true);
         let Some(r) = app.run(cmd, p) else { return };
         let mut names = Vec::new();
         for f in r.get("files").and_then(Value::as_array).into_iter().flatten() {
-            let n = f.get("name").and_then(Value::as_str).unwrap_or("stencil.svg").to_string();
+            let n = f.get("name").and_then(Value::as_str).map_or_else(|| format!("stencil.{ext}"), str::to_string);
             if app.download(&n, f) {
                 names.push(n);
             }
@@ -549,9 +726,9 @@ fn save(app: &mut FigApp, kind: Kind, params: Value, name: &str) {
         }
         return;
     }
-    app.pick_save(kind.title(), name, &["svg"], move |app, mut path| {
+    app.pick_save(title, name, &[ext], move |app, mut path| {
         if path.extension().is_none_or(OsStr::is_empty) {
-            path.set_extension("svg");
+            path.set_extension(ext);
         }
         let mut p = params;
         p["path"] = json!(path.to_string_lossy());

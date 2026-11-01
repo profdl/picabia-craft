@@ -206,17 +206,17 @@ pub fn stop_button(ui: &mut Ui, h: f32) -> bool {
     resp.clicked()
 }
 
-/// While connected with the window closed: a bar at the bottom of the window with the machine's
+/// While connected with the window closed: a bar above the canvas toolbar at the bottom of the window with the machine's
 /// state, the job's progress, Stop and a way back to the window.
 pub fn bar(app: &mut FigApp, ctx: &Context, st: &Status) {
     let t = Tokens::get(ctx);
     let (badge, colour) = status::badge(st, &t);
     let (mut stop, mut show) = (false, false);
-    egui::Area::new(Id::unique("picabia_laser_bar")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -16.0)).show(ctx, |ui| {
+    egui::Area::new(Id::unique("picabia_laser_bar")).order(egui::Order::Foreground).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -84.0)).show(ctx, |ui| {
         egui::Frame::window(&ctx.global_style()).fill(t.panel).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(tr("Laser")).font(semibold(11.0)).color(t.text));
-                ui.label(egui::RichText::new(&badge).font(semibold(11.0)).color(colour));
+                ui.label(egui::RichText::new(&badge).font(semibold(11.0)).color(status::readable(colour, &t)));
                 if let Some(j) = st.job.as_ref().filter(|j| j.active()) {
                     widgets::label(ui, &format!("{} · {}%", j.name, widgets::fmt_num(j.percent)), t.text_secondary);
                 }
