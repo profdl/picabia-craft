@@ -199,6 +199,22 @@ impl SegIndex {
         hit
     }
 
+    /// The rings (each once, ascending) with an edge touching the convex quad `quad`.
+    pub fn rings_hit(&mut self, quad: &[Point; 4]) -> Vec<u32> {
+        let bb = quad.iter().skip(1).fold(Rect::from_points(quad[0], quad[0]), |b, &p| b.union_pt(p));
+        let mut out: Vec<u32> = Vec::new();
+        self.edges_near(bb, |s| {
+            if out.contains(&s.ring) {
+                return;
+            }
+            if in_convex(quad, s.a) || in_convex(quad, s.b) || (0..4).any(|i| crosses(quad[i], quad[(i + 1) % 4], s.a, s.b).is_some()) {
+                out.push(s.ring);
+            }
+        });
+        out.sort_unstable();
+        out
+    }
+
     /// Whether the open segment `a`–`b` (its ends left out by a margin) crosses an edge of a ring
     /// in `rings`.
     pub fn segment_crosses(&mut self, a: Point, b: Point, rings: [usize; 2]) -> bool {

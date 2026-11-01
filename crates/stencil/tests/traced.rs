@@ -13,10 +13,10 @@ mod fixture;
 use std::collections::HashMap;
 use std::time::Instant;
 
-use figcraft_geom::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape};
+use figcraft_geom::kurbo::{Affine, BezPath, Circle, Point, Rect, Shape, Vec2};
 use figcraft_geom::split_subpaths;
-use figcraft_modifiers::{Stencil, StencilLimitMode, StencilTieMode};
-use figcraft_stencil::{Paint, compute, mm_per_unit, visible_regions};
+use figcraft_modifiers::{Repeat, Stencil, StencilLimitMode, StencilTieMode};
+use figcraft_stencil::{Paint, compute, compute_repeat, mm_per_unit, visible_regions};
 
 const SVG: &str = include_str!("fixtures/traced.svg");
 const BOUNDS: Rect = Rect::new(0.0, 0.0, 920.0, 752.0);
@@ -208,6 +208,22 @@ fn report(name: &str, paints: &[Paint], bounds: Rect) {
 #[ignore = "timing: cargo test --release -p figcraft-stencil --test traced -- --ignored --nocapture"]
 fn timing() {
     report("traced.svg", &traced(), BOUNDS);
+    // A 3 × 3 grid of it, judged on the repeat (the block is the whole design here: the worst case).
+    let one = traced();
+    let mut grid = Vec::new();
+    for i in 0..3 {
+        for j in 0..3 {
+            let base = grid.len() as u32;
+            let v = Vec2::new(BOUNDS.width() * f64::from(i), BOUNDS.height() * f64::from(j));
+            grid.extend(one.iter().map(|p| Paint { path: Affine::translate(v) * p.path.clone(), colour: p.colour, order: base + p.order }));
+        }
+    }
+    let gb = Rect::new(0.0, 0.0, BOUNDS.width() * 3.0, BOUNDS.height() * 3.0);
+    let rep = Repeat { origin: Point::ZERO, a: Vec2::new(BOUNDS.width(), 0.0), b: Vec2::new(0.0, BOUNDS.height()) };
+    let p = Stencil { width_mm: 900.0, ..Stencil::default() };
+    time("traced.svg 3×3 grid, sheet", 2, || compute(&grid, &p, gb).unwrap());
+    let out = time("traced.svg 3×3 grid, repeat-aware", 2, || compute_repeat(&grid, &p, gb, Some(rep)).unwrap());
+    eprintln!("  grid out: {:?} {:?}", out.stats, out.warnings);
     let (paints, _) = fixture::design(300, 42);
     report("synthetic 300", &paints, fixture::BOUNDS);
 }

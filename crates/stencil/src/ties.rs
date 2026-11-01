@@ -218,7 +218,14 @@ fn tie_one(tree: &mut Tree, job: Job, held: &[bool], st: &mut State, p: &TiePara
 /// with a bar across cut only; an island boxed in by others is tied once one of them is held.
 /// Islands short of `tiesPerIsland` keep trying in later rounds. Stops when a round adds nothing.
 pub(crate) fn tie(tree: &mut Tree, islands: &[usize], p: &TieParams) -> (Vec<Bar>, Vec<u32>) {
+    let (bars, counts, _) = tie_owned(tree, islands, p);
+    (bars, counts)
+}
+
+/// [`tie`], with the island each bar holds (its position in `islands`).
+pub(crate) fn tie_owned(tree: &mut Tree, islands: &[usize], p: &TieParams) -> (Vec<Bar>, Vec<u32>, Vec<usize>) {
     let mut bars = Vec::new();
+    let mut owners = Vec::new();
     let mut held = vec![false; tree.rings.len()];
     let mut states: Vec<State> = islands.iter().map(|_| State::default()).collect();
     let per = p.per_island.max(1) as usize;
@@ -233,6 +240,7 @@ pub(crate) fn tie(tree: &mut Tree, islands: &[usize], p: &TieParams) -> (Vec<Bar
             if tie_one(tree, Job { h, c, no }, &held, st, p, &mut bars) {
                 newly.push(h);
             }
+            owners.resize(bars.len(), no);
         }
         if newly.is_empty() {
             break;
@@ -244,5 +252,5 @@ pub(crate) fn tie(tree: &mut Tree, islands: &[usize], p: &TieParams) -> (Vec<Bar
         }
     }
     let counts = states.iter().map(|s| u32::try_from(s.chosen.len()).unwrap_or(u32::MAX)).collect();
-    (bars, counts)
+    (bars, counts, owners)
 }

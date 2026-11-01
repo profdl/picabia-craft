@@ -292,9 +292,10 @@ fn sharp_corners(ring: &[Point], window: f64, min_angle: f64, out: &mut Vec<(f64
     out.extend(kept);
 }
 
-/// Check the final `cut` (plain polygonal contours in `sheet`) against `l`; `untied` are the
-/// bounds of the islands left floating; the narrow checks look in `zones`.
-pub(crate) fn check(cut: &BezPath, sheet: Rect, untied: &[Rect], l: &CheckLimits, zones: &Zones) -> Checked {
+/// Check the final `cut` (plain polygonal contours in `sheet`) against `l`; `given` are problems
+/// found elsewhere (the islands left floating, lattice bars too thin); the narrow checks look in
+/// `zones`.
+pub(crate) fn check(cut: &BezPath, sheet: Rect, given: &[Problem], l: &CheckLimits, zones: &Zones) -> Checked {
     let mut f = Found::default();
     let mut warnings = Vec::new();
     let slack = if l.slack.is_finite() { l.slack.max(0.0) } else { 0.0 };
@@ -334,7 +335,7 @@ pub(crate) fn check(cut: &BezPath, sheet: Rect, untied: &[Rect], l: &CheckLimits
             }
         }
     }
-    untied.iter().for_each(|&r| f.push(ProblemKind::Untied, r));
+    given.iter().for_each(|g| f.push(g.kind, g.bounds));
     let total = f.counts.total();
     // In turn from each kind, so every kind gets markers.
     let mut problems = Vec::with_capacity(total.min(MAX_PROBLEMS));

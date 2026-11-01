@@ -18,6 +18,8 @@ pub(crate) struct Held {
     pub cut: BezPath,
     /// Tie bars and lattice bars now in the paper.
     pub ties: BezPath,
+    /// The lattice bars alone (`pattern` mode).
+    pub lattice: BezPath,
     pub islands: Vec<Island>,
     pub ties_placed: usize,
     pub pattern_held: usize,
@@ -27,12 +29,12 @@ pub(crate) struct Held {
     pub warnings: Vec<String>,
 }
 
-fn bars_path(bars: &[Bar]) -> BezPath {
+pub(crate) fn bars_path(bars: &[Bar]) -> BezPath {
     rings::to_path(&bars.iter().map(|b| b.to_vec()).collect::<Vec<_>>())
 }
 
 /// `cut` minus the tie `bars` (the bars become paper).
-fn subtract_bars(cut: &BezPath, bars: &[Bar]) -> Result<BezPath, figcraft_pathops::PathOpsError> {
+pub(crate) fn subtract_bars(cut: &BezPath, bars: &[Bar]) -> Result<BezPath, figcraft_pathops::PathOpsError> {
     if bars.is_empty() {
         return Ok(cut.clone());
     }
@@ -59,7 +61,7 @@ fn lattice(cut: &BezPath, tree: &Tree, sheet: Rect, p: &Stencil, mpu: f64, warni
     }
 }
 
-fn tie_params(p: &Stencil, mpu: f64, sheet: Rect) -> TieParams {
+pub(crate) fn tie_params(p: &Stencil, mpu: f64, sheet: Rect) -> TieParams {
     TieParams {
         sheet,
         width: p.tie_width_mm / mpu,
@@ -114,6 +116,7 @@ pub(crate) fn hold(cut: BezPath, sheet: Rect, p: &Stencil, mpu: f64) -> Held {
     } else {
         (cut.clone(), BezPath::new(), tree0)
     };
+    let lattice_len = ties_path.elements().len();
     let floating = tree1.islands();
     let tp = tie_params(p, mpu, sheet);
     let (bars, counts) = ties::tie(&mut tree1, &floating, &tp);
@@ -162,6 +165,10 @@ pub(crate) fn hold(cut: BezPath, sheet: Rect, p: &Stencil, mpu: f64) -> Held {
         held.warnings.push(format!("{} islands couldn't be tied and would fall out", held.untied));
     }
     held.cut = cut2;
+    if p.tie_mode == StencilTieMode::Pattern {
+        held.lattice = ties_path.clone();
+        held.lattice.truncate(lattice_len);
+    }
     held.ties = ties_path;
     held
 }

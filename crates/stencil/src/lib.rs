@@ -20,6 +20,9 @@
 //!    corners, untied islands), [`StencilOut::problems`]; `limitMode: flag` skips the fixing
 //!    clean-up so every violation shows.
 //!
+//! A repeat (a wallpaper or grid row above the stencil) makes the islands and ties repeat-aware
+//! and allows a one-cell tile output: [`compute_repeat`].
+//!
 //! [`compute`] runs them all and returns a [`StencilOut`].
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -32,12 +35,13 @@ mod index;
 mod islands;
 mod pattern;
 mod problems;
+mod repeat;
 mod rings;
 mod ties;
 mod visible;
 
 pub use colour::{ColourInfo, Selector, colour_infos, luminance, mm_per_unit};
-pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, compute};
+pub use compute::{Island, MAX_PAINTS, Stats, StencilError, StencilOut, Tile, compute, compute_repeat};
 pub use problems::{MAX_PROBLEMS, Problem, ProblemCounts, ProblemKind};
 pub use visible::{Region, Visible, rgb8, visible_regions};
 
@@ -77,5 +81,7 @@ mod hold_tests;
 mod hoshi_tests;
 #[cfg(test)]
 mod problems_tests;
+#[cfg(test)]
+mod repeat_tests;
 #[cfg(test)]
 mod visible_tests;
