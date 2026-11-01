@@ -442,9 +442,15 @@ fn rotate(mut c: Contour, start: usize) -> Contour {
     c
 }
 
+/// How far the label keeps from the sheet's left and bottom edges (beyond the room's padding),
+/// widest first: the first that fits wins.
+const LABEL_INSETS_MM: [f64; 5] = [6.0, 4.0, 2.5, 1.0, 0.0];
+
 /// Lay the label out on a sheet: `lines` engraved in the free bottom margin from the left (box
 /// inside `room`), clear of every contour by `clear`. Tries 2.5 mm caps on one line, then
-/// stacked, then smaller, down to 1.5 mm. `None` when nothing fits.
+/// stacked, then smaller, down to 1.5 mm; at each size it keeps away from the sheet's edge
+/// (handled paper edges fray) by the widest of [`LABEL_INSETS_MM`] that fits. `None` when nothing
+/// fits.
 pub(crate) fn label(lines: &[String], room: Rect, contours: &[Contour], clear: f64) -> Option<Vec<Polyline>> {
     if lines.is_empty() || room.width() <= 0.0 || room.height() <= 0.0 {
         return None;
@@ -457,24 +463,27 @@ pub(crate) fn label(lines: &[String], room: Rect, contours: &[Contour], clear: f
             let n = layout.len() as f64;
             let height = cap + (n - 1.0) * pitch + cap * DESCENT;
             let width = layout.iter().map(|l| text_polylines(l, Point::ZERO, cap).1).fold(0.0, f64::max);
-            if width > room.width() || height > room.height() {
-                continue;
-            }
-            let y0 = room.y1 - height;
-            let step = (room.width() / 400.0).max(0.5);
-            let mut x0 = room.x0;
-            while x0 + width <= room.x1 {
-                let b = Rect::new(x0, y0, x0 + width, room.y1).inflate(clear, clear);
-                let quad = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)];
-                // On paper (inside an odd number of contours: the outline, not a cut-out in it).
-                if !index.quad_hits(&quad, [usize::MAX; 2]) && index.containing(b.center()).len() % 2 == 1 {
-                    let mut out = Vec::new();
-                    for (k, l) in layout.iter().enumerate() {
-                        out.extend(text_polylines(l, Point::new(x0, y0 + cap + k as f64 * pitch), cap).0);
-                    }
-                    return Some(out);
+            for inset in LABEL_INSETS_MM {
+                let r = Rect::new(room.x0 + inset, room.y0, room.x1, room.y1 - inset);
+                if width > r.width() || height > r.height() {
+                    continue;
                 }
-                x0 += step;
+                let y0 = r.y1 - height;
+                let step = (r.width() / 400.0).max(0.5);
+                let mut x0 = r.x0;
+                while x0 + width <= r.x1 {
+                    let b = Rect::new(x0, y0, x0 + width, r.y1).inflate(clear, clear);
+                    let quad = [Point::new(b.x0, b.y0), Point::new(b.x1, b.y0), Point::new(b.x1, b.y1), Point::new(b.x0, b.y1)];
+                    // On paper (inside an odd number of contours: the outline, not a cut-out in it).
+                    if !index.quad_hits(&quad, [usize::MAX; 2]) && index.containing(b.center()).len() % 2 == 1 {
+                        let mut out = Vec::new();
+                        for (k, l) in layout.iter().enumerate() {
+                            out.extend(text_polylines(l, Point::new(x0, y0 + cap + k as f64 * pitch), cap).0);
+                        }
+                        return Some(out);
+                    }
+                    x0 += step;
+                }
             }
         }
     }
