@@ -3936,6 +3936,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "picabia-bend"
+version = "0.12.1"
+dependencies = [
+ "figcraft-color",
+ "figcraft-doc",
+ "figcraft-engine",
+ "figcraft-format",
+ "figcraft-layout",
+ "figcraft-text",
+ "serde_json",
+]
+
+[[package]]
 name = "pico-args"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

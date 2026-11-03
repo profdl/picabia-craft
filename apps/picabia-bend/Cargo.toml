@@ -1,0 +1,23 @@
+[package]
+name = "picabia-bend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Picabia's interface designs as Bend data: a .figcraft file's screens generated as a game's interface (ue-bend's Ui vocabulary)"
+
+[[bin]]
+name = "picabia-bend"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+figcraft-engine = { workspace = true }
+figcraft-doc = { workspace = true }
+figcraft-color = { workspace = true }
+figcraft-format = { workspace = true }
+figcraft-layout = { workspace = true }
+figcraft-text = { workspace = true }
+serde_json = { workspace = true }
