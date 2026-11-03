@@ -130,6 +130,7 @@ fn the_module_matches_every_screen_and_names_every_node() {
     assert!(text.contains("Ui.Pressable{S.PickSaw{}, "));
     assert!(text.contains("Ui.Shown{S.WhileBuilding{}, "));
     assert!(text.contains("Ui.HCentre{}, Ui.Bottom{}"));
+    assert!(text.contains("def faces() -> List<&2, Ui.Face>:\n  []\n"), "no text, so no fonts");
     // Every def a node refers to is defined before the screen match.
     let defined: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("def ")).filter_map(|l| l.split('(').next()).collect();
     for used in text.match_indices("node_").map(|(i, _)| text[i..].split('(').next().unwrap_or("")) {

@@ -224,6 +224,8 @@ pub fn module(d: &Design, source: &str, imports: &Imports) -> String {
     for (id, m) in d.fonts.iter().enumerate() {
         out.push_str(&metrics(id as FontId, m));
     }
+    let faces: Vec<String> = d.fonts.iter().map(|m| format!("Ui.MkFace{{{}, {}}}", string_lit(&m.family), string_lit(&m.style))).collect();
+    let _ = write!(out, "# The fonts by number, as the engine draws them.\ndef faces() -> List<&2, Ui.Face>:\n  [{}]\n\n", faces.join(", "));
     let mut p = Printer { defs: String::new(), next: 0 };
     let roots: Vec<(String, String)> = d.screens.iter().map(|(c, n)| (c.0.clone(), p.node(n))).collect();
     out.push_str(&p.defs);
