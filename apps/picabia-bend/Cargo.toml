@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Picabia's interface designs for a game: a .figcraft file's screens as Unreal Slate bound to the game's screens (held to its schema both ways), or as Bend data over a game's own interface vocabulary"
+description = "Picabia's interface designs for a game: a .figcraft file's screens as Unreal Slate bound to the game's screens (held to its schema both ways)"
 
 [[bin]]
 name = "picabia-bend"

@@ -1,5 +1,5 @@
-//! A Picabia document's screens converted to the game's interface tree. Every layer the game's
-//! vocabulary cannot draw faithfully is refused by name, and every refusal is reported at once
+//! A Picabia document's screens converted to the interface tree (`model`). Every layer that
+//! cannot be drawn faithfully is refused by name, and every refusal is reported at once
 //! (a designer fixes a file, not one error at a time).
 //!
 //! The design's conventions:
@@ -21,11 +21,10 @@ use figcraft_doc::{Document, Node, NodeId, NodeKind};
 use figcraft_doc::{TextAlignH, TextAlignV, TextAutoResize, TextCase, TextDecoration};
 use figcraft_engine::Session;
 use figcraft_engine::measure::TextMeasure;
-use figcraft_layout::Measure;
 use serde_json::{Value, json};
 
 use crate::model::{
-    AlignH, AlignV, Arrange, Bounds, Constructor, CrossAlign, Design, FontId, HPin, MainAlign, Metrics, Paint, Sizing, Stroke, Surface, TextStyle,
+    AlignH, AlignV, Arrange, Bounds, Constructor, CrossAlign, Design, Face, FontId, HPin, MainAlign, Paint, Sizing, Stroke, Surface, TextStyle,
     UiNode, VPin, Words,
 };
 
@@ -37,10 +36,8 @@ pub const ACTION_PROP: &str = "@action";
 pub const SHOWN_PROP: &str = "@shown";
 /// The variant property whose values are a pressable's states.
 pub const STATE_PROP: &str = "State";
-/// The states a pressable shows, in the order the vocabulary's `Pressable` takes them.
+/// The states a pressable shows, in the order `UiNode::Pressable` takes them.
 pub const STATES: [&str; 4] = ["Idle", "Hovered", "Pressed", "Selected"];
-/// The characters a bound text may show, measured into each font's metrics: printable ASCII.
-pub const BOUND_CHARS: std::ops::RangeInclusive<u32> = 32..=126;
 
 /// A layer the generator cannot carry into the game, and why.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -72,7 +69,7 @@ pub fn constructor(name: &str) -> Option<Constructor> {
 
 struct Ctx {
     refusals: Vec<Refusal>,
-    fonts: Vec<Metrics>,
+    fonts: Vec<Face>,
     font_ids: BTreeMap<(String, String), FontId>,
 }
 
@@ -87,13 +84,12 @@ impl Ctx {
             return Some(*id);
         }
         let face = figcraft_text::fontdb::db().write().ok()?.find(family, style);
-        let Some(face) = face else {
+        if face.is_none() {
             self.refuse(layer, format!("the font {family} {style} is not loaded (pass its file with --font)"));
             return None;
-        };
-        let advances = BOUND_CHARS.map(|c| (c, char::from_u32(c).map(|ch| face.advance(face.glyph_for(ch))).unwrap_or(0.0))).collect();
+        }
         let id = self.fonts.len() as FontId;
-        self.fonts.push(Metrics { family: family.into(), style: style.into(), upem: face.upem, missing: face.advance(0), advances });
+        self.fonts.push(Face { family: family.into(), style: style.into() });
         self.font_ids.insert(key, id);
         Some(id)
     }
@@ -229,7 +225,7 @@ fn arrange(ctx: &mut Ctx, layer: &str, n: &Node) -> Arrange {
     Arrange::Stack { horizontal: al.mode == LayoutMode::Horizontal, gap: al.gap, padding: [pad(0), pad(1), pad(2), pad(3)], main, cross }
 }
 
-fn label(ctx: &mut Ctx, doc: &Document, layer: &str, id: NodeId, n: &Node, t: &figcraft_doc::TextData) -> Option<UiNode> {
+fn label(ctx: &mut Ctx, layer: &str, n: &Node, t: &figcraft_doc::TextData) -> Option<UiNode> {
     if !t.runs.is_empty() {
         ctx.refuse(layer, "a text of more than one style is not drawn yet");
     }
@@ -264,29 +260,17 @@ fn label(ctx: &mut Ctx, doc: &Document, layer: &str, id: NodeId, n: &Node, t: &f
         }
     };
     let font = ctx.font(layer, &t.style.font_family, &t.style.font_style)?;
-    let (natural_w, line) = TextMeasure.text_size(doc, id).unwrap_or((n.width, n.height));
-    let laid = figcraft_text::layout_cached(t, None, None);
-    let baseline = laid.lines.first().map(|l| l.baseline - l.top).unwrap_or(line);
-    let style = TextStyle {
-        font,
-        size: t.style.font_size,
-        line,
-        baseline,
-        tracking: t.style.letter_spacing.resolve(t.style.font_size),
-        paint,
-        align_h,
-        align_v,
-    };
+    let style = TextStyle { font, size: t.style.font_size, tracking: t.style.letter_spacing.resolve(t.style.font_size), paint, align_h, align_v };
     let chars = t.characters.trim();
     let words = match chars.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
         Some(name) => match constructor(name) {
-            Some(slot) => Words::Bound { slot, font },
+            Some(slot) => Words::Bound { slot },
             None => {
                 ctx.refuse(layer, format!("`{name}` is not a slot name (letters and digits, in kebab or snake case)"));
                 return None;
             }
         },
-        None => Words::Literal { text: t.characters.clone(), width: natural_w },
+        None => Words::Literal { text: t.characters.clone() },
     };
     common_refusals(ctx, layer, n);
     Some(UiNode::Label { bounds: bounds(ctx, layer, n), style, words })
@@ -378,7 +362,7 @@ fn node(ctx: &mut Ctx, doc: &Document, layer: &str, id: NodeId, n: &Node) -> Opt
             common_refusals(ctx, layer, n);
             Some(UiNode::Frame { bounds: bounds(ctx, layer, n), arrange: Arrange::Free, surface: surface(ctx, layer, n), kids: Vec::new() })
         }
-        NodeKind::Text(t) => label(ctx, doc, layer, id, n, t),
+        NodeKind::Text(t) => label(ctx, layer, n, t),
         NodeKind::Group | NodeKind::BooleanOp { .. } => {
             ctx.refuse(layer, "groups are not laid out yet: use a frame");
             None

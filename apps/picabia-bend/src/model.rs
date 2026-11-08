@@ -1,5 +1,5 @@
-//! The interface as the game's Bend vocabulary has it (ue-bend's `bend/Vocabulary/Ui.bend`): one
-//! Rust type per Bend type, so the converter builds a checked tree and the printer is a fold.
+//! A design's screens as a checked tree of frames, texts and pressable instances, with their auto
+//! layout and constraints as designed: what the converter builds and the Slate emitter folds.
 
 /// How a node sizes on one axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,8 +115,6 @@ pub type FontId = u32;
 pub struct TextStyle {
     pub font: FontId,
     pub size: f64,
-    pub line: f64,
-    pub baseline: f64,
     pub tracking: f64,
     pub paint: Paint,
     pub align_h: AlignH,
@@ -130,8 +128,8 @@ pub struct Constructor(pub String);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Words {
-    Literal { text: String, width: f64 },
-    Bound { slot: Constructor, font: FontId },
+    Literal { text: String },
+    Bound { slot: Constructor },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -142,20 +140,16 @@ pub enum UiNode {
     Pressable { action: Constructor, idle: Box<UiNode>, hovered: Box<UiNode>, pressed: Box<UiNode>, selected: Box<UiNode> },
 }
 
-/// How a font measures a line: units per em, the missing glyph's advance, and the advances
-/// (font units) of the characters a bound text may show.
+/// A font the design is drawn in: its family and style, as the font database names them.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Metrics {
+pub struct Face {
     pub family: String,
     pub style: String,
-    pub upem: f64,
-    pub missing: f64,
-    pub advances: Vec<(u32, f64)>,
 }
 
 /// A generated design: its fonts (by id) and its screens, each by its constructor.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Design {
-    pub fonts: Vec<Metrics>,
+    pub fonts: Vec<Face>,
     pub screens: Vec<(Constructor, UiNode)>,
 }

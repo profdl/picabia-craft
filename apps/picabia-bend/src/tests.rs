@@ -1,13 +1,13 @@
 //! Designs built through the command API, as a designer's file would be, converted and printed.
 //! No font is loaded here (fonts never live in this repository): text is exercised by the game's
-//! own check, against the font it pins.
+//! own generation, against the fonts it pins.
 
 use figcraft_doc::Document;
 use figcraft_engine::Session;
 use serde_json::{Value, json};
 
 use crate::model::{Arrange, Constructor, HPin, Sizing, UiNode, VPin};
-use crate::{Imports, constructor, design, module};
+use crate::{constructor, design};
 
 fn ex(s: &mut Session, cmd: &str, p: Value) -> Value {
     s.execute(cmd, &p).unwrap_or_else(|e| panic!("{cmd} {p}: {e}"))
@@ -119,36 +119,6 @@ fn a_design_without_screens_is_refused() {
     assert_eq!(rs.len(), 1);
     assert!(rs[0].why.contains("Screens"));
 }
-
-#[test]
-fn the_module_matches_every_screen_and_names_every_node() {
-    let mut doc = hud();
-    let d = design(&mut doc).expect("converts");
-    let text = module(&d, "hud.figcraft", &Imports { vocabulary: "../Vocabulary".into() });
-    assert!(text.starts_with("import Base\nimport ../Vocabulary/Ui.bend as Ui\n"));
-    assert!(text.contains("def screen(which: S.Screen) -> Ui.Node:\n  match which:\n    case S.HudPlay{}:\n"));
-    assert!(text.contains("Ui.Pressable{S.PickSaw{}, "));
-    assert!(text.contains("Ui.Shown{S.WhileBuilding{}, "));
-    assert!(text.contains("Ui.HCentre{}, Ui.Bottom{}"));
-    assert!(text.contains("def faces() -> List<&2, Ui.Face>:\n  []\n"), "no text, so no fonts");
-    // Every def a node refers to is defined before the screen match.
-    let defined: Vec<&str> = text.lines().filter_map(|l| l.strip_prefix("def ")).filter_map(|l| l.split('(').next()).collect();
-    for used in text.match_indices("node_").map(|(i, _)| text[i..].split('(').next().unwrap_or("")) {
-        assert!(defined.contains(&used), "{used} is used but not defined");
-    }
-}
-
-#[test]
-fn floats_print_as_bend_literals() {
-    use crate::emit::f32_lit;
-    assert_eq!(f32_lit(12.0), "(12.0 : F32)");
-    assert_eq!(f32_lit(109.33333), "(109.3333 : F32)");
-    assert_eq!(f32_lit(-0.0), "(0.0 : F32)");
-    assert_eq!(f32_lit(f64::NAN), "(0.0 : F32)");
-    assert_eq!(f32_lit(1e-7), "(0.0 : F32)");
-}
-
-// ---- The engine's screens: the schema, and Slate ----
 
 const HUD_SCHEMA: &str = "screen\thud-play\thud_play\tHUD_PLAY\n\
 command\thud-play\tpick-saw\tUB_HUD_PLAY_PICK_SAW\n\
