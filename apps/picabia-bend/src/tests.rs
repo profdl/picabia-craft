@@ -147,3 +147,121 @@ fn floats_print_as_bend_literals() {
     assert_eq!(f32_lit(f64::NAN), "(0.0 : F32)");
     assert_eq!(f32_lit(1e-7), "(0.0 : F32)");
 }
+
+// ---- The engine's screens: the schema, and Slate ----
+
+const HUD_SCHEMA: &str = "screen\thud-play\thud_play\tHUD_PLAY\n\
+command\thud-play\tpick-saw\tUB_HUD_PLAY_PICK_SAW\n\
+command\thud-play\tpick-hammer\tUB_HUD_PLAY_PICK_HAMMER\n\
+flag\thud-play\twhile_building\twhile_building\n\
+selection\thud-play\tselected\tselected\tselected_command\n";
+
+fn hud_schema() -> crate::schema::Schema {
+    crate::schema::parse(HUD_SCHEMA).unwrap_or_else(|e| panic!("{e}"))
+}
+
+#[test]
+fn the_schema_reads_each_screen_its_commands_and_its_slots() {
+    use crate::schema::SlotKind;
+    let s = hud_schema();
+    assert_eq!(s.screens.len(), 1);
+    let hud = &s.screens[0];
+    assert_eq!((hud.key.0.as_str(), hud.c_lower.as_str(), hud.c_upper.as_str()), ("HudPlay", "hud_play", "HUD_PLAY"));
+    assert_eq!(hud.commands.iter().map(|c| c.c_enum.as_str()).collect::<Vec<_>>(), ["UB_HUD_PLAY_PICK_SAW", "UB_HUD_PLAY_PICK_HAMMER"]);
+    assert!(matches!(&hud.slots[0].kind, SlotKind::Flag { field } if field == "while_building"));
+    assert!(matches!(&hud.selection().map(|x| &x.kind), Some(SlotKind::Selection { command_field, .. }) if command_field == "selected_command"));
+}
+
+#[test]
+fn a_schema_out_of_order_or_misspelt_is_refused_at_its_line() {
+    use crate::schema::parse;
+    assert!(parse("command\thud-play\tpick-saw\tUB_X\n").expect_err("no screen yet").contains("line 1"));
+    assert!(parse("screen\thud-play\thud_play\tHUD_PLAY\nslot\thud-play\tx\tx\n").expect_err("no such fact").contains("line 2"));
+    assert!(parse("screen\thud-play\thud_play\tHUD_PLAY\ncommand\thud-play\tpick-saw\tUB X\n").expect_err("not a C name").contains("C name"));
+    assert!(parse("screen\ta\ta\tA\nselection\ta\ts\ts\tsc\nselection\ta\tt\tt\ttc\n").expect_err("two selections").contains("second selection"));
+    assert!(parse("").expect_err("empty").contains("no screen"));
+}
+
+#[test]
+fn the_design_is_held_to_the_game_both_ways() {
+    let mut doc = hud();
+    let d = design(&mut doc).expect("converts");
+    crate::schema::hold(&d, &hud_schema()).unwrap_or_else(|rs| panic!("the design should agree: {rs:?}"));
+    // The game admits a third command no pressable gives, and reads a count nothing shows.
+    let more = format!("{HUD_SCHEMA}command\thud-play\topen-pause\tUB_HUD_PLAY_OPEN_PAUSE\ncount\thud-play\tboards_left\tboards_left\n");
+    let rs = crate::schema::hold(&d, &crate::schema::parse(&more).expect("parses")).expect_err("unbound");
+    assert!(rs.iter().any(|r| r.why.contains("`open-pause`") && r.why.contains("given by nothing")), "{rs:?}");
+    assert!(rs.iter().any(|r| r.why.contains("`boards_left`") && r.why.contains("bound by nothing")), "{rs:?}");
+    // The design gives a command, and shows a flag, the game does not have.
+    let fewer = "screen\thud-play\thud_play\tHUD_PLAY\ncommand\thud-play\tpick-saw\tUB_HUD_PLAY_PICK_SAW\n";
+    let rs = crate::schema::hold(&d, &crate::schema::parse(fewer).expect("parses")).expect_err("unknown names");
+    assert!(rs.iter().any(|r| r.why.contains("no command `PickHammer`")), "{rs:?}");
+    assert!(rs.iter().any(|r| r.why.contains("no flag `WhileBuilding`")), "{rs:?}");
+    // A screen the game has that the design lacks, and one the design has that the game lacks.
+    let other = "screen\ttitle\ttitle\tTITLE\n";
+    let rs = crate::schema::hold(&d, &crate::schema::parse(other).expect("parses")).expect_err("screens apart");
+    assert!(rs.iter().any(|r| r.why.contains("`title` has no frame")), "{rs:?}");
+    assert!(rs.iter().any(|r| r.layer == "Screens/HudPlay" && r.why.contains("no such screen")), "{rs:?}");
+}
+
+#[test]
+fn the_screens_are_slate_bound_to_the_game() {
+    let mut doc = hud();
+    let d = design(&mut doc).expect("converts");
+    let f = crate::slate::slate(&d, &hud_schema(), "ui/hud.figcraft").unwrap_or_else(|rs| panic!("refused: {rs:?}"));
+    // The engine's types: the commands it admits and what it reads.
+    assert!(f.header.contains("enum class EBendHudPlayCommand : uint8\n{\n\tPickSaw,\n\tPickHammer,\n};"), "{}", f.header);
+    assert!(f.header.contains("\tEVisibility WhileBuilding = EVisibility::Collapsed;\n\tTOptional<EBendHudPlayCommand> Selected;\n"));
+    assert!(f.header.contains("using FBendShown = TVariant<FBendHudPlayRead>;"));
+    // The toolbar, pinned to the bottom centre of the free screen, lays its tools out in a row
+    // eight apart, inside its padding.
+    assert!(f.source.contains(".Anchors(FAnchors(0.5f, 1.0f, 0.5f, 1.0f))"), "{}", f.source);
+    assert!(f.source.contains(".Alignment(FVector2D(0.5f, 1.0f))"));
+    assert!(f.source.contains("SNew(SHorizontalBox)"));
+    assert!(f.source.contains(".Padding(FMargin(8.0f, 0.0f, 0.0f, 0.0f))"), "the second tool is a gap from the first");
+    // Each tool is a button giving its own command, its idle and selected variants two styles,
+    // the one in force chosen by the read.
+    assert!(f.source.contains("OnCommand.ExecuteIfBound(EBendHudPlayCommand::PickHammer)"));
+    assert!(f.source.contains("Pressed0->SetButtonStyle(Read.Selected == TOptional<EBendHudPlayCommand>(EBendHudPlayCommand::PickSaw)"));
+    assert!(f.source.contains("BendColour(240, 192, 32, 255)"), "the selected variant's fill");
+    // The hammer shows while building.
+    assert!(f.source.contains(".Visibility_Lambda([this]() { return Read.WhileBuilding; })"));
+    // The wire: every command parsed and printed by the header's names.
+    assert!(f.wire.contains("case UB_HUD_PLAY_PICK_HAMMER: Out = EBendHudPlayCommand::PickHammer; return true;"));
+    assert!(f.wire.contains("case EBendHudPlayCommand::PickSaw: return ub_hud_play_commanded(UB_HUD_PLAY_PICK_SAW);"));
+    assert!(f.wire.contains("if (!ub_hud_play_read_of(&Wire, &In))"));
+    assert!(f.wire.contains("case UB_SELECTION_ONE:"));
+}
+
+#[test]
+fn a_design_the_game_does_not_have_is_not_generated() {
+    let mut doc = hud();
+    let d = design(&mut doc).expect("converts");
+    let fewer = crate::schema::parse("screen\thud-play\thud_play\tHUD_PLAY\ncommand\thud-play\tpick-saw\tUB_HUD_PLAY_PICK_SAW\n").expect("parses");
+    assert!(crate::slate::slate(&d, &fewer, "ui/hud.figcraft").is_err());
+}
+
+#[test]
+fn literals_print_as_cpp() {
+    use crate::slate::{float_lit, text_lit};
+    assert_eq!(float_lit(12.0), "12.0f");
+    assert_eq!(float_lit(-24.0), "-24.0f");
+    assert_eq!(float_lit(0.33333), "0.3333f");
+    assert_eq!(float_lit(f64::INFINITY), "0.0f");
+    assert_eq!(text_lit("a \"b\" \\ c"), "a \\\"b\\\" \\\\ c");
+}
+
+#[test]
+fn a_row_whose_child_fills_fills_its_frame() {
+    use crate::model::{Bounds, CrossAlign, MainAlign, Stroke, Surface};
+    use crate::slate::content_align;
+    let kid = |size_w: Sizing| UiNode::Frame {
+        bounds: Bounds { x: 0.0, y: 0.0, w: 10.0, h: 10.0, size_w, size_h: Sizing::Fixed, pin_h: HPin::Left, pin_v: VPin::Top },
+        arrange: Arrange::Free,
+        surface: Surface { fills: Vec::new(), stroke: Stroke::Unstroked, corners: [0.0; 4], opacity: 1000, clips: false },
+        kids: Vec::new(),
+    };
+    assert_eq!(content_align(true, MainAlign::Centre, CrossAlign::Centre, &[kid(Sizing::Fixed)]), ("HAlign_Center", "VAlign_Center"));
+    assert_eq!(content_align(true, MainAlign::Start, CrossAlign::Centre, &[kid(Sizing::Fixed), kid(Sizing::Fill)]), ("HAlign_Fill", "VAlign_Center"));
+    assert_eq!(content_align(false, MainAlign::End, CrossAlign::Start, &[kid(Sizing::Fill)]), ("HAlign_Fill", "VAlign_Bottom"));
+}
